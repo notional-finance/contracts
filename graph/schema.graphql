@@ -1,0 +1,40 @@
+type Account @entity {
+  """
+  ID is address
+  """
+  id: ID!
+  daiBalance: BigInt!
+  ethBalance: BigInt!
+  cashBalance: BigInt!
+  portfolio: [Asset!]!
+  transactions: [Transaction!]!
+}
+
+type Asset @entity {
+  """
+  ID is account + maturity + tradeType
+  Assets are the current net position of the portfolio and therefore
+  there is some information loss about the extract transactions that
+  were made to get to this point.
+  """
+  id: ID!
+  tradeType: String!
+  maturity: BigInt!
+  notional: BigInt!
+  owner: Account! @derivedFrom(field: "portfolio")
+}
+
+type Transaction @entity {
+  """
+  ID is transaction hash.
+  This keeps a transaction history of the portfolio for the user interface
+  so that users can reference how they traded into their current position
+  """
+  id: ID!
+  tradeType: String!
+  maturity: BigInt!
+  futureCash: BigInt!
+  daiAmount: BigInt!
+  tokens: BigInt
+  owner: Account! @derivedFrom(field: "transactions")
+}

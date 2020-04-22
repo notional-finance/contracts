@@ -1,0 +1,11 @@
+node_modules/
+cache/
+build/
+typechain/
+sandbox/chaindb
+sandbox/build
+graph/build
+graph/generated
+.env
+coverage
+coverage.json

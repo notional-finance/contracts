@@ -1,0 +1,41 @@
+specVersion: 0.0.2
+description: Swapnet Lite
+repository: https://github.com/swapnet-protocol/swapnet-lite
+schema:
+  file: ./schema.graphql
+dataSources:
+  - kind: ethereum/contract
+    name: FutureCash
+    network: ganache
+    source:
+      address: "0xD833215cBcc3f914bD1C9ece3EE7BF8B14f841bb"
+      abi: FutureCash
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.1
+      language: wasm/assemblyscript
+      entities:
+        - Account
+        - Asset
+        - Market
+      abis:
+        - name: FutureCash
+          file: ../build/FutureCash.json
+      eventHandlers:
+        - event: TransferEth(indexed address,uint256,bool)
+          handler: handleTransferEth
+        - event: TransferDai(indexed address,uint256,bool)
+          handler: handleTransferDai
+        - event: TransferAsset(indexed address,indexed address,uint8,uint32,uint128)
+          handler: handleTransferAsset
+        - event: CreateAsset(indexed address,uint8,uint32,uint128,uint128)
+          handler: handleCreateAsset
+        - event: AddLiquidity(indexed address,uint32,uint128,uint128,uint128)
+          handler: handleAddLiquidity
+        - event: RemoveLiquidity(indexed address,uint32,uint128,uint128,uint128)
+          handler: handleRemoveLiquidity
+        - event: UpdateCashBalance(indexed address,int256)
+          handler: handleUpdateCashBalance
+        - event: SettleCash(indexed address,indexed address,uint128)
+          handler: handleSettleCash
+      file: ./src/mapping.ts
