@@ -28,7 +28,7 @@
   "devDependencies": {
     "@graphprotocol/graph-cli": "^0.17.1",
     "@graphprotocol/graph-ts": "^0.17.0",
-    "@nomiclabs/buidler": "^1.1.2",
+    "@nomiclabs/buidler": "^1.2.0",
     "@nomiclabs/buidler-ethers": "^1.1.2",
     "@nomiclabs/buidler-etherscan": "^1.0.1",
     "@nomiclabs/buidler-ganache": "^1.1.2",
@@ -51,8 +51,8 @@
     "solidity-coverage": "^0.7.2",
     "solidity-docgen": "^0.4.1",
     "ts-generator": "0.0.8",
-    "typechain": "^1.0.3",
     "ts-node": "^8",
+    "typechain": "^1.0.3",
     "typechain-target-ethers": "^1.0.2",
     "typechain-target-truffle": "^1.0.2",
     "typechain-target-web3-v1": "^1.0.4"

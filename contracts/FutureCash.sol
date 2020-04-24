@@ -7,12 +7,13 @@ import "./lib/UniswapExchangeInterface.sol";
 import "./lib/ABDKMath64x64.sol";
 
 import "./lib/SafeMath.sol";
-import "./lib/Ownable.sol";
 import "./lib/IERC20.sol";
+import "./upgradeable/Ownable.sol";
+import "./upgradeable/Initializable.sol";
 
 
 /** A demo contract of the future cash market */
-contract FutureCash is Ownable {
+contract FutureCash is OpenZeppelinUpgradesOwnable, Initializable {
     using SafeUInt128 for uint128;
     using SafeMath for uint256;
     using SafeInt256 for int256;
@@ -38,10 +39,11 @@ contract FutureCash is Ownable {
     address public G_DAI_CONTRACT;
     address public G_UNISWAP_DAI_CONTRACT;
 
-    constructor(uint32 periodSize, address daiContract, address exchange) public {
+    function initialize(uint32 periodSize, address daiContract, address exchange) public initializer {
         G_PERIOD_SIZE = periodSize;
         G_DAI_CONTRACT = daiContract;
         G_UNISWAP_DAI_CONTRACT = exchange;
+        _owner = msg.sender;
     }
 
     function setRateFactors(uint32 rateAnchor, uint16 rateScalar) external onlyOwner {
@@ -347,12 +349,10 @@ contract FutureCash is Ownable {
             // is if they have a negative cash balance and their free collateral comes from a daiClaim from liquidity
             // tokens in the future.
             if (daiRemaining > 0) {
-                daiBalances[payer] = _raiseCashFromPortfolio(payer, daiRemaining);
-            } else {
-                // Otherwise, all the dai balance the payer had is removed here.
-                delete daiBalances[payer];
+                _raiseCashFromPortfolio(payer, daiRemaining);
             }
-
+            // All the dai balance the payer had is removed here.
+            delete daiBalances[payer];
             // Pay the receiver the dai they are owed.
             daiBalances[receiver] = daiBalances[receiver].add(positiveValue);
         } else {
@@ -707,15 +707,28 @@ contract FutureCash is Ownable {
 
     /**
      * @notice Given the amount of future cash put into a market, how much current dai this would
-     * purchase.
+     * purchase at the current block.
      *
      * @param maturity the maturity of the future cash
      * @param futureCashAmount the amount of future cash to input
      * @return the amount of current dai this would purchase, returns 0 if the trade will fail
      */
     function getFutureCashToDai(uint32 maturity, uint128 futureCashAmount) public view returns (uint128) {
+        return getFutureCashToDaiBlock(maturity, futureCashAmount, uint32(block.number));
+    }
+
+    /**
+     * @notice Given the amount of future cash put into a market, how much current dai this would
+     * purchase at the current block.
+     *
+     * @param maturity the maturity of the future cash
+     * @param futureCashAmount the amount of future cash to input
+     * @param blockNum the specified block number
+     * @return the amount of current dai this would purchase, returns 0 if the trade will fail
+     */
+    function getFutureCashToDaiBlock(uint32 maturity, uint128 futureCashAmount, uint32 blockNum) public view returns (uint128) {
         Market memory interimMarket = markets[maturity];
-        uint32 blocksToMaturity = maturity - uint32(block.number);
+        uint32 blocksToMaturity = maturity - blockNum;
 
         (/* market */, uint128 daiAmount) = _tradeCalculation(interimMarket, futureCashAmount, blocksToMaturity, true);
         // On trade failure, we will simply return 0
@@ -769,15 +782,28 @@ contract FutureCash is Ownable {
     }
 
     /**
-     * @notice Given the amount of future cash to purchase, returns the amount of dai thsi would cost.
+     * @notice Given the amount of future cash to purchase, returns the amount of dai this would cost at the current
+     * block.
      *
      * @param maturity the maturity of the future cash
      * @param futureCashAmount the amount of future cash to purchase
      * @return the amount of dai this would cost, returns 0 on trade failure
      */
     function getDaiToFutureCash(uint32 maturity, uint128 futureCashAmount) public view returns (uint128) {
+        return getDaiToFutureCashBlock(maturity, futureCashAmount, uint32(block.number));
+    }
+
+    /**
+     * @notice Given the amount of future cash to purchase, returns the amount of dai thsi would cost.
+     *
+     * @param maturity the maturity of the future cash
+     * @param futureCashAmount the amount of future cash to purchase
+     * @param blockNum the block to calculate the price at
+     * @return the amount of dai this would cost, returns 0 on trade failure
+     */
+    function getDaiToFutureCashBlock(uint32 maturity, uint128 futureCashAmount, uint32 blockNum) public view returns (uint128) {
         Market memory interimMarket = markets[maturity];
-        uint32 blocksToMaturity = maturity - uint32(block.number);
+        uint32 blocksToMaturity = maturity - blockNum;
 
         (/* market */, uint128 daiAmount) = _tradeCalculation(interimMarket, futureCashAmount, blocksToMaturity, false);
         // On trade failure, we will simply return 0
@@ -893,16 +919,15 @@ contract FutureCash is Ownable {
     }
 
     /**
-     * Raises cash from the trades in the portfolio from liquidity tokens.
+     * Raises cash from the trades in the portfolio from liquidity tokens. Since free collateral passes, this
+     * will always 
      *
      * @param account the account to raise cash from
      * @param daiRequired the amount of dai required
-     * @return the amount of dai to return to balances
      */
-    function _raiseCashFromPortfolio(address account, uint256 daiRequired) internal returns (uint128) {
+    function _raiseCashFromPortfolio(address account, uint256 daiRequired) internal {
         Trade[] memory portfolio = accountTrades[account];
         uint128 daiRemaining = uint128(daiRequired);
-        uint128 daiToReturn;
         uint256[] memory indexesToRemove = new uint256[](G_NUM_PERIODS);
         Trade[] memory futureCashToAdd = new Trade[](G_NUM_PERIODS);
         uint256 indexes;
@@ -913,26 +938,41 @@ contract FutureCash is Ownable {
             if (portfolio[i].tradeType == LIQUIDITY_TOKEN) {
                 Market memory market = markets[portfolio[i].maturity];
 
+                uint128 tokensToRemove = portfolio[i].notional;
+                // This is the total claim on dai that the tokens have.
                 uint128 dai = uint128(
-                    uint256(market.totalCollateral).mul(portfolio[i].notional).div(market.totalLiquidity)
+                    uint256(market.totalCollateral).mul(tokensToRemove).div(market.totalLiquidity)
                 );
+                
+                if (dai > daiRemaining) {
+                    // If the total claim is greater than required, we only want to remove part of the liquidity.
+                    tokensToRemove = uint128(uint256(daiRemaining).mul(market.totalLiquidity).div(market.totalCollateral));
+                    dai = daiRemaining;
+                }
 
                 uint128 futureCash = uint128(
-                    uint256(market.totalFutureCash).mul(portfolio[i].notional).div(market.totalLiquidity)
+                    uint256(market.totalFutureCash).mul(tokensToRemove).div(market.totalLiquidity)
                 );
 
                 // Update the market to remove the dai, futureCash and liquidiy tokens.
                 markets[portfolio[i].maturity].totalCollateral = market.totalCollateral.sub(dai);
                 markets[portfolio[i].maturity].totalFutureCash = market.totalFutureCash.sub(futureCash);
-                markets[portfolio[i].maturity].totalLiquidity = market.totalLiquidity.sub(portfolio[i].notional);
+                markets[portfolio[i].maturity].totalLiquidity = market.totalLiquidity.sub(tokensToRemove);
 
-                // Mark the index for removal and marke the amount of future cash to return to the portfolio
-                indexesToRemove[indexes] = i;
+                if (tokensToRemove == portfolio[i].notional) {
+                    // If we've removed all the tokens, mark the asset for removal.
+                    indexesToRemove[indexes] = i;
+                } else {
+                    // For partial removal, just subtract the token amount
+                    accountTrades[account][i].notional = portfolio[i].notional.sub(tokensToRemove);
+                    // Set this to an invalid index so we don't remove any assets incorrectly
+                    indexesToRemove[indexes] = portfolio.length;
+                }
+
                 futureCashToAdd[indexes] = Trade(CASH_RECEIVER, portfolio[i].maturity, futureCash);
                 indexes++;
 
                 if (dai >= daiRemaining) {
-                    daiToReturn = dai - daiRemaining;
                     daiRemaining = 0;
                     break;
                 } else {
@@ -945,11 +985,13 @@ contract FutureCash is Ownable {
         assert(daiRemaining == 0);
 
         for (uint256 i; i < indexes; i++) {
-            _removeTrade(accountTrades[account], indexesToRemove[i]);
+            if (indexesToRemove[i] < portfolio.length) {
+                // This value will be set beyond the length of the portfolio if we do not want to
+                // remove the index.
+                _removeTrade(accountTrades[account], indexesToRemove[i]);
+            }
             _upsertTrade(account, futureCashToAdd[i]);
         }
-
-        return daiToReturn;
     }
 
     /**

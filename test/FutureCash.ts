@@ -240,7 +240,8 @@ describe("Future Cash", () => {
         // Deposit ETH as collateral for a loan.
         await futureCash.connect(wallet).depositEth({value: WeiPerEther});
         let freeCollateral = await futureCash.freeCollateral(wallet.address);
-        let daiBalance = await futureCash.getFutureCashToDai(maturities[0], WeiPerEther.mul(25));
+        const blockNum = await provider.getBlockNumber();
+        let daiBalance = await futureCash.getFutureCashToDaiBlock(maturities[0], WeiPerEther.mul(25), blockNum + 1);
 
         const marketBefore = await futureCash.markets(maturities[0]);
         // Deposit 25 dai in future cash, collateralized by an ETH
@@ -304,11 +305,12 @@ describe("Future Cash", () => {
 
         // Wallet needs to deposit Dai balance in order to take future cash
         await futureCash.connect(wallet).depositDai(WeiPerEther.mul(100));
-        const daiAmount = await futureCash.getDaiToFutureCash(maturities[0], WeiPerEther.mul(100));
+        const blockNum = await provider.getBlockNumber();
+        const daiAmount = await futureCash.getDaiToFutureCashBlock(maturities[0], WeiPerEther.mul(100), blockNum + 1);
 
         const marketBefore = await futureCash.markets(maturities[0]);
         expect(daiAmount).to.be.below(WeiPerEther.mul(100));
-        let freeCollateral = await futureCash.freeCollateral(wallet.address);
+        const freeCollateral = await futureCash.freeCollateral(wallet.address);
         await futureCash.connect(wallet).takeFutureCash(maturities[0], WeiPerEther.mul(100), 1000, WeiPerEther.mul(100));
         expect(await futureCash.daiBalances(wallet.address)).to.equal(WeiPerEther.mul(100).sub(daiAmount));
 
@@ -410,14 +412,15 @@ describe("Future Cash", () => {
 
         await futureCash.connect(wallet).depositDai(WeiPerEther.mul(1000));
         const impliedRateBefore = (await futureCash.markets(maturities[0])).lastImpliedRate;
-        const cash = await futureCash.getFutureCashToDai(maturities[0], WeiPerEther.mul(200));
+        const blockNum1 = await provider.getBlockNumber();
+        const cash = await futureCash.getFutureCashToDaiBlock(maturities[0], WeiPerEther.mul(200), blockNum1 + 1);
         expect(cash).to.be.below(WeiPerEther.mul(200));
 
         await futureCash.connect(wallet).takeDai(maturities[0], WeiPerEther.mul(200), 1000, 0);
-        const blockNum = await provider.getBlockNumber();
+        const blockNum2 = await provider.getBlockNumber();
 
         const impliedRateAfter = (await futureCash.markets(maturities[0])).lastImpliedRate;
-        const tradeImpliedRate = (WeiPerEther.mul(200).mul(1e9).div(cash).sub(1e9)).mul(20).div(maturities[0] - blockNum);
+        const tradeImpliedRate = (WeiPerEther.mul(200).mul(1e9).div(cash).sub(1e9)).mul(20).div(maturities[0] - blockNum2);
         // console.log(`Exchange Rate: ${exchangeRate}`);
         // console.log(`Implied Rate Before: ${impliedRateBefore}`);
         // console.log(`Implied Rate After: ${impliedRateAfter}`);
@@ -436,15 +439,16 @@ describe("Future Cash", () => {
 
         await futureCash.connect(wallet).depositDai(WeiPerEther.mul(1000));
         const impliedRateBefore = (await futureCash.markets(maturities[0])).lastImpliedRate;
-        const cash = await futureCash.getDaiToFutureCash(maturities[0], WeiPerEther.mul(200));
+        const blockNum1 = await provider.getBlockNumber();
+        const cash = await futureCash.getDaiToFutureCashBlock(maturities[0], WeiPerEther.mul(200), blockNum1 + 1);
         expect(cash).to.be.below(WeiPerEther.mul(200));
 
         await futureCash.connect(wallet).takeFutureCash(maturities[0], WeiPerEther.mul(200), 1000, WeiPerEther.mul(200));
         expect(await futureCash.daiBalances(wallet.address)).to.equal(WeiPerEther.mul(1000).sub(cash));
-        const blockNum = await provider.getBlockNumber();
+        const blockNum2 = await provider.getBlockNumber();
 
         const impliedRateAfter = (await futureCash.markets(maturities[0])).lastImpliedRate;
-        const tradeImpliedRate = (WeiPerEther.mul(200).mul(1e9).div(cash).sub(1e9)).mul(20).div(maturities[0] - blockNum);
+        const tradeImpliedRate = (WeiPerEther.mul(200).mul(1e9).div(cash).sub(1e9)).mul(20).div(maturities[0] - blockNum2);
 
         // console.log(`Implied Rate Before: ${impliedRateBefore}`);
         // console.log(`Implied Rate After: ${impliedRateAfter}`);
@@ -460,14 +464,13 @@ describe("Future Cash", () => {
         await futureCash.addLiquidity(maturities[0], WeiPerEther.mul(100), WeiPerEther.mul(100), 1000);
 
         // The rate will be calculated at the next block...
-        const blockNum = await provider.getBlockNumber() + 1;
+        const blockNum = await provider.getBlockNumber();
         const rateMantissa = await futureCash.INSTRUMENT_PRECISION();
         const periodSize = await futureCash.G_PERIOD_SIZE();
         const lastImpliedRate = (await futureCash.markets(maturities[0])).lastImpliedRate;
         const spotRate = (await futureCash.getRate(maturities[0]))[0];
-        // There's an off by one error here...
-        expect(Math.trunc((spotRate - rateMantissa) * periodSize / (maturities[0] - blockNum)) - 1).to.equal(lastImpliedRate);
-    })
+        expect(Math.trunc((spotRate - rateMantissa) * periodSize / (maturities[0] - blockNum))).to.equal(lastImpliedRate);
+    });
 
     it("should revert if too much dai is taken", async () => {
         let maturities = await futureCash.getActiveMaturities();

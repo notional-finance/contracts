@@ -136,8 +136,12 @@ describe("Liquidation", () => {
         expect(await futureCash.daiCashBalances(owner.address)).to.equal(0);
         expect(await futureCash.daiBalances(owner.address)).to.equal(ownerDaiBalance.add(WeiPerEther.mul(100)));
         expect(await futureCash.ethBalances(wallet.address)).to.equal(0);
-        expect(await futureCash.daiBalances(wallet.address)).to.equal(endingDaiBalance);
-        expect(await futureCash.getAccountTrades(wallet.address)).to.have.length(0);
+        expect(await futureCash.daiBalances(wallet.address)).to.equal(0);
+        const portfolioAfter = await futureCash.getAccountTrades(wallet.address);
+        expect(portfolioAfter).to.have.length(2);
+        expect(portfolioAfter[0].notional).to.equal(endingDaiBalance);
+        expect(portfolioAfter[1].notional).to.equal(endingDaiBalance);
+
     });
 
     // liquidate //
@@ -181,170 +185,89 @@ describe("Liquidation", () => {
         expect(await futureCash.freeCollateral(wallet.address)).to.be.above(0);
     });
 
-    it.skip("should settle cash between accounts when cash_receiver must be partially sold", async () => {
-        // There must be an initial cash_payer at maturity 0 to initiate a negative cash
-        // balance and then a larger cash_receiver at maturity 1 to collateralize the negative
-        // cash at maturity 0.
-        await futureCash.connect(wallet).depositDai(WeiPerEther.mul(1200));
-        await futureCash.connect(wallet).takeDai(maturities[0], WeiPerEther.mul(200), 1000, 0);
-        await futureCash.connect(wallet).takeFutureCash(maturities[1], WeiPerEther.mul(500), 1000, 0);
-        // Withdraw all the freeCollateral so that the CASH_RECEIVER is collateralizing the PAYER
-        await futureCash.connect(wallet).withdrawDai(WeiPerEther.mul(1200));
-
-        await mineBlocks(provider, 20);
-        await futureCash.settleBatch([wallet.address, owner.address]);
-
-        // These are all the variables to do before and after comparisons
-        let marketBefore = await futureCash.markets(maturities[1]);
-        let portfolioBefore = await futureCash.getAccountTrades(wallet.address);
-        let ownerDaiBalance = await futureCash.daiBalances(owner.address);
-        let walletDaiBalance = await futureCash.daiBalances(wallet.address);
-        let requiredFutureCash = await futureCash.getFutureCashToDaiOutput(
-            maturities[1],
-            WeiPerEther.mul(200).sub(walletDaiBalance)
-        );
-
-        let cashBalance = await futureCash.daiCashBalances(owner.address);
-        expect((await futureCash.daiCashBalances(wallet.address)).add(cashBalance)).to.equal(0);
-
-        // SETTLE CASH: 200 Dai
-        await futureCash.settleCash(wallet.address, cashBalance);
-
-        // Assert that balances have transferred.
-        expect(await futureCash.daiCashBalances(wallet.address)).to.equal(0);
-        expect(await futureCash.daiBalances(wallet.address)).to.equal(0);
-        expect(await futureCash.daiCashBalances(owner.address)).to.equal(0);
-        expect(await futureCash.daiBalances(owner.address)).to.equal(ownerDaiBalance.add(cashBalance));
-
-        // Portfolio
-        // We should have sold part of the cash receiver tokens.
-        let portfolioAfter = await futureCash.getAccountTrades(wallet.address);
-        expect(portfolioAfter.length).to.equal(1);
-        expect(portfolioAfter[0].tradeType).to.equal(2);
-        expect(portfolioAfter[0].maturity).to.equal(60);
-        expect(portfolioBefore[0].notional.sub(requiredFutureCash)).to.equal(portfolioAfter[0].notional);
-
-        // Markets
-        let marketAfter = await futureCash.markets(maturities[1]);
-        expect(marketBefore.totalCollateral.sub(WeiPerEther.mul(200).sub(walletDaiBalance))).to.equal(
-            marketAfter.totalCollateral
-        );
-        expect(marketBefore.totalLiquidity).to.equal(marketAfter.totalLiquidity);
-        expect(marketBefore.totalFutureCash.add(requiredFutureCash)).to.equal(marketAfter.totalFutureCash);
-    });
-
-    it.skip("should settle cash between accounts when cash_receiver must be fully sold", async () => {
-        await futureCash.connect(wallet).depositDai(WeiPerEther.mul(2000));
-        await futureCash.connect(wallet).takeDai(maturities[0], WeiPerEther.mul(200), 1000, 0);
-        await futureCash.connect(wallet).takeFutureCash(maturities[2], WeiPerEther.mul(600), 1000, 0);
-        await futureCash.connect(wallet).takeFutureCash(maturities[1], WeiPerEther.mul(10), 1000, 0);
-        // Withdraw all the freeCollateral so that the CASH_RECEIVER is collateralizing the PAYER
-        await futureCash.connect(wallet).withdrawDai(await futureCash.freeCollateral(wallet.address));
-        /*
-        console.log(await futureCash.freeCollateral(wallet.address));
-        console.log(await futureCash.daiBalances(wallet.address));
-
-        // These are all the variables to do before and after comparisons
-        let marketBefore = await futureCash.markets(maturities[1]);
-        let portfolioBefore = await futureCash.getAccountTrades(wallet.address);
-        console.log(portfolioBefore);
-
-        await mineBlocks(provider, 20);
-        await futureCash.settleBatch([wallet.address, owner.address]);
-
-        let cashBalance = await futureCash.daiCashBalances(owner.address);
-        console.log(cashBalance);
-        expect((await futureCash.daiCashBalances(wallet.address)).add(cashBalance)).to.equal(0);
-
-        // SETTLE CASH: 200 Dai
-        await futureCash.settleCash(wallet.address, cashBalance);
-
-        let portfolioAfter = await futureCash.getAccountTrades(wallet.address);
-        console.log(portfolioAfter);
-        */
-    });
-
-    it.skip("should settle cash with the dai portion of the liquidity token", async () => {
+    it("should settle cash with the dai portion of the liquidity token", async () => {
         await futureCash.connect(wallet).depositDai(WeiPerEther.mul(1000));
         await futureCash.connect(wallet).takeDai(maturities[0], WeiPerEther.mul(200), 1000, 0);
         await futureCash.connect(wallet).addLiquidity(maturities[1], WeiPerEther.mul(500), WeiPerEther.mul(500), 1000);
-        // Withdraw all the dai so that the LIQUIDITY_TOKEN is collateralizing the PAYER
-        await futureCash.connect(wallet).withdrawDai(await futureCash.freeCollateral(wallet.address));
+        const daiBalance = await futureCash.daiBalances(wallet.address);
+        // At this point the dai claim in the liquidity tokens is collateralizing the payer. Leave 100 dai in just to
+        // test that we will settle both properly.
+        await futureCash.connect(wallet).withdrawDai(daiBalance.sub(WeiPerEther.mul(100)));
 
         await mineBlocks(provider, 20);
         await futureCash.settleBatch([wallet.address, owner.address]);
 
         // These are all the variables to do before and after comparisons
-        let marketBefore = await futureCash.markets(maturities[1]);
-        let ownerDaiBalance = await futureCash.daiBalances(owner.address);
-        let walletDaiBalance = await futureCash.daiBalances(wallet.address);
-        let valueBefore = await futureCash.getTokenValue(maturities[1], WeiPerEther.mul(500));
+        const marketBefore = await futureCash.markets(maturities[1]);
+        const ownerDaiBalance = await futureCash.daiBalances(owner.address);
 
-        // This is the Dai part of the token that we will give back.
-        let daiRequiredToRaise = WeiPerEther.mul(200).sub(walletDaiBalance);
-        let daiBalanceAfter = valueBefore[0].sub(daiRequiredToRaise);
-
-        let cashBalance = await futureCash.daiCashBalances(owner.address);
+        const cashBalance = await futureCash.daiCashBalances(owner.address);
         expect((await futureCash.daiCashBalances(wallet.address)).add(cashBalance)).to.equal(0);
 
         // SETTLE CASH: 200 Dai
         await futureCash.settleCash(wallet.address, cashBalance);
 
         // Assert that balances have transferred.
-        expect(await futureCash.daiBalances(wallet.address)).to.equal(daiBalanceAfter);
         expect(await futureCash.daiCashBalances(wallet.address)).to.equal(0);
         expect(await futureCash.daiCashBalances(owner.address)).to.equal(0);
         expect(await futureCash.daiBalances(owner.address)).to.equal(ownerDaiBalance.add(cashBalance));
+        // This is 100 from liquidity tokens + 100 from dai - 200 cash payout.
+        expect(await futureCash.daiBalances(wallet.address)).to.equal(0);
 
-        // Portfolio
-        // We should have sold all of the tokens and the cash payer has been removed.
-        let portfolioAfter = await futureCash.getAccountTrades(wallet.address);
-        expect(portfolioAfter.length).to.equal(0);
+        // Portfolio: we should have sold part of the tokens and the cash payer has updated
+        const portfolioAfter = await futureCash.getAccountTrades(wallet.address);
+        expect(portfolioAfter.length).to.equal(2);
+        expect(portfolioAfter[0].notional).to.equal(WeiPerEther.mul(400));
+        expect(portfolioAfter[1].notional).to.equal(WeiPerEther.mul(400));
 
         // Check market differences
-        let marketsAfter = await futureCash.markets(maturities[1]);
+        const marketsAfter = await futureCash.markets(maturities[1]);
         // Should have taken out all the dai and future cash the token represents
-        expect(marketBefore.totalCollateral.sub(marketsAfter.totalCollateral)).to.equal(valueBefore[0]);
-        expect(marketBefore.totalLiquidity.sub(marketsAfter.totalLiquidity)).to.equal(WeiPerEther.mul(500));
-        // In this scenario we started with + 500 liquidity tokens, -500 cash payer => + 500 Dai, + 500 cash receiver
-        // The net change in future cash is 0
-        expect(marketBefore.totalFutureCash.sub(marketsAfter.totalFutureCash)).to.equal(0);
+        expect(marketBefore.totalCollateral.sub(marketsAfter.totalCollateral)).to.equal(WeiPerEther.mul(100));
+        expect(marketBefore.totalLiquidity.sub(marketsAfter.totalLiquidity)).to.equal(WeiPerEther.mul(100));
+        expect(marketBefore.totalFutureCash.sub(marketsAfter.totalFutureCash)).to.equal(WeiPerEther.mul(100));
     });
 
-    it.skip("should settle cash with the dai and future cash portion of the liquidity token", async () => {
+    it("should settle cash with the entire liquidity token", async () => {
         await futureCash.connect(wallet).depositDai(WeiPerEther.mul(1000));
-        await futureCash.connect(wallet).depositEth({value: WeiPerEther.mul(5)});
         await futureCash.connect(wallet).takeDai(maturities[0], WeiPerEther.mul(200), 1000, 0);
-        await futureCash.connect(wallet).addLiquidity(maturities[1], WeiPerEther.mul(150), WeiPerEther.mul(150), 100);
-        // Nets out CASH_PAYER, also test: cash receiver
-        await futureCash.connect(wallet).takeFutureCash(maturities[1], WeiPerEther.mul(150), 1000, 0);
-        await futureCash.connect(wallet).withdrawDai(await futureCash.daiBalances(wallet.address));
+        await futureCash.connect(wallet).addLiquidity(maturities[1], WeiPerEther.mul(200), WeiPerEther.mul(200), 1000);
+        await futureCash.connect(wallet).addLiquidity(maturities[2], WeiPerEther.mul(200), WeiPerEther.mul(200), 1000);
+        const daiBalance = await futureCash.daiBalances(wallet.address);
+        // At this point the dai claim in the liquidity tokens is collateralizing the payer.
+        await futureCash.connect(wallet).withdrawDai(daiBalance);
 
         await mineBlocks(provider, 20);
         await futureCash.settleBatch([wallet.address, owner.address]);
-        /*
-        console.log(await futureCash.freeCollateral(wallet.address));
 
         // These are all the variables to do before and after comparisons
-        let marketBefore = await futureCash.markets(maturities[1]);
-        let ownerDaiBalance = await futureCash.daiBalances(owner.address);
-        let walletDaiBalance = await futureCash.daiBalances(wallet.address);
-        let valueBefore = await futureCash.getTokenValue(maturities[1], WeiPerEther.mul(150));
+        const marketBefore = await futureCash.markets(maturities[1]);
+        const ownerDaiBalance = await futureCash.daiBalances(owner.address);
 
-        // This is the Dai part of the token that we will give back.
-        let daiRequiredToRaise = WeiPerEther.mul(150).sub(walletDaiBalance);
-        let daiBalanceAfter = valueBefore[0].sub(daiRequiredToRaise);
+        const cashBalance = await futureCash.daiCashBalances(owner.address);
+        expect((await futureCash.daiCashBalances(wallet.address)).add(cashBalance)).to.equal(0);
 
         // SETTLE CASH: 200 Dai
-        let cashBalance = await futureCash.daiCashBalances(owner.address);
         await futureCash.settleCash(wallet.address, cashBalance);
 
         // Assert that balances have transferred.
-        // expect(await futureCash.daiBalances(wallet.address)).to.equal(daiBalanceAfter);
         expect(await futureCash.daiCashBalances(wallet.address)).to.equal(0);
         expect(await futureCash.daiCashBalances(owner.address)).to.equal(0);
         expect(await futureCash.daiBalances(owner.address)).to.equal(ownerDaiBalance.add(cashBalance));
-        */
+        // This is 200 from liquidity tokens + 0 from dai - 200 cash payout.
+        expect(await futureCash.daiBalances(wallet.address)).to.equal(0);
+
+        // Portfolio: we should have sold all of the tokens and the cash payer has been removed.
+        const portfolioAfter = await futureCash.getAccountTrades(wallet.address);
+        expect(portfolioAfter.length).to.equal(2);
+        expect(portfolioAfter[0].maturity).to.equal(maturities[2]);
+        expect(portfolioAfter[1].maturity).to.equal(maturities[2]);
+
+        // Check market differences
+        const marketsAfter = await futureCash.markets(maturities[1]);
+        // Should have taken out all the dai and future cash the token represents
+        expect(marketBefore.totalCollateral.sub(marketsAfter.totalCollateral)).to.equal(WeiPerEther.mul(200));
+        expect(marketBefore.totalLiquidity.sub(marketsAfter.totalLiquidity)).to.equal(WeiPerEther.mul(200));
+        expect(marketBefore.totalFutureCash.sub(marketsAfter.totalFutureCash)).to.equal(WeiPerEther.mul(200));
     });
-    it.skip("should settle cash with both cash_receiver and liquidity tokens", async () => {});
 });

@@ -16,6 +16,12 @@ import UniswapExchangeArtifact from "../uniswap/UniswapExchange.json";
 import {UniswapExchangeInterface} from "../typechain/UniswapExchangeInterface";
 import defaultAccounts from "./defaultAccounts.json";
 
+import ProxyAdminArtifact from "../build/ProxyAdmin.json";
+import {ProxyAdmin} from "../typechain/ProxyAdmin";
+
+import AdminUpgradeabilityProxyArtifact from "../build/AdminUpgradeabilityProxy.json";
+import {AdminUpgradeabilityProxy} from "../typechain/AdminUpgradeabilityProxy";
+
 chai.use(solidity);
 const {expect} = chai;
 
@@ -62,23 +68,35 @@ export async function fixture(provider: providers.Provider, [owner]: Wallet[]) {
         {value: ethers.constants.WeiPerEther.mul(10_000)}
     );
 
+    // Initialize proxy contracts
+    const proxyAdmin = await deployContract(owner, ProxyAdminArtifact, []) as ProxyAdmin;
+    expect(proxyAdmin.address).to.properAddress;
+
     let futureCashArtifact: any;
-    let futureCash: FutureCash;
+    let futureCashLogic: FutureCash;
     if (process.env.COVERAGE == "true") {
         futureCashArtifact = JSON.parse(readFileSync(".coverage_artifacts/FutureCash.json", "utf8"));
-        futureCash = (await deployContract(owner, futureCashArtifact, [20, erc20.address, uniswap.address], {
-            gasLimit: 20000000
-        })) as FutureCash;
-        expect(futureCash.address).to.properAddress;
+        futureCashLogic = (await deployContract(owner, futureCashArtifact, [], { gasLimit: 20000000 })) as FutureCash;
+        expect(futureCashLogic.address).to.properAddress;
     } else {
         futureCashArtifact = JSON.parse(readFileSync("build/FutureCash.json", "utf8"));
-        futureCash = (await deployContract(owner, futureCashArtifact, [20, erc20.address, uniswap.address], {
-            gasLimit: 6000000
-        })) as FutureCash;
-        expect(futureCash.address).to.properAddress;
+        futureCashLogic = (await deployContract(owner, futureCashArtifact, [], { gasLimit: 6000000 })) as FutureCash;
+        expect(futureCashLogic.address).to.properAddress;
     }
 
-    return {erc20, futureCash, owner, uniswap};
+    const abi = new ethers.utils.Interface(futureCashArtifact.abi);
+    const data = abi.functions.initialize.encode([20, erc20.address, uniswap.address]);
+    const proxy = await deployContract(
+        owner,
+        AdminUpgradeabilityProxyArtifact,
+        [futureCashLogic.address, proxyAdmin.address, data]
+    ) as AdminUpgradeabilityProxy;
+    const futureCash = new ethers.Contract(
+        proxy.address,
+        futureCashArtifact.abi,
+        owner
+    ) as FutureCash;
+    return {erc20, futureCash, owner, uniswap, proxy, proxyAdmin};
 }
 
 export async function mineBlocks(provider: providers.Web3Provider, numBlocks: number) {
