@@ -14,26 +14,16 @@ import "./interface/IRiskFramework.sol";
 import "./Escrow.sol";
 import "./FutureCash.sol";
 
+import "./storage/PortfoliosStorage.sol";
+
 /**
  * @title Portfolios
  * @notice Holds all the methods for managing an account's portfolio of trades
  */
-contract Portfolios is Governed {
+contract Portfolios is PortfoliosStorage, Governed {
     using SafeMath for uint256;
     using SafeInt256 for int256;
     using SafeUInt128 for uint128;
-
-    // This is used when referencing a trade that does not exist.
-    Common.Trade internal NULL_TRADE;
-
-    // Mapping between accounts and their trades
-    mapping(address => Common.Trade[]) private _accountTrades;
-
-    // Mapping between instrument group ids and instrument groups
-    mapping(uint8 => Common.InstrumentGroup) public instrumentGroups;
-    // The current instrument group id, 0 is unused
-    uint8 private _currentInstrumentGroupId;
-    uint8 private constant MAX_INSTRUMENT_GROUPS = 0xFE;
 
     event SettledAccount(address operator, address account);
     event NewInstrumentGroup(uint8 indexed instrumentGroupId);
@@ -48,14 +38,6 @@ contract Portfolios is Governed {
     }
 
     /****** Governance Parameters ******/
-
-    // This is the max number of trades that can be in a portfolio. This is set so that we don't end up with massive
-    // portfolios that can't be liquidated due to gas cost restrictions.
-    uint256 public G_MAX_TRADES;
-    // Number of currency groups, set by the Escrow account.
-    uint16 public G_NUM_CURRENCIES;
-    // The currency that is used to collateralize obligations. Used in free collateral and set by Escrow.
-    uint16 public G_COLLATERAL_CURRENCY;
 
     function setNumCurrencies(uint16 numCurrencies) public {
         require(msg.sender == contracts[uint256(CoreContracts.Escrow)], $$(ErrorCode(UNAUTHORIZED_CALLER)));
