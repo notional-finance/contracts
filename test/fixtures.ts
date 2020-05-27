@@ -5,6 +5,7 @@ import {Wallet, providers} from "ethers";
 import {readFileSync} from "fs";
 import path from "path";
 import { WeiPerEther } from 'ethers/constants';
+import { CoreContracts } from "../scripts/SwapnetLite";
 
 import ERC20Artifact from "../build/ERC20.json";
 import {ERC20} from "../typechain/ERC20";
@@ -41,20 +42,6 @@ export const wallets = defaultAccounts.map(acc => {
     return new Wallet(acc.secretKey, provider);
 });
 export const fixtureLoader = createFixtureLoader(provider, [wallets[0]]);
-
-// This is a mirror of the enum in Governed
-export const enum CoreContracts {
-    Escrow = 0,
-    Instruments,
-    LiquidationAuction,
-    RiskFramework,
-    Swap,
-    Portfolios,
-    SettlementOracle,
-    ERC1155Token,
-    SwapnetUtils,
-    PoolShares
-}
 
 /**
  * Deploys and configures a base set of contracts for unit testing.
@@ -139,7 +126,6 @@ export async function fixture(provider: providers.Provider, [owner]: Wallet[]) {
     await escrow.createCurrencyGroup(erc20.address);
     await escrow.addExchangeRate(2, 1, chainlink.address, uniswap.address, WeiPerEther.div(100).mul(30));
     await chainlink.setAnswer(WeiPerEther.div(100));
-    // await escrow.registerFutureCashMarket(2, futureCash.address, 0);
     await escrow.setEscrowHaircuts(WeiPerEther, WeiPerEther.add(WeiPerEther.div(100).mul(5)));
 
     // Sets the collateral currency to ETH
