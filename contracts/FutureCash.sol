@@ -3,80 +3,53 @@ pragma experimental ABIEncoderV2;
 
 import "./lib/SafeUInt128.sol";
 import "./lib/SafeInt256.sol";
-import "./lib/UniswapExchangeInterface.sol";
 import "./lib/ABDKMath64x64.sol";
-
 import "./lib/SafeMath.sol";
-import "./lib/IERC20.sol";
-import "./upgradeable/Ownable.sol";
-import "./upgradeable/Initializable.sol";
+import "./lib/UniswapExchangeInterface.sol";
 
+import "./utils/Governed.sol";
+import "./utils/Directory.sol";
+import "./utils/Common.sol";
 
-/** A demo contract of the future cash market */
-contract FutureCash is OpenZeppelinUpgradesOwnable, Initializable {
+import "./Escrow.sol";
+import "./Portfolios.sol";
+
+/**
+ * @title Future Cash Market
+ * @notice Marketplace for trading future cash tokens to create fixed rate entitlements or obligations.
+ */
+contract FutureCash is Governed {
     using SafeUInt128 for uint128;
     using SafeMath for uint256;
     using SafeInt256 for int256;
 
-    uint32 public G_NUM_PERIODS;
-    uint128 public G_ETH_HAIRCUT;
-    uint128 public G_PORTFOLIO_HAIRCUT;
-    uint128 public G_MAX_TRADE_SIZE;
-
-    uint32 public G_RATE_ANCHOR;
-    uint16 public G_RATE_SCALAR;
-
-    uint32 public G_LIQUIDITY_FEE;
-    uint128 public G_LIQUIDATION_BONUS;
-    uint128 public G_LIQUIDATION_BUFFER;
-    uint128 public constant DECIMALS = 1e18;
-    uint32 public constant INSTRUMENT_PRECISION = 1e9;
+    // This is used in _tradeCalculation to shift the ln calculation
     int128 internal constant PRECISION_64x64 = 0x3b9aca000000000000000000;
-    uint128 internal constant MAX_UINT_128 = (2**128)-1;
 
-    // These are constants set at deployment.
-    uint32 public G_PERIOD_SIZE;
-    address public G_DAI_CONTRACT;
-    address public G_UNISWAP_DAI_CONTRACT;
+    function initialize(address _directory, address collateralToken) public initializer {
+        Governed.initialize(_directory);
 
-    function initialize(uint32 periodSize, address daiContract, address exchange) public initializer {
-        G_PERIOD_SIZE = periodSize;
-        G_DAI_CONTRACT = daiContract;
-        G_UNISWAP_DAI_CONTRACT = exchange;
-        _owner = msg.sender;
+        // This sets an immutable parameter that defines the token that this future cash market trades.
+        G_COLLATERAL_TOKEN = collateralToken;
+
+        // Setting dependencies can only be done once here. With proxy contracts the addresses shouldn't
+        // change as we upgrade the logic.
+        Governed.CoreContracts[] memory dependencies = new Governed.CoreContracts[](2);
+        dependencies[0] = CoreContracts.Escrow;
+        dependencies[1] = CoreContracts.Portfolios;
+        address[] memory _contracts = Directory(directory).getContracts(dependencies);
+
+        contracts[uint256(CoreContracts.Escrow)] = _contracts[0];
+        contracts[uint256(CoreContracts.Portfolios)] = _contracts[1];
     }
 
-    function setRateFactors(uint32 rateAnchor, uint16 rateScalar) external onlyOwner {
-        require(rateScalar >= 0 && rateAnchor >= 0, $$(ErrorCode(INVALID_RATE_FACTORS)));
-        G_RATE_SCALAR = rateScalar;
-        G_RATE_ANCHOR = rateAnchor;
-    }
-
-    function setHaircutSize(uint128 eth, uint128 portfolio) external onlyOwner {
-        G_ETH_HAIRCUT = eth;
-        // This buffer accounts for slippage when selling off ETH for Dai.
-        G_LIQUIDATION_BUFFER = DECIMALS.sub(eth.add(5e16));
-        // We expect this to be DECIMALS + a fractional amount
-        G_PORTFOLIO_HAIRCUT = portfolio;
-    }
-
-    function setMaxTradeSize(uint128 amount) external onlyOwner {
-        G_MAX_TRADE_SIZE = amount;
-    }
-
-    function setNumPeriods(uint32 numPeriods) external onlyOwner {
-        G_NUM_PERIODS = numPeriods;
-    }
-
-    function setFee(uint32 liquidityFee) external onlyOwner {
-        G_LIQUIDITY_FEE = liquidityFee;
-    }
-
-    // Holds the total balance of future cash and current cash in the corresponding market. Future cash
-    // matures at its corresponding period id.
+    // Defines the fields for each market in each maturity.
     struct Market {
+        // Total amount of future cash available for purchase in the market.
         uint128 totalFutureCash;
+        // Total amount of liquidity tokens (representing a claim on liquidity) in the market.
         uint128 totalLiquidity;
+        // Total amount of collateral available for purchase in the market.
         uint128 totalCollateral;
         // These factors are set when the market is instantiated by a liquidity provider via the global
         // settings and then held constant for the duration of the maturity. We cannot change them without
@@ -87,121 +60,99 @@ contract FutureCash is OpenZeppelinUpgradesOwnable, Initializable {
         uint32 lastImpliedRate;
     }
 
-    /** Types of Trades **/
-    // Represents an obligation of the holder to pay the notional amount at maturity
-    uint8 public constant CASH_PAYER = 1;
-    // Represents an future cash flow that the holder will receive at maturity
-    uint8 public constant CASH_RECEIVER = 2;
-    // Represents an share of a liquidity pool at the designated maturity
-    uint8 public constant LIQUIDITY_TOKEN = 3;
-
-    // This holds a trade object that goes into an account's portfolio
-    struct Trade {
-        // The type of trade, can only be one of the trades noted above
-        uint8 tradeType;
-        // The block that this trade matures at
-        uint32 maturity;
-        // The amount of notional for the trade.
-        uint128 notional;
-    }
-
-    // This is a mapping between period ids and a market. Each market contains the balance of future cash
-    // (cash that matures at the periodId) and current cash. The exchange rate between these two pools defines
-    // a discount rate.
+    // This is a mapping between a maturity and its corresponding market.
     mapping(uint32 => Market) public markets;
 
-    // Collateral Balances
-    mapping(address => uint128) public ethBalances;
-    mapping(address => uint128) public daiBalances;
+    /********** Governance Parameters *********************/
 
-    // Portfolios
-    mapping(address => Trade[]) public accountTrades;
+    // Represents the address of the token that will be the collateral in the marketplace.
+    address public G_COLLATERAL_TOKEN;
+    // These next parameters are set by the Portfolios contract and are immutable, except for
+    // G_NUM_PERIODS
+    uint8 public INSTRUMENT_GROUP;
+    uint16 public INSTRUMENT;
+    uint16 public CURRENCY_GROUP;
+    uint32 public INSTRUMENT_PRECISION;
+    uint32 public G_PERIOD_SIZE;
+    uint32 public G_NUM_PERIODS;
 
-    // Current Cash Balances
-    mapping(address => int256) public daiCashBalances;
+    // These are governance parameters for the market itself and can be set by the owner.
 
-    /** Returns the trade array */
-    function getAccountTrades(address account) public view returns (Trade[] memory) {
-        return accountTrades[account];
+    // The maximum trade size denominated in local currency
+    uint128 public G_MAX_TRADE_SIZE;
+
+    // The y-axis shift of the rate curve
+    uint32 public G_RATE_ANCHOR;
+    // The slope of the rate curve
+    uint16 public G_RATE_SCALAR;
+    // The fee in basis points given to liquidity providers
+    uint32 public G_LIQUIDITY_FEE;
+    // The fee as a percentage of the collateral traded given to the protocol
+    uint128 public G_TRANSACTION_FEE;
+
+    /**
+     * @notice Sets governance parameters on the rate oracle.
+     *
+     * @param instrumentGroupId this cannot change once set
+     * @param instrumentId cannot change once set
+     * @param currency cannot change once set
+     * @param precision will only take effect on a new period
+     * @param periodSize will take effect immediately, must be careful
+     * @param numPeriods will take effect immediately, makers can create new markets
+     */
+    function setParameters(
+        uint8 instrumentGroupId,
+        uint16 instrumentId,
+        uint16 currency,
+        uint32 precision,
+        uint32 periodSize,
+        uint32 numPeriods,
+        uint32 /* maxRate */
+    ) external {
+        require(msg.sender == contracts[uint256(CoreContracts.Portfolios)], $$(ErrorCode(UNAUTHORIZED_CALLER)));
+
+        // These values cannot be reset once set.
+        if (INSTRUMENT_GROUP == 0) {
+            INSTRUMENT_GROUP = instrumentGroupId;
+            INSTRUMENT = instrumentId;
+            CURRENCY_GROUP = currency;
+            INSTRUMENT_PRECISION = precision;
+            G_PERIOD_SIZE = periodSize;
+        }
+
+        // This is the only mutable governance parameter.
+        G_NUM_PERIODS = numPeriods;
     }
 
-    event TransferEth(address indexed account, uint256 amount, bool isDeposit);
-    event TransferDai(address indexed account, uint256 amount, bool isDeposit);
+    function setRateFactors(uint32 rateAnchor, uint16 rateScalar) external onlyOwner {
+        require(rateScalar >= 0 && rateAnchor >= 0, $$(ErrorCode(INVALID_RATE_FACTORS)));
+        G_RATE_SCALAR = rateScalar;
+        G_RATE_ANCHOR = rateAnchor;
+    }
+
+    function setMaxTradeSize(uint128 amount) external onlyOwner {
+        G_MAX_TRADE_SIZE = amount;
+    }
+
+    function setFee(uint32 liquidityFee, uint128 transactionFee) external onlyOwner {
+        G_LIQUIDITY_FEE = liquidityFee;
+        G_TRANSACTION_FEE = transactionFee;
+    }
+    /********** Governance Parameters *********************/
+
+    /********** Events ************************************/
     event TransferAsset(address indexed from, address indexed to, uint8 tradeType, uint32 maturity, uint128 notional);
-    event CreateAsset(address indexed account, uint8 tradeType, uint32 maturity, uint128 futureCash, uint128 daiAmount);
-    event AddLiquidity(address indexed account, uint32 maturity, uint128 tokens, uint128 futureCash, uint128 daiAmount);
+    event CreateAsset(address indexed account, uint8 tradeType, uint32 maturity, uint128 futureCash, uint128 currentAmount);
+    event AddLiquidity(address indexed account, uint32 maturity, uint128 tokens, uint128 futureCash, uint128 currentAmount);
     event RemoveLiquidity(
         address indexed account,
         uint32 maturity,
         uint128 tokens,
         uint128 futureCash,
-        uint128 daiAmount
+        uint128 currentAmount
     );
     event UpdateCashBalance(address indexed account, int256 amount);
     event SettleCash(address indexed from, address indexed to, uint128 amount);
-
-    /**
-     * @notice Deposit ETH to use as collateral for loans. All future cash is denominated in Dai so this is only
-     * useful as collateral for borrowing. Lenders will have to deposit dai in order to purchase future cash.
-     * The amount of eth deposited should be set in `msg.value`.
-     */
-    function depositEth() public payable {
-        require(msg.value <= MAX_UINT_128, $$(ErrorCode(OVER_MAX_ETH_BALANCE)));
-        ethBalances[msg.sender] = ethBalances[msg.sender].add(uint128(msg.value));
-
-        emit TransferEth(msg.sender, msg.value, true);
-    }
-
-    /**
-     * @notice Withdraw ETH from the contract. This can only be done after a successful free collateral check.
-     * @dev We do not use `msg.sender.transfer` or `msg.sender.send` as recommended by Consensys:
-     * https://diligence.consensys.net/blog/2019/09/stop-using-soliditys-transfer-now/
-     *
-     * @param amount the amount of eth to withdraw from the contract
-     */
-    function withdrawEth(uint128 amount) public {
-        uint128 balance = ethBalances[msg.sender];
-        // Do all of these checks before we actually transfer the ETH to limit re-entrancy.
-        require(balance >= amount, $$(ErrorCode(INSUFFICIENT_BALANCE)));
-        ethBalances[msg.sender] = balance.sub(amount);
-        require(_settleAndFreeCollateral(msg.sender) >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL)));
-
-        // solium-disable-next-line security/no-call-value
-        (bool success, ) = msg.sender.call.value(amount)("");
-        require(success, $$(ErrorCode(TRANSFER_FAILED)));
-
-        emit TransferEth(msg.sender, amount, false);
-    }
-
-    /**
-     * @notice Deposit DAI into the contract for lending. The Dai contract must give proper allowances to this
-     * contract in order to do the transfer from the sender.
-     *
-     * @param amount the amount of dai to deposit into the contract
-     */
-    function depositDai(uint128 amount) public {
-        daiBalances[msg.sender] = daiBalances[msg.sender].add(amount);
-        IERC20(G_DAI_CONTRACT).transferFrom(msg.sender, address(this), amount);
-
-        emit TransferDai(msg.sender, amount, true);
-    }
-
-    /**
-     * @notice Withdraw Dai from the contract back to the sender. Can only be done if the sender passes a free
-     * collateral check.
-     *
-     * @param amount the amount of dai to withdraw
-     */
-    function withdrawDai(uint128 amount) public {
-        uint128 balance = daiBalances[msg.sender];
-        require(balance >= amount, $$(ErrorCode(INSUFFICIENT_BALANCE)));
-
-        daiBalances[msg.sender] = balance.sub(amount);
-        require(_settleAndFreeCollateral(msg.sender) >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL)));
-
-        IERC20(G_DAI_CONTRACT).transferFrom(address(this), msg.sender, amount);
-        emit TransferDai(msg.sender, amount, false);
-    }
 
     /**
      * @notice Transfers the future cash from the sender to the specified destination address. This can only be done
@@ -212,7 +163,6 @@ contract FutureCash is OpenZeppelinUpgradesOwnable, Initializable {
      * @param to the destination account to send the token to
      * @param index the position in an account's portfolio to transfer
      * @param amount the amount of notional to transfer
-     */
     function transferFutureCash(address to, uint256 index, uint128 amount) public {
         // Check that this is cash receiver or liquidity token
         Trade memory trade = accountTrades[msg.sender][index];
@@ -224,398 +174,62 @@ contract FutureCash is OpenZeppelinUpgradesOwnable, Initializable {
 
         // Subtract the balance of this token from the account and then check if it is still collateralized.
         if (trade.notional == amount) {
-            _removeTrade(accountTrades[msg.sender], index);
+            // _removeTrade(accountTrades[msg.sender], index);
         } else {
             accountTrades[msg.sender][index].notional = trade.notional - amount;
         }
-        require(_settleAndFreeCollateral(msg.sender) >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL)));
+        // require(_settleAndFreeCollateral(msg.sender) >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL)));
 
         // If the check passes, then we can finish the transfer.
         trade.notional = amount;
-        _upsertTrade(to, trade);
+        // _upsertTrade(to, trade);
 
         emit TransferAsset(msg.sender, to, trade.tradeType, trade.maturity, trade.notional);
     }
-
-    /**
-     * @notice Settles all matured cash trades and liquidity tokens in a user's portfolio. This method is
-     * unauthenticated, anyone may settle the trades in any account. This is required for accounts that
-     * have negative cash and counterparties need to settle against them.
-     *
-     * @param account the address of the account to settle
      */
-    function settle(address account) public {
-        uint32 blockNum = uint32(block.number);
-        Trade[] storage portfolio = accountTrades[account];
-        int256 cashBalance = daiCashBalances[account];
 
-        // Loop through the list of portfolio and find the ones that have matured.
-        for (uint256 i; i < portfolio.length; i++) {
-            if (portfolio[i].maturity <= blockNum) {
-                if (portfolio[i].tradeType == CASH_PAYER) {
-                    // If the trade is a payer, we subtract from the cash balance
-                    cashBalance = cashBalance.sub(portfolio[i].notional);
-                } else if (portfolio[i].tradeType == CASH_RECEIVER) {
-                    // If the trade is a receiver, we add to the cash balance
-                    cashBalance = cashBalance.add(portfolio[i].notional);
-                } else if (portfolio[i].tradeType == LIQUIDITY_TOKEN) {
-                    // Settling liquidity tokens is a bit more involved since we need to remove
-                    // money from the collateral pools. This function returns the amount of future cash
-                    // the liquidity token has a claim to.
-                    cashBalance = cashBalance.add(
-                        _settleLiquidityToken(account, portfolio[i].notional, portfolio[i].maturity)
-                    );
-                }
+    /********** Events ************************************/
 
-                // Remove trade from the portfolio
-                _removeTrade(portfolio, i);
-                // The portfolio has gotten smaller, so we need to go back to account
-                // for the removed trade.
-                i--;
-            }
-        }
-
-        daiCashBalances[account] = cashBalance;
-        emit UpdateCashBalance(account, cashBalance);
-    }
-
-    /**
-     * @notice The batch version of the `settle` call.
-     *
-     * @param accounts an array of addresses to settle
-     */
-    function settleBatch(address[] calldata accounts) external {
-        for (uint256 i; i < accounts.length; i++) {
-            settle(accounts[i]);
-        }
-    }
-
-    /**
-     * @notice Settles cash balances that parties hold. This is an important concept in Swapnet because we cannot settle
-     * trades directly to collateral. Parties must find counterparty with enough of a negative current cash balance
-     * to settle against before they can withdraw their collateral.
-     *
-     * @param counterparty the counterparty to settle a cash balance against
-     * @param value the amount of cash (positive or negative) to settle
-     */
-    function settleCash(address counterparty, int256 value) external {
-        require(msg.sender != counterparty, $$(ErrorCode(COUNTERPARTY_CANNOT_BE_SELF)));
-        // First we settle any matured trades in both parties portfolios.
-        settle(msg.sender);
-        settle(counterparty);
-
-        // Nothing to do if value is set to 0
-        if (value == 0) return;
-        // We now calculate who receiving cash and who is paying cash in this scenario.
-        address payer;
-        address receiver;
-        // This is the absolute value of `value` once we know the direction of the cash flow.
-        uint128 positiveValue;
-
-        if (value > 0) {
-            // Settling a positive balance so collateral will flow from counterparty -> msg.sender
-            (payer, receiver) = (counterparty, msg.sender);
-            positiveValue = uint128(value);
-        } else {
-            // Settling a negative balance so collateral will flow from msg.sender -> counterparty
-            (payer, receiver) = (msg.sender, counterparty);
-            positiveValue = uint128(value.neg());
-        }
-
-        // This cash account must have enough negative cash balance to actually owe this amount.
-        require(daiCashBalances[payer] <= int256(positiveValue).neg(), $$(ErrorCode(INSUFFICIENT_CASH_BALANCE)));
-
-        // Cash balances can only be settled against accounts with free collateral. If the account has insuffient
-        // free collateral, they must be liquidated instead.
-        require(_settleAndFreeCollateral(payer) >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL)));
-
-        // Net out cash balances, the payer no longer owes this cash. The receiver is no longer owed this cash.
-        daiCashBalances[payer] = daiCashBalances[payer].add(positiveValue);
-        daiCashBalances[receiver] = daiCashBalances[receiver].sub(positiveValue);
-
-        uint128 payerDaiBalance = daiBalances[payer];
-        if (payerDaiBalance < positiveValue) {
-            // If the payer has free collateral but not enough dai balance to actually transfer to the receiver,
-            // we have two options: convert their ETH to Dai via Uniswap or sell out their positive NPV posititions
-            // in the market for dai. In Swapnet Lite we will first trade away ETH collateral for dai in order to make
-            // the payment.
-
-            uint256 daiRemaining = uint256(positiveValue - payerDaiBalance);
-            // This is the remaining amount of dai required.
-            daiRemaining = _liquidate(payer, daiRemaining);
-
-            // At this point we need to raise sufficient dai from liquidity tokens in order to cash out. Because
-            // we do not allow cross margin between periods, the only way that an account can be in this situation
-            // is if they have a negative cash balance and their free collateral comes from a daiClaim from liquidity
-            // tokens in the future.
-            if (daiRemaining > 0) {
-                _raiseCashFromPortfolio(payer, daiRemaining);
-            }
-            // All the dai balance the payer had is removed here.
-            delete daiBalances[payer];
-            // Pay the receiver the dai they are owed.
-            daiBalances[receiver] = daiBalances[receiver].add(positiveValue);
-        } else {
-            // Here the payer has enough Dai to cover the imbalance outright.
-            daiBalances[payer] = daiBalances[payer].sub(positiveValue);
-            daiBalances[receiver] = daiBalances[receiver].add(positiveValue);
-        }
-
-        emit SettleCash(payer, receiver, positiveValue);
-    }
-
-    /**
-     * @notice Liquidates an account when it becomes undercollateralized. It does this by selling off
-     * any ETH. Then it pays a liquidity reward to the liquidator. Finally, it uses the remaining dai
-     * to purchase offsetting positions to any outstanding obligations (i.e. CASH_PAYER tokens) to de-risk
-     * the portfolio.
-     *
-     * @param account the account to liquidate
-     */
-    function liquidate(address account) public {
-        settle(account);
-        (int256 daiRequired, int256[] memory cashLadder) = freeCollateralAndCashLadder(account);
-        require(daiRequired < 0, $$(ErrorCode(CANNOT_LIQUIDATE_SUFFICIENT_COLLATERAL)));
-        // We increase the daiRequired to account for the loss in value of the ETH that
-        // we need to sell here.
-        daiRequired = daiRequired.neg().mul(DECIMALS).div(G_LIQUIDATION_BUFFER);
-        // If this returns a positive number then we are in trouble since the
-        // account will end up under collateralized. However, can't revert here and we
-        // will just continue.
-        _liquidate(account, uint256(daiRequired).add(G_LIQUIDATION_BONUS));
-
-        // Pay G_LIQUIDATION_BONUS back to msg.sender
-        daiBalances[msg.sender] = daiBalances[msg.sender].add(G_LIQUIDATION_BONUS);
-
-        // This second read is a bit inefficient but we only need to go as far into the portfolio
-        // in order to spend all the dai.
-        uint128 daiRemaining = uint128(daiRequired);
-        uint32 blockNum = uint32(block.number);
-        Trade[] storage portfolio = accountTrades[account];
-        for (uint256 i; i < portfolio.length; i++) {
-            if (portfolio[i].tradeType == CASH_PAYER) {
-                Trade memory asset = portfolio[i];
-                uint256 offset = (portfolio[i].maturity - blockNum) / G_PERIOD_SIZE;
-                if (cashLadder[offset] > 0) {
-                    // If the cashLadder for this maturity is positive, then we keep iterating.
-                    continue;
-                }
-
-                Market storage market = markets[asset.maturity];
-                // The floor for the value these positions is at a 1-1 exchange rate. This is the least favorable rate
-                // for the liquidated account since we guarantee that exchange rates cannot go below zero.
-                if (daiRemaining >= asset.notional && market.totalFutureCash >= asset.notional) {
-                    // We can purchase more future cash than we have in this asset so let's get the cost to
-                    // just offset this position.
-                    uint128 daiCost = getFutureCashToDai(asset.maturity, asset.notional);
-
-                    // A dai cost of 0 signifies a failed trade.
-                    if (daiCost > 0) {
-                        market.totalCollateral = market.totalCollateral.add(daiCost);
-                        // Already did overflow check above.
-                        market.totalFutureCash = market.totalFutureCash - asset.notional;
-                        daiRemaining = daiRemaining - daiCost;
-
-                        _removeTrade(portfolio, i);
-                        i--;
-                    }
-                } else if (market.totalFutureCash >= daiRemaining) {
-                    // We cannot accurately calculate how much future cash we can possibly offset here, but
-                    // we know that it is at least "daiRemaining". Figure out the cost for that and then
-                    // proceed.
-                    uint128 daiCost = getFutureCashToDai(asset.maturity, daiRemaining);
-
-                    if (daiCost > 0) {
-                        // We can only partially offset the future cash we have in the asset so just update
-                        // the asset.
-                        market.totalCollateral = market.totalCollateral.add(daiCost);
-                        // Already did overflow check above.
-                        market.totalFutureCash = market.totalFutureCash - daiRemaining;
-                        portfolio[i].notional = asset.notional - daiRemaining;
-                        daiRemaining = daiRemaining - daiCost;
-                    }
-                }
-
-                // No dai left so just return.
-                if (daiRemaining == 0) {
-                    return;
-                }
-            }
-        }
-
-        // In the case that there is dai left over, we add it back to the balances here.
-        daiBalances[account] = daiBalances[account].add(daiRemaining);
-    }
-
-    /**
-     * Internal function that liquidates an account in order to raise `daiRequired`. It always raises this amount
-     * exactly. We know that this amount is available in the portfolio because of the freeCollateral check.
-     */
-    function _liquidate(address account, uint256 daiRequired) internal returns (uint256) {
-        uint256 ethBalance = uint256(ethBalances[account]);
-        uint256 daiRemaining = daiRequired;
-        if (ethBalance > 0) {
-            // First determine how much dai the ethBalance would trade for. If it is enough then we will just trade what is
-            // required. If not then we will trade all the ETH and move on to the account's portfolio.
-            uint256 ethRequired = UniswapExchangeInterface(G_UNISWAP_DAI_CONTRACT).getEthToTokenOutputPrice(
-                daiRequired
-            );
-            if (ethBalance >= ethRequired) {
-                // This will trade exactly the amount of ethRequired for exactly the amount of dai required.
-                UniswapExchangeInterface(G_UNISWAP_DAI_CONTRACT).ethToTokenSwapOutput.value(ethRequired)(
-                    daiRequired,
-                    block.timestamp
-                    // solium-disable-previous-line security/no-block-members
-                );
-
-                // Reduce the eth balance by the amount traded.
-                ethBalances[account] = uint128(ethBalance - ethRequired);
-                daiRemaining = 0;
-            } else {
-                // In here we will sell off all the ETH that the account holds. When settling cash, we can then move on to
-                // removing liquidity tokens for dai claims. When liquidating an account, we do not need to do that so this
-                // should not occur during liquidation.
-                uint256 daiTraded = UniswapExchangeInterface(G_UNISWAP_DAI_CONTRACT).ethToTokenSwapInput.value(
-                    ethBalance
-                )(1, block.timestamp);
-                // solium-disable-previous-line security/no-block-members
-
-                delete ethBalances[account];
-                daiRemaining = daiRemaining - daiTraded;
-            }
-        }
-
-        return daiRemaining;
-    }
-
-    /**
-     * @notice Checks that an account has sufficient collateral to cover its obligations. This works by calculating the
-     * difference between two amounts, the net present value of the portfolio and the value of the cash and collateral
-     * on hand, denominated in dai.
-     *
-     * @param account the account to do the check for
-     * @return the free collateral figure
-     */
-    function freeCollateral(address account) public view returns (int256) {
-        (
-            int256 fc, /*int256[] memory*/
-
-        ) = freeCollateralAndCashLadder(account);
-        return fc;
-    }
-
-    function freeCollateralAndCashLadder(address account) public view returns (int256, int256[] memory) {
-        Trade[] memory portfolio = accountTrades[account];
-        uint32 blockNum = uint32(block.number);
-        // Each position in this array will hold the value of the portfolio in each maturity.
-        int256[] memory cashLadder = new int256[](G_NUM_PERIODS);
-        // This will hold the current collateral balance.
-        int256 currentCollateral;
-
-        // This will work regardless of whether or not the trades in the portfolio have matured or not since the
-        // discount rate == 0 after the trade has matured. However, the internal version of this function will
-        // settle any trades before doing this loop.
-        for (uint256 i; i < portfolio.length; i++) {
-            int256 futureCash;
-
-            if (portfolio[i].tradeType == LIQUIDITY_TOKEN) {
-                Market memory market = markets[portfolio[i].maturity];
-                // These are the claims on the collateral and future cash in the markets. The dai claim
-                // goes to current collateral. This is important to note since we will use this daiClaim
-                // to settle negative cash balances if required.
-                uint128 daiClaim = uint128(
-                    uint256(market.totalCollateral).mul(portfolio[i].notional).div(market.totalLiquidity)
-                );
-                currentCollateral = currentCollateral.add(daiClaim);
-
-                futureCash = int256(
-                    uint256(market.totalFutureCash).mul(portfolio[i].notional).div(market.totalLiquidity)
-                );
-            } else if (portfolio[i].tradeType == CASH_PAYER) {
-                futureCash = int256(portfolio[i].notional).neg();
-            } else {
-                futureCash = int256(portfolio[i].notional);
-            }
-
-            if (blockNum >= portfolio[i].maturity) {
-                // This is a matured future cash claim.
-                currentCollateral = currentCollateral.add(futureCash);
-            } else {
-                // This is an actual future cash claim, we add it to the correct part of the
-                // cash ladder.
-                uint256 offset = (portfolio[i].maturity - blockNum) / G_PERIOD_SIZE;
-                cashLadder[offset] = cashLadder[offset].add(futureCash);
-            }
-        }
-
-        // If the account has an ethereum balance, convert it to the current dai value.
-        uint256 ethBalance = uint256(ethBalances[account]);
-        if (ethBalance > 0) {
-            // The collateralization ratio is used as a discount factor for the amount of
-            // dai that the ETH is worth. This will give us some buffer in the case of exchange
-            // rate fluctuations.
-            uint128 daiValue = uint128(
-                UniswapExchangeInterface(G_UNISWAP_DAI_CONTRACT)
-                    .getEthToTokenInputPrice(ethBalance)
-                    .mul(G_ETH_HAIRCUT)
-                    .div(DECIMALS)
-            );
-            currentCollateral = currentCollateral.add(daiValue);
-        }
-
-        // Net out cash balances and dai balances
-        currentCollateral = currentCollateral.add(daiCashBalances[account]);
-        currentCollateral = currentCollateral.add(daiBalances[account]);
-
-        // Now we check to determine the aggregate negative amount in the cashLadder and see if
-        // the amount of current collateral is sufficient.
-        uint128 requiredCollateral;
-        for (uint256 i; i < cashLadder.length; i++) {
-            if (cashLadder[i] < 0) {
-                // We do a negative haircut on cash ladder balances.
-                uint128 postHaircut = uint128(cashLadder[i].neg().mul(G_PORTFOLIO_HAIRCUT).div(DECIMALS));
-                requiredCollateral = requiredCollateral.add(postHaircut);
-            }
-        }
-
-        return (currentCollateral.sub(requiredCollateral), cashLadder);
-    }
+    /********** Liquidity Tokens **************************/
 
     /**
      * @notice Adds some amount of future cash to the liquidity pool up to the corresponding amount defined by
-     * `maxDai`. Mints liquidity tokens back to the sender.
+     * `maxCollateral`. Mints liquidity tokens back to the sender.
      *
      * @param maturity the period to add liquidity to
      * @param minFutureCash the amount of future cash to add to the pool
-     * @param maxDai the maximum amount of dai to add to the pool
+     * @param maxCollateral the maximum amount of collateral to add to the pool
      * @param maxBlock after this block the trade will fail
      */
-    function addLiquidity(uint32 maturity, uint128 minFutureCash, uint128 maxDai, uint32 maxBlock) public {
+    function addLiquidity(uint32 maturity, uint128 minFutureCash, uint128 maxCollateral, uint32 maxBlock) public {
         _isValidBlock(maturity, maxBlock);
         Market storage market = markets[maturity];
         // We call settle here instead of at the end of the function because if we have matured liquidity
-        // tokens this will put dai back into our portfolio so that we can add it back into the markets.
-        settle(msg.sender);
+        // tokens this will put collateral back into our portfolio so that we can add it back into the markets.
+        Portfolios(contracts[uint256(CoreContracts.Portfolios)]).settleAccount(msg.sender);
 
         uint128 collateral;
         uint128 liquidityTokenAmount;
-        if (market.rateScalar == 0) {
+        if (market.totalLiquidity == 0) {
             // We check the rateScalar to determine if the market exists or not. The reason for this is that once we
             // initialize a market we will set the rateScalar and rateAnchor based on global values for the duration
-            // of the market. The proportion of future cash to dai that the first liquidity provider sets here will
+            // of the market. The proportion of future cash to collateral that the first liquidity provider sets here will
             // determine the initial exchange rate of the market (taking into account rateScalar and rateAnchor, of course).
             // Governance will never allow rateScalar to be set to 0.
+            if (market.rateScalar == 0) {
+                market.rateAnchor = G_RATE_ANCHOR;
+                market.rateScalar = G_RATE_SCALAR;
+            }
+
             market.totalFutureCash = minFutureCash;
-            market.totalCollateral = maxDai;
+            market.totalCollateral = maxCollateral;
             market.totalLiquidity = minFutureCash;
-            market.rateAnchor = G_RATE_ANCHOR;
-            market.rateScalar = G_RATE_SCALAR;
             // We have to initialize this to the exchange rate implied by the proportion of cash to future cash.
             uint32 blocksToMaturity = maturity - uint32(block.number);
             market.lastImpliedRate = _getImpliedRate(market, blocksToMaturity);
 
             liquidityTokenAmount = minFutureCash;
-            collateral = maxDai;
+            collateral = maxCollateral;
         } else {
             // We calculate the amount of liquidity tokens to mint based on the share of the future cash
             // that the liquidity provider is depositing.
@@ -623,12 +237,11 @@ contract FutureCash is OpenZeppelinUpgradesOwnable, Initializable {
                 uint256(market.totalLiquidity).mul(minFutureCash).div(market.totalFutureCash)
             );
 
-            // We use the prevailing exchange rate to calculate the required amount of current cash to deposit,
-            // this ensures that the prevailing exchange rate does not change.
+            // We use the prevailing proportion to calculate the required amount of current cash to deposit.
             collateral = uint128(uint256(market.totalCollateral).mul(minFutureCash).div(market.totalFutureCash));
-            // If this exchange rate has moved beyond what the liquidity provider is willing to pay then we
+            // If this proportion has moved beyond what the liquidity provider is willing to pay then we
             // will revert here.
-            require(collateral <= maxDai, $$(ErrorCode(OVER_MAX_COLLATERAL)));
+            require(collateral <= maxCollateral, $$(ErrorCode(OVER_MAX_COLLATERAL)));
 
             // Add the future cash and collateral to the pool.
             market.totalFutureCash = market.totalFutureCash.add(minFutureCash);
@@ -636,39 +249,61 @@ contract FutureCash is OpenZeppelinUpgradesOwnable, Initializable {
             market.totalLiquidity = market.totalLiquidity.add(liquidityTokenAmount);
         }
 
-        // Move the collateral into the contract's dai balances account.
-        daiBalances[msg.sender] = daiBalances[msg.sender].sub(collateral);
-        daiBalances[address(this)] = daiBalances[address(this)].add(collateral);
+        // Move the collateral into the contract's collateral balances account. This must happen before the trade
+        // is placed so that the free collateral check is correct.
+        Escrow(contracts[uint256(CoreContracts.Escrow)]).transferFutureCashMarket(
+            msg.sender,
+            G_COLLATERAL_TOKEN,
+            CURRENCY_GROUP,
+            INSTRUMENT_GROUP,
+            true,
+            collateral,
+            0 // No fee charged for providing liquidity
+        );
 
-        // Add the liquidity tokens to the sender's balances.
-        _upsertTrade(msg.sender, Trade(LIQUIDITY_TOKEN, maturity, liquidityTokenAmount));
+        // Providing liquidity results in two tokens generated, a liquidity token and a CASH_PAYER which
+        // represents the obligation that offsets the future cash in the market.
+        Common.Trade[] memory trades = new Common.Trade[](2);
+        // This is the liquidity token
+        trades[0] = Common.Trade(
+            INSTRUMENT_GROUP,
+            INSTRUMENT,
+            maturity - G_PERIOD_SIZE,
+            G_PERIOD_SIZE,
+            Common.getLiquidityToken(),
+            INSTRUMENT_PRECISION,
+            liquidityTokenAmount
+        );
 
-        // Mark that this account now has a future cash obligation
-        _upsertTrade(msg.sender, Trade(CASH_PAYER, maturity, minFutureCash));
+        // This is the CASH_PAYER
+        trades[1] = Common.Trade(
+            INSTRUMENT_GROUP,
+            INSTRUMENT,
+            maturity - G_PERIOD_SIZE,
+            G_PERIOD_SIZE,
+            Common.getFutureCash(true),
+            INSTRUMENT_PRECISION,
+            minFutureCash
+        );
 
-        // We do not use the internal version of free collateral since we've already called settle earlier.
-        require(freeCollateral(msg.sender) >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL)));
+        // This will do a free collateral check before it adds to the portfolio.
+        Portfolios(contracts[uint256(CoreContracts.Portfolios)]).upsertAccountTradeBatch(msg.sender, trades);
 
         emit AddLiquidity(msg.sender, maturity, liquidityTokenAmount, minFutureCash, collateral);
     }
 
     /**
      * @notice Removes liquidity from the future cash market. The sender's liquidity tokens are burned and they
-     * are credited back with future cash and dai at the prevailing exchange rate. This function
+     * are credited back with future cash and collateral at the prevailing exchange rate. This function
      * only works when removing liquidity from an active market. For markets that are matured, the sender
      * must settle their liquidity token because it involves depositing current cash and settling future
      * cash balances.
      *
      * @param maturity the period to remove liquidity from
      * @param amount the amount of liquidity tokens to burn
-     * @param index the index in the portfolio where the liquidity tokens are located
      * @param maxBlock after this block the trade will fail
      */
-    function removeLiquidity(uint32 maturity, uint128 amount, uint256 index, uint32 maxBlock) public {
-        Trade memory trade = accountTrades[msg.sender][index];
-        require(trade.tradeType == LIQUIDITY_TOKEN, $$(ErrorCode(INVALID_TRADE)));
-        require(trade.notional >= amount, $$(ErrorCode(INSUFFICIENT_BALANCE)));
-
+    function removeLiquidity(uint32 maturity, uint128 amount, uint32 maxBlock) public {
         // This method only works when the market is active.
         _isValidBlock(maturity, maxBlock);
         Market storage market = markets[maturity];
@@ -685,155 +320,268 @@ contract FutureCash is OpenZeppelinUpgradesOwnable, Initializable {
         // figure when calculating futureCash and collateral.
         market.totalLiquidity = market.totalLiquidity.sub(amount);
 
-        // Move the collateral from the contract's dai balances account back to the sender
-        daiBalances[msg.sender] = daiBalances[msg.sender].add(collateral);
-        daiBalances[address(this)] = daiBalances[address(this)].sub(collateral);
+        // Move the collateral from the contract's collateral balances account back to the sender. This must happen
+        // before the free collateral check in the Portfolio call below.
+        Escrow(contracts[uint256(CoreContracts.Escrow)]).transferFutureCashMarket(
+            msg.sender,
+            G_COLLATERAL_TOKEN,
+            CURRENCY_GROUP,
+            INSTRUMENT_GROUP,
+            false,
+            collateral,
+            0 // No fee charged for removing liquidity
+        );
 
-        // Remove the liquidity tokens from the sender's balance
-        if (trade.notional == amount) {
-            _removeTrade(accountTrades[msg.sender], index);
-        } else {
-            accountTrades[msg.sender][index].notional = trade.notional - amount;
-        }
+        Common.Trade[] memory trades = new Common.Trade[](2);
+        // This will remove the liquidity tokens
+        trades[0] = Common.Trade(
+            INSTRUMENT_GROUP,
+            INSTRUMENT,
+            maturity - G_PERIOD_SIZE,
+            G_PERIOD_SIZE,
+            // We mark this as a "PAYER" liquidity token so the portfolio reduces the balance
+            Common.makeCounterparty(Common.getLiquidityToken()),
+            INSTRUMENT_PRECISION,
+            amount
+        );
 
-        // Credit the portfolio with a CASH_RECEIVER amount which will offset the future cash obligation the
-        // provider had before.
-        _upsertTrade(msg.sender, Trade(CASH_RECEIVER, maturity, futureCashAmount));
+        // This is the CASH_RECEIVER
+        trades[1] = Common.Trade(
+            INSTRUMENT_GROUP,
+            INSTRUMENT,
+            maturity - G_PERIOD_SIZE,
+            G_PERIOD_SIZE,
+            Common.getFutureCash(false),
+            INSTRUMENT_PRECISION,
+            futureCashAmount
+        );
 
-        require(_settleAndFreeCollateral(msg.sender) >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL)));
+        // This function call will check if the account in question actually has enough liquidity tokens to remove.
+        Portfolios(contracts[uint256(CoreContracts.Portfolios)]).upsertAccountTradeBatch(msg.sender, trades);
 
         emit RemoveLiquidity(msg.sender, maturity, amount, futureCashAmount, collateral);
     }
 
     /**
-     * @notice Given the amount of future cash put into a market, how much current dai this would
+     * @notice Settles a liquidity token into future cash and collateral. Can only be called by the Portfolios contract.
+     *
+     * @param account the account that is holding the token
+     * @param tokenAmount the amount of token to settle
+     * @param maturity when the token matures
+     * @return the amount of cash to settle to the account
+     */
+    function settleLiquidityToken(address account, uint128 tokenAmount, uint32 maturity) public returns (uint128) {
+        require(msg.sender == contracts[uint256(CoreContracts.Portfolios)], $$(ErrorCode(UNAUTHORIZED_CALLER)));
+
+        (uint128 collateral, uint128 futureCash) = _settleLiquidityToken(tokenAmount, maturity);
+
+        // Move the collateral from the contract's collateral balances account back to the sender
+        Escrow(contracts[uint256(CoreContracts.Escrow)]).transferFutureCashMarket(
+            account,
+            G_COLLATERAL_TOKEN,
+            CURRENCY_GROUP,
+            INSTRUMENT_GROUP,
+            false,
+            collateral,
+            0 // No fee charged on liquidity removal
+        );
+
+        // No need to remove the liquidity token from the portfolio, the calling function will take care of this.
+
+        // The liquidity token carries with it an obligation to pay a certain amount of future cash and we credit that
+        // amount plus any appreciation here. This amount will be added to the cashBalances for the account to offset
+        // the CASH_PAYER token that was created when the liquidity token was minted.
+        return futureCash;
+    }
+
+    /**
+     * @notice Internal method for settling liquidity tokens, calculates the values for collateral and future cash
+     *
+     * @param tokenAmount the amount of token to settle
+     * @param maturity when the token matures
+     * @return the amount of collateral and future cash
+     */
+    function _settleLiquidityToken(uint128 tokenAmount, uint32 maturity) internal returns (uint128, uint128) {
+        Market storage market = markets[maturity];
+
+        // Here we calculate the amount of collateral that the liquidity token represents.
+        uint128 collateral = uint128(uint256(market.totalCollateral).mul(tokenAmount).div(market.totalLiquidity));
+        market.totalCollateral = market.totalCollateral.sub(collateral);
+
+        // This is the amount of future cash that the liquidity token has a claim to.
+        uint128 futureCash = uint128(uint256(market.totalFutureCash).mul(tokenAmount).div(market.totalLiquidity));
+        market.totalFutureCash = market.totalFutureCash.sub(futureCash);
+
+        // We do this calculation after the previous two so that we do not mess with the totalLiquidity
+        // figure when calculating futureCash and collateral.
+        market.totalLiquidity = market.totalLiquidity.sub(tokenAmount);
+
+        return (collateral, futureCash);
+    }
+
+    /********** Liquidity Tokens **************************/
+
+    /********** Trading Cash ******************************/
+
+    /**
+     * @notice Given the amount of future cash put into a market, how much collateral this would
      * purchase at the current block.
      *
      * @param maturity the maturity of the future cash
      * @param futureCashAmount the amount of future cash to input
-     * @return the amount of current dai this would purchase, returns 0 if the trade will fail
+     * @return the amount of collateral this would purchase, returns 0 if the trade will fail
      */
-    function getFutureCashToDai(uint32 maturity, uint128 futureCashAmount) public view returns (uint128) {
-        return getFutureCashToDaiBlock(maturity, futureCashAmount, uint32(block.number));
+    function getFutureCashToCollateral(uint32 maturity, uint128 futureCashAmount) public view returns (uint128) {
+        return getFutureCashToCollateralBlock(maturity, futureCashAmount, uint32(block.number));
     }
 
     /**
-     * @notice Given the amount of future cash put into a market, how much current dai this would
-     * purchase at the current block.
+     * @notice Given the amount of future cash put into a market, how much collateral this would
+     * purchase at the given block
      *
      * @param maturity the maturity of the future cash
      * @param futureCashAmount the amount of future cash to input
      * @param blockNum the specified block number
-     * @return the amount of current dai this would purchase, returns 0 if the trade will fail
+     * @return the amount of collateral this would purchase, returns 0 if the trade will fail
      */
-    function getFutureCashToDaiBlock(uint32 maturity, uint128 futureCashAmount, uint32 blockNum) public view returns (uint128) {
+    function getFutureCashToCollateralBlock(uint32 maturity, uint128 futureCashAmount, uint32 blockNum) public view returns (uint128) {
         Market memory interimMarket = markets[maturity];
         uint32 blocksToMaturity = maturity - blockNum;
 
-        (/* market */, uint128 daiAmount) = _tradeCalculation(interimMarket, futureCashAmount, blocksToMaturity, true);
+        (/* market */, uint128 currentAmount) = _tradeCalculation(interimMarket, futureCashAmount, blocksToMaturity, true);
         // On trade failure, we will simply return 0
-        return daiAmount;
+        return currentAmount;
     }
 
     /**
-     * @notice Receive dai in exchange for a future cash obligation which must be collateralized
-     * by ETH or other future cash receiver obligations. Equivalent to borrowing dai at a fixed rate.
+     * @notice Receive collateral in exchange for a future cash obligation. Equivalent to borrowing
+     * collateral at a fixed rate.
      *
      * @param maturity the maturity block of the future cash being exchange for current cash
      * @param futureCashAmount the amount of future cash to deposit, will convert this amount to current cash
      *  at the prevailing exchange rate
      * @param maxBlock after this block the trade will not settle
-     * @param minDai the minimum amount of dai this trade should purchase, this is the slippage amount
-     * @return the amount of dai purchased
+     * @param minCollateral the minimum amount of collateral this trade should purchase, this is the slippage amount
+     * @return the amount of collateral purchased
      */
-    function takeDai(uint32 maturity, uint128 futureCashAmount, uint32 maxBlock, uint128 minDai)
-        public
-        returns (uint128)
-    {
+    function takeCollateral(
+        uint32 maturity,
+        uint128 futureCashAmount,
+        uint32 maxBlock,
+        uint128 minCollateral
+    ) public returns (uint128) {
         _isValidBlock(maturity, maxBlock);
         require(futureCashAmount <= G_MAX_TRADE_SIZE, $$(ErrorCode(TRADE_FAILED_TOO_LARGE)));
-        Market storage market = markets[maturity];
-        Market memory interimMarket = markets[maturity];
-        uint128 daiAmount;
-        uint32 blocksToMaturity = maturity - uint32(block.number);
-        (interimMarket, daiAmount) = _tradeCalculation(interimMarket, futureCashAmount, blocksToMaturity, true);
 
-        require(daiAmount > 0, $$(ErrorCode(TRADE_FAILED_LACK_OF_LIQUIDITY)));
-        require(daiAmount >= minDai, $$(ErrorCode(TRADE_FAILED_SLIPPAGE)));
+        // In this block we calculate what the market will look like after we trade future cash amount.
+        Market memory interimMarket = markets[maturity];
+        uint128 currentAmount;
+        uint32 blocksToMaturity = maturity - uint32(block.number);
+        (interimMarket, currentAmount) = _tradeCalculation(interimMarket, futureCashAmount, blocksToMaturity, true);
+
+        require(currentAmount > 0, $$(ErrorCode(TRADE_FAILED_LACK_OF_LIQUIDITY)));
+        require(currentAmount >= minCollateral, $$(ErrorCode(TRADE_FAILED_SLIPPAGE)));
 
         // Here we update all the required storage values.
+        Market storage market = markets[maturity];
         market.totalFutureCash = interimMarket.totalFutureCash;
         market.totalCollateral = interimMarket.totalCollateral;
         market.lastImpliedRate = interimMarket.lastImpliedRate;
         market.rateAnchor = interimMarket.rateAnchor;
 
-        // Move the collateral from the contract's dai balances account to the sender
-        daiBalances[msg.sender] = daiBalances[msg.sender].add(daiAmount);
-        daiBalances[address(this)] = daiBalances[address(this)].sub(daiAmount);
+        // This will reduce the `currentAmount` that the sender receives as a result of their borrowing.
+        uint128 fee = currentAmount.mul(G_TRANSACTION_FEE).div(Common.DECIMALS);
+
+        // Move the collateral from the contract's collateral balances account to the sender. This must happen before
+        // the call to insert the trade below in order for the free collateral check to work properly.
+        Escrow(contracts[uint256(CoreContracts.Escrow)]).transferFutureCashMarket(
+            msg.sender,
+            G_COLLATERAL_TOKEN,
+            CURRENCY_GROUP,
+            INSTRUMENT_GROUP,
+            false,
+            currentAmount,
+            fee
+        );
 
         // The sender now has an obligation to pay cash at maturity.
-        Trade memory trade = Trade(CASH_PAYER, maturity, futureCashAmount);
-        _upsertTrade(msg.sender, trade);
+        Portfolios(contracts[uint256(CoreContracts.Portfolios)]).upsertAccountTrade(
+            msg.sender,
+            Common.Trade(
+                INSTRUMENT_GROUP,
+                INSTRUMENT,
+                maturity - G_PERIOD_SIZE,
+                G_PERIOD_SIZE,
+                Common.getFutureCash(true),
+                INSTRUMENT_PRECISION,
+                futureCashAmount
+            )
+        );
 
-        require(_settleAndFreeCollateral(msg.sender) >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL)));
-        emit CreateAsset(msg.sender, trade.tradeType, trade.maturity, trade.notional, daiAmount);
-
-        return daiAmount;
+        return currentAmount - fee;
     }
 
     /**
-     * @notice Given the amount of future cash to purchase, returns the amount of dai this would cost at the current
+     * @notice Given the amount of future cash to purchase, returns the amount of collateral this would cost at the current
      * block.
      *
      * @param maturity the maturity of the future cash
      * @param futureCashAmount the amount of future cash to purchase
-     * @return the amount of dai this would cost, returns 0 on trade failure
+     * @return the amount of collateral this would cost, returns 0 on trade failure
      */
-    function getDaiToFutureCash(uint32 maturity, uint128 futureCashAmount) public view returns (uint128) {
-        return getDaiToFutureCashBlock(maturity, futureCashAmount, uint32(block.number));
+    function getCollateralToFutureCash(uint32 maturity, uint128 futureCashAmount) public view returns (uint128) {
+        return getCollateralToFutureCashBlock(maturity, futureCashAmount, uint32(block.number));
     }
 
     /**
-     * @notice Given the amount of future cash to purchase, returns the amount of dai thsi would cost.
+     * @notice Given the amount of future cash to purchase, returns the amount of collateral this would cost.
      *
      * @param maturity the maturity of the future cash
      * @param futureCashAmount the amount of future cash to purchase
      * @param blockNum the block to calculate the price at
-     * @return the amount of dai this would cost, returns 0 on trade failure
+     * @return the amount of collateral this would cost, returns 0 on trade failure
      */
-    function getDaiToFutureCashBlock(uint32 maturity, uint128 futureCashAmount, uint32 blockNum) public view returns (uint128) {
+    function getCollateralToFutureCashBlock(uint32 maturity, uint128 futureCashAmount, uint32 blockNum) public view returns (uint128) {
         Market memory interimMarket = markets[maturity];
         uint32 blocksToMaturity = maturity - blockNum;
 
-        (/* market */, uint128 daiAmount) = _tradeCalculation(interimMarket, futureCashAmount, blocksToMaturity, false);
+        (/* market */, uint128 currentAmount) = _tradeCalculation(interimMarket, futureCashAmount, blocksToMaturity, false);
         // On trade failure, we will simply return 0
-        return daiAmount;
+        return currentAmount;
     }
 
     /**
-     * @notice Deposit dai in return for the right to receive cash at the specified maturity. Equivalent to lending
-     * your dai at a fixed rate.
+     * @notice Deposit collateral in return for the right to receive cash at the specified maturity. Equivalent to lending
+     * your collateral at a fixed rate.
      *
      * @param maturity the period to receive future cash in
      * @param futureCashAmount the amount of future cash to purchase
      * @param maxBlock after this block the trade will not settle
-     * @param maxDai the maximum amount of dai to deposit for this future cash, this is the slippage amount
-     * @return the amount of future cash purchased
+     * @param maxCollateral the maximum amount of collateral to deposit for this future cash, this is the slippage amount
+     * @return the amount of collateral deposited to the market
      */
-    function takeFutureCash(uint32 maturity, uint128 futureCashAmount, uint32 maxBlock, uint128 maxDai)
-        public
-        returns (uint128)
-    {
+    function takeFutureCash(
+        uint32 maturity,
+        uint128 futureCashAmount,
+        uint32 maxBlock,
+        uint128 maxCollateral
+    ) public returns (uint128) {
         _isValidBlock(maturity, maxBlock);
         require(futureCashAmount <= G_MAX_TRADE_SIZE, $$(ErrorCode(TRADE_FAILED_TOO_LARGE)));
+
         Market storage market = markets[maturity];
         Market memory interimMarket = markets[maturity];
-        uint128 daiAmount;
-        uint32 blocksToMaturity = maturity - uint32(block.number);
-        (interimMarket, daiAmount) = _tradeCalculation(interimMarket, futureCashAmount, blocksToMaturity, false);
 
-        require(daiAmount > 0, $$(ErrorCode(TRADE_FAILED_LACK_OF_LIQUIDITY)));
-        require(daiAmount <= maxDai, $$(ErrorCode(TRADE_FAILED_SLIPPAGE)));
+        uint128 currentAmount;
+        uint32 blocksToMaturity = maturity - uint32(block.number);
+        (interimMarket, currentAmount) = _tradeCalculation(interimMarket, futureCashAmount, blocksToMaturity, false);
+
+        uint128 feeAmount = currentAmount.mul(G_TRANSACTION_FEE).div(Common.DECIMALS);
+        // The collateral required to deposit is the amount plus the fee.
+        currentAmount = currentAmount + feeAmount;
+
+        require(currentAmount > 0, $$(ErrorCode(TRADE_FAILED_LACK_OF_LIQUIDITY)));
+        require(currentAmount <= maxCollateral, $$(ErrorCode(TRADE_FAILED_SLIPPAGE)));
 
         // Here we update all the required storage values.
         market.totalFutureCash = interimMarket.totalFutureCash;
@@ -841,21 +589,195 @@ contract FutureCash is OpenZeppelinUpgradesOwnable, Initializable {
         market.lastImpliedRate = interimMarket.lastImpliedRate;
         market.rateAnchor = interimMarket.rateAnchor;
 
-        // Move the collateral from the sender to the contract address
-        daiBalances[msg.sender] = daiBalances[msg.sender].sub(daiAmount);
-        daiBalances[address(this)] = daiBalances[address(this)].add(daiAmount);
+        // Move the collateral from the sender to the contract address. This must happen before the
+        // insert trade call below.
+        Escrow(contracts[uint256(CoreContracts.Escrow)]).transferFutureCashMarket(
+            msg.sender,
+            G_COLLATERAL_TOKEN,
+            CURRENCY_GROUP,
+            INSTRUMENT_GROUP,
+            true,
+            currentAmount,
+            feeAmount
+        );
 
         // The sender is now owed a future cash balance at maturity
-        Trade memory trade = Trade(CASH_RECEIVER, maturity, futureCashAmount);
-        _upsertTrade(msg.sender, trade);
+        Portfolios(contracts[uint256(CoreContracts.Portfolios)]).upsertAccountTrade(
+            msg.sender,
+            Common.Trade(
+                INSTRUMENT_GROUP,
+                INSTRUMENT,
+                maturity - G_PERIOD_SIZE,
+                G_PERIOD_SIZE,
+                Common.getFutureCash(false),
+                INSTRUMENT_PRECISION,
+                futureCashAmount
+            )
+        );
 
-        require(_settleAndFreeCollateral(msg.sender) >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL)));
-        emit CreateAsset(msg.sender, trade.tradeType, trade.maturity, trade.notional, daiAmount);
+        return currentAmount - feeAmount;
+    }
+
+    /********** Trading Cash ******************************/
+
+    /********** Liquidation *******************************/
+
+    /**
+     * @notice Uses collateralAvailable to purchase future cash in order to offset the obligation amount at
+     * the specified maturity. Used by the Portfolio contract during liquidation.
+     *
+     * @param collateralAvailable amount of collateral available to purchase offsetting obligations
+     * @param obligation the max amount of obligations to offset
+     * @param maturity the maturity of the obligation
+     * @return (collateral cost of offsetting future cash, the amount of obligation offset)
+     */
+    function closeObligation(
+        uint128 collateralAvailable,
+        uint128 obligation,
+        uint32 maturity
+    ) public returns (uint128, uint128) {
+        require(msg.sender == contracts[uint256(CoreContracts.Portfolios)], $$(ErrorCode(UNAUTHORIZED_CALLER)));
+
+        Market storage market = markets[maturity];
+        Market memory interimMarket = markets[maturity];
+        uint32 blocksToMaturity = maturity - uint32(block.number);
+        uint128 receiverCost;
+
+        // The floor for the value these positions is at a 1-1 exchange rate. This is the least favorable rate
+        // for the liquidated account since we guarantee that exchange rates cannot go below zero.
+        if (collateralAvailable >= obligation && market.totalFutureCash >= obligation) {
+            // We can purchase more future cash than we have in this asset so let's get the cost to
+            // just offset this position.
+            (interimMarket, receiverCost) = _tradeCalculation(interimMarket, obligation, blocksToMaturity, false);
+
+            // A cost of 0 signifies a failed trade.
+            if (receiverCost > 0) {
+                market.totalFutureCash = interimMarket.totalFutureCash;
+                market.totalCollateral = interimMarket.totalCollateral;
+                market.lastImpliedRate = interimMarket.lastImpliedRate;
+                market.rateAnchor = interimMarket.rateAnchor;
+
+                return (receiverCost, obligation);
+            }
+        } else if (market.totalFutureCash >= collateralAvailable) {
+            // We cannot accurately calculate how much future cash we can possibly offset here, but
+            // we know that it is at least "collateralAvailable". Figure out the cost for that and then
+            // proceed.
+            (interimMarket, receiverCost) = _tradeCalculation(interimMarket, collateralAvailable, blocksToMaturity, false);
+
+            if (receiverCost > 0) {
+                // We can only partially offset the future cash we have in the asset so just update
+                // the asset.
+                market.totalFutureCash = interimMarket.totalFutureCash;
+                market.totalCollateral = interimMarket.totalCollateral;
+                market.lastImpliedRate = interimMarket.lastImpliedRate;
+                market.rateAnchor = interimMarket.rateAnchor;
+
+                return (receiverCost, collateralAvailable);
+            }
+        }
+
+        // Closing out the obligation was unsuccessful.
+        return (0, 0);
     }
 
     /**
-     * @notice Returns the current discount rate for the market. This will return 0 when presented with a negative
-     * interest rate.
+     * @notice Turns future cash tokens into a current collateral. Used by portfolios when settling cash.
+     * This method currently sells `maxFutureCash` every time since it's not possible to calculate the
+     * amount of future cash to sell from `collateralRequired`.
+     *
+     * @param account that holds the future cash
+     * @param collateralRequired amount of collateral that needs to be raised
+     * @param maxFutureCash the maximum amount of future cash that can be sold
+     * @param maturity the maturity of the future cash
+     */
+    function extractFutureCash(
+        address account,
+        uint128 collateralRequired,
+        uint128 maxFutureCash,
+        uint32 maturity
+    ) public returns (uint128) {
+        require(msg.sender == contracts[uint256(CoreContracts.Portfolios)], $$(ErrorCode(UNAUTHORIZED_CALLER)));
+
+        Market storage market = markets[maturity];
+        Market memory interimMarket = markets[maturity];
+        uint128 currentAmount;
+        uint32 blocksToMaturity = maturity - uint32(block.number);
+        uint128 futureCashAmount = maxFutureCash;
+
+        if (maxFutureCash > market.totalFutureCash) {
+            // Don't sell future cash than is in the market.
+            futureCashAmount = market.totalFutureCash;
+        }
+
+        // Here we are selling future cash in return for collateral
+        (interimMarket, currentAmount) = _tradeCalculation(interimMarket, futureCashAmount, blocksToMaturity, true);
+
+        // Here we update all the required storage values.
+        market.totalFutureCash = interimMarket.totalFutureCash;
+        market.totalCollateral = interimMarket.totalCollateral;
+        market.lastImpliedRate = interimMarket.lastImpliedRate;
+        market.rateAnchor = interimMarket.rateAnchor;
+
+        // Here we've sold collateral in excess of what was required, so we credit the remaining back
+        // to the account that was holding the trade.
+        if (currentAmount > collateralRequired) {
+            Escrow(contracts[uint256(CoreContracts.Escrow)]).transferFutureCashMarket(
+                account,
+                G_COLLATERAL_TOKEN,
+                CURRENCY_GROUP,
+                INSTRUMENT_GROUP,
+                false,
+                currentAmount - collateralRequired,
+                0 // No fee charged
+            );
+
+            currentAmount = collateralRequired;
+        }
+
+        return currentAmount;
+    }
+
+    /**
+     * @notice Called by the portfolios contract when a liquidity token is being converted for collateral.
+     *
+     * @param collateralRequired the amount of collateral required
+     * @param maxTokenAmount the max balance of tokens available
+     * @param maturity when the token matures
+     * @return the amount of collateral raised, future cash raised, tokens removed
+     */
+    function extractCashLiquidityToken(
+        uint128 collateralRequired,
+        uint128 maxTokenAmount,
+        uint32 maturity
+    ) public returns (uint128, uint128, uint128) {
+        require(msg.sender == contracts[uint256(CoreContracts.Portfolios)], $$(ErrorCode(UNAUTHORIZED_CALLER)));
+        Market memory market = markets[maturity];
+
+        // This is the total claim on collateral that the tokens have.
+        uint128 tokensToRemove = maxTokenAmount;
+        uint128 collateralAmount = uint128(
+            uint256(market.totalCollateral).mul(tokensToRemove).div(market.totalLiquidity)
+        );
+
+        if (collateralAmount > collateralRequired) {
+            // If the total claim is greater than required, we only want to remove part of the liquidity.
+            tokensToRemove = uint128(uint256(collateralRequired).mul(market.totalLiquidity).div(market.totalCollateral));
+            collateralAmount = collateralRequired;
+        }
+
+        // This method will credit the collateralAmount back to the balances on the escrow contract.
+        (/* uint128 */, uint128 futureCashAmount) = _settleLiquidityToken(tokensToRemove, maturity);
+
+        return (collateralAmount, futureCashAmount, tokensToRemove);
+    }
+
+    /********** Liquidation *******************************/
+
+    /********** Rate Methods ******************************/
+
+    /**
+     * @notice Returns the current discount rate for the market. Will not return negative interest rates
      *
      * @param maturity the maturity to get the rate for
      * @return a tuple where the first value is the simple discount rate and the second value is a boolean indicating
@@ -910,129 +832,10 @@ contract FutureCash is OpenZeppelinUpgradesOwnable, Initializable {
     /*********** Internal Methods ********************/
 
     /**
-     * Internal version of freeCollateral, settles any trades in the account before actually
-     * doing the calculation. We do this to prevent portfolios from growing too large.
-     */
-    function _settleAndFreeCollateral(address account) internal returns (int256) {
-        settle(account);
-        return freeCollateral(account);
-    }
-
-    /**
-     * Raises cash from the trades in the portfolio from liquidity tokens. Since free collateral passes, this
-     * will always 
-     *
-     * @param account the account to raise cash from
-     * @param daiRequired the amount of dai required
-     */
-    function _raiseCashFromPortfolio(address account, uint256 daiRequired) internal {
-        Trade[] memory portfolio = accountTrades[account];
-        uint128 daiRemaining = uint128(daiRequired);
-        uint256[] memory indexesToRemove = new uint256[](G_NUM_PERIODS);
-        Trade[] memory futureCashToAdd = new Trade[](G_NUM_PERIODS);
-        uint256 indexes;
-
-        // Look for any liquidity tokens in the portfolio. We will remove them from the market and put the dai and
-        // future cash back into the account's portfolio
-        for (uint256 i; i < portfolio.length; i++) {
-            if (portfolio[i].tradeType == LIQUIDITY_TOKEN) {
-                Market memory market = markets[portfolio[i].maturity];
-
-                uint128 tokensToRemove = portfolio[i].notional;
-                // This is the total claim on dai that the tokens have.
-                uint128 dai = uint128(
-                    uint256(market.totalCollateral).mul(tokensToRemove).div(market.totalLiquidity)
-                );
-                
-                if (dai > daiRemaining) {
-                    // If the total claim is greater than required, we only want to remove part of the liquidity.
-                    tokensToRemove = uint128(uint256(daiRemaining).mul(market.totalLiquidity).div(market.totalCollateral));
-                    dai = daiRemaining;
-                }
-
-                uint128 futureCash = uint128(
-                    uint256(market.totalFutureCash).mul(tokensToRemove).div(market.totalLiquidity)
-                );
-
-                // Update the market to remove the dai, futureCash and liquidiy tokens.
-                markets[portfolio[i].maturity].totalCollateral = market.totalCollateral.sub(dai);
-                markets[portfolio[i].maturity].totalFutureCash = market.totalFutureCash.sub(futureCash);
-                markets[portfolio[i].maturity].totalLiquidity = market.totalLiquidity.sub(tokensToRemove);
-
-                if (tokensToRemove == portfolio[i].notional) {
-                    // If we've removed all the tokens, mark the asset for removal.
-                    indexesToRemove[indexes] = i;
-                } else {
-                    // For partial removal, just subtract the token amount
-                    accountTrades[account][i].notional = portfolio[i].notional.sub(tokensToRemove);
-                    // Set this to an invalid index so we don't remove any assets incorrectly
-                    indexesToRemove[indexes] = portfolio.length;
-                }
-
-                futureCashToAdd[indexes] = Trade(CASH_RECEIVER, portfolio[i].maturity, futureCash);
-                indexes++;
-
-                if (dai >= daiRemaining) {
-                    daiRemaining = 0;
-                    break;
-                } else {
-                    daiRemaining = daiRemaining - dai;
-                }
-            }
-        }
-
-        // We should have raised at least daiRequired here.
-        assert(daiRemaining == 0);
-
-        for (uint256 i; i < indexes; i++) {
-            if (indexesToRemove[i] < portfolio.length) {
-                // This value will be set beyond the length of the portfolio if we do not want to
-                // remove the index.
-                _removeTrade(accountTrades[account], indexesToRemove[i]);
-            }
-            _upsertTrade(account, futureCashToAdd[i]);
-        }
-    }
-
-    /**
-     * Internal method called by settle to turn liquidity tokens into the required collateral and cash balances.
-     *
-     * @param account the account that is holding the token
-     * @param tokenAmount the amount of token to settle
-     * @param maturity when the token matures
-     * @return the amount of cash to settle to the account
-     */
-    function _settleLiquidityToken(address account, uint128 tokenAmount, uint32 maturity) internal returns (uint128) {
-        Market storage market = markets[maturity];
-
-        // Here we calculate the amount of current cash that the liquidity token represents.
-        uint128 collateral = uint128(uint256(market.totalCollateral).mul(tokenAmount).div(market.totalLiquidity));
-        market.totalCollateral = market.totalCollateral.sub(collateral);
-
-        // This is the amount of future cash that the liquidity token has a claim to.
-        uint128 futureCash = uint128(uint256(market.totalFutureCash).mul(tokenAmount).div(market.totalLiquidity));
-        market.totalFutureCash = market.totalFutureCash.sub(futureCash);
-
-        // We do this calculation after the previous two so that we do not mess with the totalLiquidity
-        // figure when calculating futureCash and collateral.
-        market.totalLiquidity = market.totalLiquidity.sub(tokenAmount);
-
-        // Move the collateral from the contract's dai balances account back to the sender
-        daiBalances[account] = daiBalances[account].add(collateral);
-        daiBalances[address(this)] = daiBalances[address(this)].sub(collateral);
-
-        // No need to remove the liquidity token from the portfolio, the parent function will take care of this.
-
-        // The liquidity token carries with it an obligation to pay a certain amount of future cash and we credit that
-        // amount plus any appreciation here. This amount will be added to the daiCashBalances for the account to offset
-        // the CASH_PAYER token that was created when the liquidity token was minted.
-        return futureCash;
-    }
-
-    /**
-     * Checks if the maturity and max block supplied are valid. The requirements are:
-     *  * blockNum <= maxBlock < maturity <= maxMaturity
-     *  * maturity % G_PERIOD_SIZE == 0
+     * @notice Checks if the maturity and max block supplied are valid. The requirements are:
+     *  - blockNum <= maxBlock < maturity <= maxMaturity
+     *  - maturity % G_PERIOD_SIZE == 0
+     * Reverts if the block is not valid.
      */
     function _isValidBlock(uint32 maturity, uint32 maxBlock) internal view returns (bool) {
         uint32 blockNum = uint32(block.number);
@@ -1047,74 +850,12 @@ contract FutureCash is OpenZeppelinUpgradesOwnable, Initializable {
     }
 
     /**
-     * Adds a trade to the account's portfolio. Ensures that trades will compact with other trades of
-     * the same type and maturity. Cash paid and received will net out against each other.
-     *
-     * @param account the account to add the trade to
-     * @param trade the trade to add to the account
-     */
-    function _upsertTrade(address account, Trade memory trade) internal {
-        Trade[] storage portfolio = accountTrades[account];
-
-        if (portfolio.length > 0) {
-            // Loop over the existing portfolio and see if there is an existing trade that this new
-            // trade can compact with.
-            for (uint256 i; i < portfolio.length; i++) {
-                // Only trades of matching maturities compact
-                if (portfolio[i].maturity != trade.maturity) continue;
-                uint8 portfolioTradeType = portfolio[i].tradeType;
-
-                if (portfolioTradeType == trade.tradeType) {
-                    // If the trade types match then we can simply aggregate the notional amounts.
-                    portfolio[i].notional = portfolio[i].notional + trade.notional;
-                    return;
-                } else if (
-                    (portfolioTradeType == CASH_PAYER && trade.tradeType == CASH_RECEIVER) ||
-                    (portfolioTradeType == CASH_RECEIVER && trade.tradeType == CASH_PAYER)
-                ) {
-                    // If the cash trade has an offsetting cash position in the same maturity we can
-                    // compact the two trades.
-                    if (portfolio[i].notional == trade.notional) {
-                        // Simply remove the trade since these positions cancel out.
-                        _removeTrade(portfolio, i);
-                        return;
-                    } else if (portfolio[i].notional > trade.notional) {
-                        // Leave the current trade type and just subtract the notional amount since this
-                        // new trade will just net out part of the existing position
-                        portfolio[i].notional = portfolio[i].notional - trade.notional;
-                        return;
-                    } else {
-                        // Switch the trade to the new trade type since the new trade will cancel out
-                        // all of the previous amount and have some amount left over
-                        portfolio[i].notional = trade.notional - portfolio[i].notional;
-                        portfolio[i].tradeType = trade.tradeType;
-                        return;
-                    }
-                }
-            }
-        }
-
-        // If the trade has not been found then we just append it.
-        portfolio.push(trade);
-    }
-
-    /** Removes a trade from a portfolio **/
-    function _removeTrade(Trade[] storage portfolio, uint256 index) internal {
-        uint256 lastIndex = portfolio.length - 1;
-        if (index != lastIndex) {
-            Trade memory lastTrade = portfolio[lastIndex];
-            portfolio[index] = lastTrade;
-        }
-        portfolio.pop();
-    }
-
-    /**
-     * Does the trade calculation and returns the required objects for the contract methods to interpret.
+     * @notice Does the trade calculation and returns the required objects for the contract methods to interpret.
      *
      * @param interimMarket the market to do the calculations over
      * @param futureCashAmount the future cash amount specified
      * @param futureCashPositive true if future cash is positive (borrowing), false if future cash is negative (lending)
-     * @return (new market object, daiAmount)
+     * @return (new market object, currentAmount)
      */
     function _tradeCalculation(
         Market memory interimMarket,
@@ -1140,11 +881,6 @@ contract FutureCash is OpenZeppelinUpgradesOwnable, Initializable {
             tradeExchangeRate = _getExchangeRate(interimMarket, blocksToMaturity, int256(futureCashAmount).neg());
         }
 
-        if (tradeExchangeRate < INSTRUMENT_PRECISION) {
-            // We do not allow negative exchange rates.
-            return (interimMarket, 0);
-        }
-
         // The fee amount will decrease as we roll down to maturity
         uint32 fee = uint32(uint256(G_LIQUIDITY_FEE).mul(blocksToMaturity).div(G_PERIOD_SIZE));
         if (futureCashPositive) {
@@ -1153,29 +889,34 @@ contract FutureCash is OpenZeppelinUpgradesOwnable, Initializable {
             tradeExchangeRate = tradeExchangeRate - fee;
         }
 
-        // daiAmount = futureCashAmount / exchangeRate
-        uint128 daiAmount = uint128(
+        if (tradeExchangeRate < INSTRUMENT_PRECISION) {
+            // We do not allow negative exchange rates.
+            return (interimMarket, 0);
+        }
+
+        // currentAmount = futureCashAmount / exchangeRate
+        uint128 currentAmount = uint128(
             uint256(futureCashAmount).mul(INSTRUMENT_PRECISION).div(tradeExchangeRate)
         );
 
         // Update the markets accordingly.
         if (futureCashPositive) {
-            if (interimMarket.totalCollateral < daiAmount) {
-                // There is not enough dai to support this trade.
+            if (interimMarket.totalCollateral < currentAmount) {
+                // There is not enough collateral to support this trade.
                 return (interimMarket, 0);
             }
 
             interimMarket.totalFutureCash = interimMarket.totalFutureCash.add(futureCashAmount);
-            interimMarket.totalCollateral = interimMarket.totalCollateral.sub(daiAmount);
+            interimMarket.totalCollateral = interimMarket.totalCollateral.sub(currentAmount);
         } else {
             interimMarket.totalFutureCash = interimMarket.totalFutureCash.sub(futureCashAmount);
-            interimMarket.totalCollateral = interimMarket.totalCollateral.add(daiAmount);
+            interimMarket.totalCollateral = interimMarket.totalCollateral.add(currentAmount);
         }
 
         // Now calculate the implied rate, this will be used for future rolldown calculations.
         interimMarket.lastImpliedRate = _getImpliedRate(interimMarket, blocksToMaturity);
 
-        return (interimMarket, daiAmount);
+        return (interimMarket, currentAmount);
     }
 
     /**
@@ -1222,12 +963,12 @@ contract FutureCash is OpenZeppelinUpgradesOwnable, Initializable {
         // This will always be positive, we do a check beforehand in _tradeCalculation
         uint256 numerator = uint256(int256(market.totalFutureCash).add(futureCashAmount));
         // This is always less than DECIMALS
-        uint256 proportion = numerator.mul(DECIMALS).div(
+        uint256 proportion = numerator.mul(Common.DECIMALS).div(
             market.totalFutureCash.add(market.totalCollateral)
         );
 
         // proportion' = proportion / (1 - proportion)
-        proportion = proportion.mul(DECIMALS).div(uint256(DECIMALS).sub(proportion));
+        proportion = proportion.mul(Common.DECIMALS).div(uint256(Common.DECIMALS).sub(proportion));
 
         // The rate scalar will increase towards maturity, this will lower the impact of changes
         // to the proportion as we get towards maturity.

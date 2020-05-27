@@ -1,11 +1,11 @@
 pragma solidity ^0.6.0;
 
-import "./IERC20.sol";
-import "./Ownable.sol";
+import "../interface/IERC20.sol";
+import "../upgradeable/Ownable.sol";
 import "./SafeMath.sol";
 
 
-contract ERC20 is IERC20, Ownable {
+contract ERC20 is IERC20, OpenZeppelinUpgradesOwnable {
     using SafeMath for uint256;
 
     uint256 public constant FAUCET_AMOUNT = 1e18 * 100;

@@ -26,7 +26,7 @@ library SafeInt256 {
      * @dev Tests covered by add(x,y)
      */
     function sub(int256 x, int256 y) internal pure returns (int256) {
-        return add(x, -y);
+        return add(x, neg(y));
     }
 
     function mul(int256 x, int256 y) internal pure returns (int256) {

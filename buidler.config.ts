@@ -16,7 +16,11 @@ const INFURA_API_KEY = "";
 const RINKEBY_PRIVATE_KEY = "";
 const ETHERSCAN_API_KEY = "";
 
-const CONTRACTS = ["FutureCash"];
+const CONTRACTS = [
+    "FutureCash",
+    "Escrow",
+    "Portfolios"
+];
 
 task("codeSize", "Prints the code size of all contracts")
     .addOptionalParam("contract", "A particular contract to check")
