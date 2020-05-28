@@ -9,6 +9,7 @@ import {FutureCash} from "../typechain/FutureCash";
 import { ErrorDecoder, ErrorCodes } from '../scripts/errorCodes';
 import { Escrow } from '../typechain/Escrow';
 import { Portfolios } from '../typechain/Portfolios';
+import { ERC1155Token } from '../typechain/ERC1155Token';
 
 chai.use(solidity);
 const {expect} = chai;
@@ -28,6 +29,7 @@ describe("Future Cash", () => {
     let futureCash: FutureCash;
     let escrow: Escrow;
     let portfolios: Portfolios;
+    let erc1155: ERC1155Token;
 
     beforeEach(async () => {
         owner = wallets[0];
@@ -39,6 +41,7 @@ describe("Future Cash", () => {
         futureCash = objs.futureCash;
         escrow = objs.escrow;
         portfolios = objs.portfolios;
+        erc1155 = objs.erc1155;
 
         await dai.transfer(wallet.address, WeiPerEther.mul(10_000));
         await dai.transfer(wallet2.address, WeiPerEther.mul(10_000));
@@ -551,5 +554,100 @@ describe("Future Cash", () => {
         await expect(
             futureCash.connect(wallet).takeFutureCash(maturities[0], WeiPerEther.mul(200), 1000, WeiPerEther.mul(100))
         ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.TRADE_FAILED_SLIPPAGE));
+    });
+
+    // transfers //
+    it("can transfer future cash receiver between accounts", async () => {
+        const maturities = await futureCash.getActiveMaturities();
+        await escrow.deposit(dai.address, WeiPerEther.mul(10_000));
+        await futureCash.addLiquidity(maturities[0], WeiPerEther.mul(10_000), WeiPerEther.mul(10_000), 1000);
+
+        await escrow.connect(wallet).deposit(dai.address, WeiPerEther.mul(1000));
+        await futureCash.connect(wallet).takeFutureCash(maturities[0], WeiPerEther.mul(100), 1000, WeiPerEther.mul(1000));
+        const id = await erc1155.encodeTradeId(await portfolios.getTrade(wallet.address, 0));
+
+        const cashPayer = (await portfolios.getTrades(owner.address))[1];
+        await expect(erc1155.connect(owner).safeTransferFrom(
+            wallet.address,
+            owner.address,
+            id,
+            WeiPerEther.mul(100),
+            "0x0"
+        )).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.UNAUTHORIZED_CALLER));
+
+        await expect(erc1155.connect(wallet).safeTransferFrom(
+            wallet.address,
+            owner.address,
+            id,
+            WeiPerEther.mul(105),
+            "0x0"
+        )).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INSUFFICIENT_BALANCE));
+
+        await erc1155.connect(wallet).safeTransferFrom(
+            wallet.address,
+            owner.address,
+            id,
+            WeiPerEther.mul(100),
+            "0x0"
+        );
+
+        expect(await portfolios.getTrades(wallet.address)).to.have.lengthOf(0);
+        const portfolioAfter = await portfolios.getTrades(owner.address);
+        expect(portfolioAfter[1].notional).to.equal(cashPayer.notional.sub(WeiPerEther.mul(100)))
+    });
+
+    it("can transfer liquidity tokens between accounts", async () => {
+        const maturities = await futureCash.getActiveMaturities();
+        await escrow.deposit(dai.address, WeiPerEther.mul(10_000));
+        await futureCash.addLiquidity(maturities[0], WeiPerEther.mul(10_000), WeiPerEther.mul(10_000), 1000);
+        const id = await erc1155.encodeTradeId(await portfolios.getTrade(owner.address, 0));
+
+        const portfolioBefore = await portfolios.getTrades(wallet.address);
+        expect(portfolioBefore).to.have.lengthOf(0);
+        await expect(erc1155.connect(wallet).safeTransferFrom(
+            owner.address,
+            wallet.address,
+            id,
+            WeiPerEther.mul(100),
+            "0x0"
+        )).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.UNAUTHORIZED_CALLER));
+
+        await expect(erc1155.connect(owner).safeTransferFrom(
+            owner.address,
+            wallet.address,
+            id,
+            WeiPerEther.mul(10_500),
+            "0x0"
+        )).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INSUFFICIENT_BALANCE));
+
+        await erc1155.connect(owner).safeTransferFrom(
+            owner.address,
+            wallet.address,
+            id,
+            WeiPerEther.mul(900),
+            "0x0"
+        );
+        const portfolioAfter = await portfolios.getTrades(wallet.address);
+        expect(portfolioAfter).to.have.lengthOf(1);
+        expect(portfolioAfter[0].notional).to.equal(WeiPerEther.mul(900));
+        expect(await erc1155.balanceOf(wallet.address, id)).to.equal(WeiPerEther.mul(900));
+    });
+
+    it("cannot transfer future cash payer between accounts", async () => {
+        const maturities = await futureCash.getActiveMaturities();
+        await escrow.deposit(dai.address, WeiPerEther.mul(10_000));
+        await futureCash.addLiquidity(maturities[0], WeiPerEther.mul(10_000), WeiPerEther.mul(10_000), 1000);
+
+        await escrow.connect(wallet).deposit(dai.address, WeiPerEther.mul(1000));
+        await futureCash.connect(wallet).takeCollateral(maturities[0], WeiPerEther.mul(100), 1000, 0);
+        const id = await erc1155.encodeTradeId(await portfolios.getTrade(wallet.address, 0));
+
+        await expect(erc1155.connect(wallet).safeTransferFrom(
+            wallet.address,
+            owner.address,
+            id,
+            WeiPerEther.mul(100),
+            "0x0"
+        )).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.CANNOT_TRANSFER_PAYER));
     });
 });

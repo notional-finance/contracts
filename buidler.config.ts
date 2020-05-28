@@ -19,7 +19,8 @@ const ETHERSCAN_API_KEY = "";
 const CONTRACTS = [
     "FutureCash",
     "Escrow",
-    "Portfolios"
+    "Portfolios",
+    "ERC1155Token"
 ];
 
 task("codeSize", "Prints the code size of all contracts")

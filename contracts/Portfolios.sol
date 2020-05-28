@@ -268,6 +268,8 @@ contract Portfolios is PortfoliosStorage, Governed {
                 uint256 currency = uint256(requirements[i].currency);
                 // This new cash balance represents any net collateral position after taking the portfolio
                 // into account.
+
+                // TODO: update this to a separate array?
                 cash[currency] = cash[currency].add(requirements[i].npv).sub(requirements[i].requirement);
             }
         }
@@ -277,6 +279,8 @@ contract Portfolios is PortfoliosStorage, Governed {
         for (uint256 i; i < cash.length; i++) {
             if (cash[i] < 0) {
                 currencyRequirement[i] = uint128(cash[i].neg());
+                // TODO: credit back positive cash that is not collateralizing obligations, we cannot credit back
+                // npv here because we won't be able to determine which currency we need to extract cash from.
             }
         }
 
@@ -288,7 +292,6 @@ contract Portfolios is PortfoliosStorage, Governed {
         // the account holds
         int256 fc;
         for (uint256 i; i < collateralRequirement.length; i++) {
-            // TODO: move haircut here
             fc = fc.sub(collateralRequirement[i]);
         }
 
@@ -363,7 +366,15 @@ contract Portfolios is PortfoliosStorage, Governed {
 
     /**
      * @notice Transfers a trade from one account to another.
-     * @dev TODO
+     *
+     * @param from account to transfer from
+     * @param to account to transfer to
+     * @param swapType the type of swap to search for
+     * @param instrumentGroupId the instrument group id
+     * @param instrumentId the instrument id
+     * @param startBlock the starting block
+     * @param duration the duration of the swap
+     * @param value the amount of notional transfer between accounts
      */
     function transferAccountTrade(
         address from,

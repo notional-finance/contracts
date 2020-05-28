@@ -18,6 +18,7 @@ import {Escrow} from "../typechain/Escrow";
 import {Portfolios} from "../typechain/Portfolios";
 import {Directory} from "../typechain/Directory";
 import {RiskFramework} from "../typechain/RiskFramework";
+import {ERC1155Token} from "../typechain/ERC1155Token";
 
 import UniswapFactoryArtifact from "../mocks/UniswapFactory.json";
 import {UniswapFactoryInterface} from "../typechain/UniswapFactoryInterface";
@@ -106,14 +107,17 @@ export async function fixture(provider: providers.Provider, [owner]: Wallet[]) {
     const escrow = await deploySwapnetContract<Escrow>(owner, buildDir, "Escrow", [directory.address, registry.address], 'address,address', proxyAdmin, gasLimit);
     const portfolios = await deploySwapnetContract<Portfolios>(owner, buildDir, "Portfolios", [directory.address, 100], 'address,uint256', proxyAdmin, gasLimit);
     const risk = await deploySwapnetContract<RiskFramework>(owner, buildDir, "RiskFramework", [directory.address], 'address', proxyAdmin, gasLimit);
+    const erc1155 = await deploySwapnetContract<ERC1155Token>(owner, buildDir, "ERC1155Token", [directory.address], 'address', proxyAdmin, gasLimit);
 
     // Setup directory
     await directory.setContract(CoreContracts.Escrow, escrow.address);
     await directory.setContract(CoreContracts.Portfolios, portfolios.address);
     await directory.setContract(CoreContracts.RiskFramework, risk.address);
-    await directory.setDependencies(CoreContracts.Portfolios, [CoreContracts.Escrow, CoreContracts.RiskFramework]);
+    await directory.setContract(CoreContracts.ERC1155Token, erc1155.address);
+    await directory.setDependencies(CoreContracts.Portfolios, [CoreContracts.Escrow, CoreContracts.RiskFramework, CoreContracts.ERC1155Token]);
     await directory.setDependencies(CoreContracts.Escrow, [CoreContracts.Portfolios]);
     await directory.setDependencies(CoreContracts.RiskFramework, [CoreContracts.Portfolios]);
+    await directory.setDependencies(CoreContracts.ERC1155Token, [CoreContracts.Portfolios]);
 
     const futureCash = await deploySwapnetContract<FutureCash>(owner, buildDir, "FutureCash", [directory.address, erc20.address], 'address,address', proxyAdmin, gasLimit);
 
@@ -142,7 +146,7 @@ export async function fixture(provider: providers.Provider, [owner]: Wallet[]) {
     await futureCash.setMaxTradeSize(WeiPerEther.mul(10_000));
     await futureCash.setFee(0, 0);
 
-    return {erc20, futureCash, escrow, owner, uniswap, chainlink, portfolios, proxyAdmin};
+    return {erc20, futureCash, escrow, owner, uniswap, chainlink, portfolios, proxyAdmin, erc1155};
 }
 
 async function deploySwapnetContract<T>(owner: Wallet, buildDir: string, contract: string, params: any[], initializeSig: string, proxyAdmin: ProxyAdmin, gasLimit: number) {
