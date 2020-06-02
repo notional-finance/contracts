@@ -404,6 +404,32 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient {
     /********** Settle Cash / Liquidation *************/
 
     /**
+     * @notice Settles the cash balances between the payers and receivers in batch
+     *
+     * @param currency the currency group to settle
+     * @param payers the party that has a negative cash balance and will transfer collateral to the receiver
+     * @param receivers the party that has a positive cash balance and will receive collateral from the payer
+     * @param values the amount of collateral to transfer
+     * @param settleAccounts if true, will settle all the accounts first
+     */
+    function settleCashBalanceBatch(
+        uint16 currency,
+        address[] calldata payers,
+        address[] calldata receivers,
+        uint128[] calldata values,
+        bool settleAccounts
+    ) external {
+        if (settleAccounts) {
+            Portfolios(contracts[uint256(CoreContracts.Portfolios)]).settleAccountBatch(payers);
+            Portfolios(contracts[uint256(CoreContracts.Portfolios)]).settleAccountBatch(receivers);
+        }
+
+        for (uint256 i; i < payers.length; i++) {
+            _settleCashBalance(currency, payers[i], receivers[i], values[i]);
+        }
+    }
+
+    /**
      * @notice Settles the cash balance between the payer and the receiver.
      *
      * @param currency the currency group to settle
@@ -411,7 +437,32 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient {
      * @param receiver the party that has a positive cash balance and will receive collateral from the payer
      * @param value the amount of collateral to transfer
      */
-    function settleCashBalance(uint16 currency, address payer, address receiver, uint128 value) external {
+    function settleCashBalance(
+        uint16 currency,
+        address payer,
+        address receiver,
+        uint128 value,
+        bool settleAccounts
+    ) external {
+        if (settleAccounts) {
+            address[] memory accounts = new address[](2);
+            accounts[0] = payer;
+            accounts[1] = receiver;
+            Portfolios(contracts[uint256(CoreContracts.Portfolios)]).settleAccountBatch(accounts);
+        }
+
+        _settleCashBalance(currency, payer, receiver, value);
+    }
+
+    /**
+     * @notice Settles the cash balance between the payer and the receiver.
+     *
+     * @param currency the currency group to settle
+     * @param payer the party that has a negative cash balance and will transfer collateral to the receiver
+     * @param receiver the party that has a positive cash balance and will receive collateral from the payer
+     * @param value the amount of collateral to transfer
+     */
+    function _settleCashBalance(uint16 currency, address payer, address receiver, uint128 value) internal {
         require(payer != receiver, $$(ErrorCode(COUNTERPARTY_CANNOT_BE_SELF)));
         require(currency != 0 && currency <= _currentCurrencyGroupId, $$(ErrorCode(INVALID_CURRENCY)));
         if (value == 0) return;
@@ -420,8 +471,6 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient {
         require(cashBalances[currency][payer] <= int256(value).neg(), $$(ErrorCode(INCORRECT_CASH_BALANCE)));
         // The receiver must have enough cash balance to settle
         require(cashBalances[currency][receiver] >= int256(value), $$(ErrorCode(INCORRECT_CASH_BALANCE)));
-
-        // TODO: settle accounts here
 
         // In this version of the code we only support primary currencies so this is hardcoded to use only the
         // primary currency.
@@ -546,6 +595,18 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient {
     }
 
     /**
+     * @notice Liquidates a batch of accounts in a specific currency.
+     *
+     * @param accounts the account to liquidate
+     * @param currency the currency group that is undercollateralized
+     */
+    function liquidateBatch(address[] calldata accounts, uint16 currency) external {
+        for (uint256 i; i < accounts.length; i++) {
+            liquidate(accounts[i], currency);
+        }
+    }
+
+    /**
      * @notice Liquidates an account if it is under collateralized. First extracts any cash from the portfolio, then proceeds to
      * allow the liquidator to purchase collateral from the account at a discount from the oracle price. Finally, uses the collateral
      * raised to close out any obligations in the portfolio.
@@ -654,12 +715,16 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient {
         address collateralToken = currencyGroups[G_COLLATERAL_CURRENCY].primary;
         ExchangeRate memory er = exchangeRateOracles[primary][collateralToken];
 
+        uint256 amountRemaining = amountToRaise;
+        // First determine how much local currency the collateral would trade for. If it is enough to cover the obligation then
+        // we just trade for what is required. If not then we will trade all the collateral.
+        uint256 collateralRequired = UniswapExchangeInterface(er.onChainExchange).getEthToTokenOutputPrice(
+            amountRemaining
+        );
+
         if (true) {
-            // This is the implied exchange rate to trade 1 ETH to the local currency.
-            // TODO: should we look at the overall slippage instead?
-            uint256 uniswapImpliedRate = uint256(Common.DECIMALS)
-                .mul(Common.DECIMALS)
-                .div(UniswapExchangeInterface(er.onChainExchange).getEthToTokenInputPrice(Common.DECIMALS));
+            // This is the rate implied by the trade on uniswap
+            uint256 uniswapImpliedRate = collateralRequired.mul(Common.DECIMALS).div(amountRemaining);
 
             int256 answer = IAggregator(er.rateOracle).latestAnswer();
             require(answer > 0, $$(ErrorCode(INVALID_EXCHANGE_RATE)));
@@ -678,14 +743,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient {
         }
 
         uint256 collateralBalance = currencyBalances[collateralToken][account];
-        uint256 amountRemaining = amountToRaise;
         if (collateralBalance > 0) {
-            // First determine how much local currency the collateral would trade for. If it is enough to cover the obligation then
-            // we just trade for what is required. If not then we will trade all the collateral.
-            uint256 collateralRequired = UniswapExchangeInterface(er.onChainExchange).getEthToTokenOutputPrice(
-                amountRemaining
-            );
-
             if (collateralBalance >= collateralRequired) {
                 // This will trade exactly the amount of collateralRequired for exactly the target currency required.
                 UniswapExchangeInterface(er.onChainExchange).ethToTokenSwapOutput.value(collateralRequired)(

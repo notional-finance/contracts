@@ -6,11 +6,10 @@ import "./utils/Governed.sol";
 
 import "./interface/IERC1155.sol";
 import "./interface/IERC1155TokenReceiver.sol";
+import "./interface/IERC165.sol";
 
 import "./Portfolios.sol";
 import "./Escrow.sol";
-
-import "@openzeppelin/contracts/introspection/IERC165.sol";
 
 
 /**
