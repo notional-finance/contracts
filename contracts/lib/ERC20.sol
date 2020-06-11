@@ -32,6 +32,14 @@ contract ERC20 is IERC20, OpenZeppelinUpgradesOwnable {
      */
     event Approval(address indexed owner, address indexed spender, uint256 value);
 
+    function name() external override view returns (string memory) {
+        return "Test Dai";
+    }
+
+    function decimals() external override view returns (uint8) {
+        return 18;
+    }
+
     /**
      * Mints tokens to the sender
      */

@@ -141,53 +141,10 @@ contract FutureCash is Governed {
     /********** Governance Parameters *********************/
 
     /********** Events ************************************/
-    event TransferAsset(address indexed from, address indexed to, uint8 tradeType, uint32 maturity, uint128 notional);
-    event CreateAsset(address indexed account, uint8 tradeType, uint32 maturity, uint128 futureCash, uint128 currentAmount);
     event AddLiquidity(address indexed account, uint32 maturity, uint128 tokens, uint128 futureCash, uint128 currentAmount);
-    event RemoveLiquidity(
-        address indexed account,
-        uint32 maturity,
-        uint128 tokens,
-        uint128 futureCash,
-        uint128 currentAmount
-    );
-    event UpdateCashBalance(address indexed account, int256 amount);
-    event SettleCash(address indexed from, address indexed to, uint128 amount);
-
-    /**
-     * @notice Transfers the future cash from the sender to the specified destination address. This can only be done
-     * with CASH_RECEIVER or LIQUIDITY_TOKEN objects. CASH_PAYER represents and obligation and therefore it
-     * cannot be transferred. The sender must pass a free collateral check, the receiver will be NPV positive
-     * after the transfer so they do not require a free collateral check.
-     *
-     * @param to the destination account to send the token to
-     * @param index the position in an account's portfolio to transfer
-     * @param amount the amount of notional to transfer
-    function transferFutureCash(address to, uint256 index, uint128 amount) public {
-        // Check that this is cash receiver or liquidity token
-        Trade memory trade = accountTrades[msg.sender][index];
-        require(
-            trade.tradeType == CASH_RECEIVER || trade.tradeType == LIQUIDITY_TOKEN,
-            $$(ErrorCode(INVALID_TRANSFER_TYPE))
-        );
-        require(trade.notional <= amount, $$(ErrorCode(INSUFFICIENT_BALANCE)));
-
-        // Subtract the balance of this token from the account and then check if it is still collateralized.
-        if (trade.notional == amount) {
-            // _removeTrade(accountTrades[msg.sender], index);
-        } else {
-            accountTrades[msg.sender][index].notional = trade.notional - amount;
-        }
-        // require(_settleAndFreeCollateral(msg.sender) >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL)));
-
-        // If the check passes, then we can finish the transfer.
-        trade.notional = amount;
-        // _upsertTrade(to, trade);
-
-        emit TransferAsset(msg.sender, to, trade.tradeType, trade.maturity, trade.notional);
-    }
-     */
-
+    event RemoveLiquidity(address indexed account, uint32 maturity, uint128 tokens, uint128 futureCash, uint128 currentAmount);
+    event TakeCollateral(address indexed account, uint32 maturity, uint128 futureCash, uint128 currentAmount, uint128 fee);
+    event TakeFutureCash(address indexed account, uint32 maturity, uint128 futureCash, uint128 currentAmount, uint128 fee);
     /********** Events ************************************/
 
     /********** Liquidity Tokens **************************/
@@ -518,6 +475,14 @@ contract FutureCash is Governed {
             )
         );
 
+        emit TakeCollateral(
+            msg.sender,
+            maturity,
+            futureCashAmount,
+            currentAmount,
+            fee
+        );
+
         return currentAmount - fee;
     }
 
@@ -576,9 +541,9 @@ contract FutureCash is Governed {
         uint32 blocksToMaturity = maturity - uint32(block.number);
         (interimMarket, currentAmount) = _tradeCalculation(interimMarket, futureCashAmount, blocksToMaturity, false);
 
-        uint128 feeAmount = currentAmount.mul(G_TRANSACTION_FEE).div(Common.DECIMALS);
+        uint128 fee = currentAmount.mul(G_TRANSACTION_FEE).div(Common.DECIMALS);
         // The collateral required to deposit is the amount plus the fee.
-        currentAmount = currentAmount + feeAmount;
+        currentAmount = currentAmount + fee;
 
         require(currentAmount > 0, $$(ErrorCode(TRADE_FAILED_LACK_OF_LIQUIDITY)));
         require(currentAmount <= maxCollateral, $$(ErrorCode(TRADE_FAILED_SLIPPAGE)));
@@ -598,7 +563,7 @@ contract FutureCash is Governed {
             INSTRUMENT_GROUP,
             true,
             currentAmount,
-            feeAmount
+            fee
         );
 
         // The sender is now owed a future cash balance at maturity
@@ -615,7 +580,15 @@ contract FutureCash is Governed {
             )
         );
 
-        return currentAmount - feeAmount;
+        emit TakeFutureCash(
+            msg.sender,
+            maturity,
+            futureCashAmount,
+            currentAmount,
+            fee
+        );
+
+        return currentAmount - fee;
     }
 
     /********** Trading Cash ******************************/

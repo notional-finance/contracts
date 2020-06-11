@@ -25,7 +25,8 @@ contract Portfolios is PortfoliosStorage, Governed {
     using SafeInt256 for int256;
     using SafeUInt128 for uint128;
 
-    event SettledAccount(address operator, address account);
+    event SettleAccount(address operator, address account);
+    event SettleAccountBatch(address operator, address[] account);
     event NewInstrumentGroup(uint8 indexed instrumentGroupId);
     event UpdateInstrumentGroup(uint8 indexed instrumentGroupId);
 
@@ -71,15 +72,15 @@ contract Portfolios is PortfoliosStorage, Governed {
         address discountRateOracle,
         address riskFormula
     ) external onlyOwner {
-        require(_currentInstrumentGroupId <= MAX_INSTRUMENT_GROUPS, $$(ErrorCode(OVER_INSTRUMENT_LIMIT)));
+        require(currentInstrumentGroupId <= MAX_INSTRUMENT_GROUPS, $$(ErrorCode(OVER_INSTRUMENT_LIMIT)));
         require(
             Escrow(contracts[uint256(CoreContracts.Escrow)]).isCurrencyGroup(currency),
             $$(ErrorCode(INVALID_CURRENCY))
         );
         // We don't need to check for the validity of discountRateOracles on the SettlementOracle because
         // future cash markets do not require settlement.
-        _currentInstrumentGroupId++;
-        instrumentGroups[_currentInstrumentGroupId] = Common.InstrumentGroup(
+        currentInstrumentGroupId++;
+        instrumentGroups[currentInstrumentGroupId] = Common.InstrumentGroup(
             numPeriods,
             periodSize,
             precision,
@@ -90,7 +91,7 @@ contract Portfolios is PortfoliosStorage, Governed {
 
         // The instrument is set to 0 for discount rate oracles and there is no max rate as well.
         IRateOracle(discountRateOracle).setParameters(
-            _currentInstrumentGroupId,
+            currentInstrumentGroupId,
             0,
             currency,
             precision,
@@ -99,7 +100,7 @@ contract Portfolios is PortfoliosStorage, Governed {
             0
         );
 
-        emit NewInstrumentGroup(_currentInstrumentGroupId);
+        emit NewInstrumentGroup(currentInstrumentGroupId);
     }
 
     /**
@@ -125,7 +126,7 @@ contract Portfolios is PortfoliosStorage, Governed {
         address riskFormula
     ) external onlyOwner {
         require(
-            instrumentGroupId != 0 && instrumentGroupId <= _currentInstrumentGroupId,
+            instrumentGroupId != 0 && instrumentGroupId <= currentInstrumentGroupId,
             $$(ErrorCode(INVALID_INSTRUMENT_GROUP))
         );
         require(
@@ -240,6 +241,7 @@ contract Portfolios is PortfoliosStorage, Governed {
      * @param account to get free collateral for
      */
     function freeCollateral(address account) public returns (int256, uint128[] memory) {
+        // This will emit an event, which is the correct action here.
         settleAccount(account);
 
         return freeCollateralView(account);
@@ -422,6 +424,32 @@ contract Portfolios is PortfoliosStorage, Governed {
      * @param account the account referenced
      */
     function settleAccount(address account) public {
+        _settleAccount(account);
+
+        emit SettleAccount(msg.sender, account);
+    }
+
+    /**
+     * @notice Settle a batch of accounts.
+     *
+     * @param accounts an array of accounts to settle
+     */
+    function settleAccountBatch(address[] calldata accounts) external {
+        for (uint256 i; i < accounts.length; i++) {
+            _settleAccount(accounts[i]);
+        }
+
+        emit SettleAccountBatch(msg.sender, accounts);
+    }
+
+    /**
+     * @notice Settles all matured cash trades and liquidity tokens in a user's portfolio. This method is
+     * unauthenticated, anyone may settle the trades in any account. This is required for accounts that
+     * have negative cash and counterparties need to settle against them.
+     *
+     * @param account the account referenced
+     */
+    function _settleAccount(address account) internal {
         Common.Trade[] storage portfolio = _accountTrades[account];
         uint32 blockNum = uint32(block.number);
 
@@ -470,19 +498,6 @@ contract Portfolios is PortfoliosStorage, Governed {
 
         // We call the escrow contract to update the account's cash balances.
         Escrow(contracts[uint256(CoreContracts.Escrow)]).portfolioSettleCash(account, settledCash);
-
-        emit SettledAccount(msg.sender, account);
-    }
-
-    /**
-     * @notice Settle a batch of accounts.
-     *
-     * @param accounts an array of accounts to settle
-     */
-    function settleAccountBatch(address[] calldata accounts) external {
-        for (uint256 i; i < accounts.length; i++) {
-            settleAccount(accounts[i]);
-        }
     }
 
     /***** Public Authenticated Methods *****/

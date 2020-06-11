@@ -32,15 +32,23 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient {
         IERC1820Registry(registry).setInterfaceImplementer(address(0), TOKENS_RECIPIENT_INTERFACE_HASH, address(this));
     }
 
+    /********** Events *******************************/
+    event NewCurrency(address indexed primary);
+    event UpdateExchangeRate(address indexed baseCurrency, address indexed quoteCurrency);
+    event Deposit(address indexed currency, address account, uint256 value);
+    event Withdraw(address indexed currency, address account, uint256 value);
+    event Liquidate(address indexed currency, address liquidator, address account);
+    /********** Events *******************************/
+
     /********** Governance Settings ******************/
     function setCollateralCurrency(uint16 currency) external onlyOwner {
         G_COLLATERAL_CURRENCY = currency;
         G_COLLATERAL_TOKEN = currencyGroups[currency].primary;
     }
 
-    function setEscrowHaircuts(uint128 liquidation, uint128 settlement) external onlyOwner {
-        G_LIQUIDATION_HAIRCUT = liquidation;
-        G_SETTLEMENT_HAIRCUT = settlement;
+    function setDiscounts(uint128 liquidation, uint128 settlement) external onlyOwner {
+        G_LIQUIDATION_DISCOUNT = liquidation;
+        G_SETTLEMENT_DISCOUNT = settlement;
     }
 
     function setReserveAccount(address account) external onlyOwner {
@@ -54,15 +62,15 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient {
      */
     function createCurrencyGroup(address primary) external onlyOwner {
         // The first group id will be 1, we do not want 0 to be used as a group id.
-        _currentCurrencyGroupId++;
+        currentCurrencyGroupId++;
         // We don't do a lot of checking here but since this is purely an administrative
         // activity we just rely on governance not to set this improperly.
-        currencyGroups[_currentCurrencyGroupId].primary = primary;
-        tokensToGroups[primary] = _currentCurrencyGroupId;
+        currencyGroups[currentCurrencyGroupId].primary = primary;
+        tokensToGroups[primary] = currentCurrencyGroupId;
         // We need to set this number so that the free collateral check can provision
         // the right number of currencies.
-        Portfolios(contracts[uint256(CoreContracts.Portfolios)]).setNumCurrencies(_currentCurrencyGroupId);
-        emit NewCurrencyGroup(_currentCurrencyGroupId, primary);
+        Portfolios(contracts[uint256(CoreContracts.Portfolios)]).setNumCurrencies(currentCurrencyGroupId);
+        emit NewCurrency(primary);
     }
 
     /**
@@ -90,20 +98,9 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient {
             haircut
         );
 
-        emit NewExchangeRate(base, quote);
+        emit UpdateExchangeRate(baseCurrency, quoteCurrency);
     }
     /********** Governance Settings ******************/
-
-    /********** Events *******************************/
-    event NewCurrencyGroup(uint16 indexed currencyGroupId, address indexed primary);
-    event NewCurrency(uint16 indexed currencyGroupId, address indexed secondary, address exchangeRateOracle);
-    event NewExchangeRate(uint16 indexed baseCurrency, uint16 indexed quoteCurrency);
-    event RegisterFutureCashMarket(
-        uint16 indexed currencyGroupId,
-        address indexed futureCashMarket,
-        address indexed collateralToken
-    );
-    /********** Events *******************************/
 
     /********** Getter Methods ***********************/
 
@@ -124,7 +121,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient {
      * @return CurrencyGroup
      */
     function isCurrencyGroup(uint16 currency) public view returns (bool) {
-        return currency != 0 && currency <= _currentCurrencyGroupId;
+        return currency != 0 && currency <= currentCurrencyGroupId;
     }
 
     /**
@@ -147,7 +144,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient {
      */
     function getNetBalances(address account) public view returns (int256[] memory) {
         // We add one here because the zero currency index is unused
-        int256[] memory balances = new int256[](_currentCurrencyGroupId + 1);
+        int256[] memory balances = new int256[](currentCurrencyGroupId + 1);
 
         for (uint256 i = 1; i < balances.length; i++) {
             balances[i] = getNetBalanceOfCurrency(account, uint16(i));
@@ -185,7 +182,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient {
         uint128[] memory amounts
     ) public view returns (uint128[] memory) {
         // We expect values for all currencies to be supplied here, we will not do any work on 0 balances.
-        require(amounts.length == (_currentCurrencyGroupId + 1), $$(ErrorCode(INVALID_CURRENCY)));
+        require(amounts.length == (currentCurrencyGroupId + 1), $$(ErrorCode(INVALID_CURRENCY)));
         uint128[] memory results = new uint128[](amounts.length);
         // The quote currency will always be the designated collateral currency
         address quote = currencyGroups[G_COLLATERAL_CURRENCY].primary;
@@ -218,6 +215,8 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient {
     function depositEth() public payable {
         require(msg.value <= Common.MAX_UINT_128, $$(ErrorCode(OVER_MAX_ETH_BALANCE)));
         currencyBalances[G_ETH_CURRENCY][msg.sender] = currencyBalances[G_ETH_CURRENCY][msg.sender].add(uint128(msg.value));
+
+        emit Deposit(G_ETH_CURRENCY, msg.sender, msg.value);
     }
 
     /**
@@ -237,6 +236,8 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient {
         // solium-disable-next-line security/no-call-value
         (bool success, ) = msg.sender.call.value(amount)("");
         require(success, $$(ErrorCode(TRANSFER_FAILED)));
+
+        emit Withdraw(G_ETH_CURRENCY, msg.sender, amount);
     }
 
     /**
@@ -252,6 +253,8 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient {
 
         currencyBalances[tokenContract][to] = currencyBalances[tokenContract][to].add(amount);
         IERC20(tokenContract).transferFrom(to, address(this), amount);
+
+        emit Deposit(tokenContract, msg.sender, amount);
     }
 
     /**
@@ -271,6 +274,8 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient {
         uint16 currencyGroupId = tokensToGroups[msg.sender];
         require(currencyGroupId != 0, $$(ErrorCode(INVALID_CURRENCY)));
         currencyBalances[msg.sender][from] = currencyBalances[msg.sender][from].add(amount);
+
+        emit Deposit(msg.sender, from, amount);
     }
 
     /**
@@ -290,6 +295,8 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient {
         // We're checking this after the withdraw has been done on currency balances.
         require(_freeCollateral(to) >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL)));
         IERC20(tokenContract).transfer(to, amount);
+
+        emit Withdraw(tokenContract, to, amount);
     }
 
     /********** Withdraw / Deposit Methods ***********/
@@ -387,7 +394,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient {
         require(msg.sender == contracts[uint256(CoreContracts.Portfolios)], $$(ErrorCode(UNAUTHORIZED_CALLER)));
         // Since we are using the indexes to refer to the currency group ids, the length must be less than
         // or equal to the total number of group ids currently used plus the zero currency which is unused.
-        require(settledCash.length == _currentCurrencyGroupId + 1, $$(ErrorCode(INVALID_CURRENCY)));
+        require(settledCash.length == currentCurrencyGroupId + 1, $$(ErrorCode(INVALID_CURRENCY)));
 
         // Note that currency group 0 is unused.
         for (uint256 i = 1; i < settledCash.length; i++) {
@@ -464,7 +471,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient {
      */
     function _settleCashBalance(uint16 currency, address payer, address receiver, uint128 value) internal {
         require(payer != receiver, $$(ErrorCode(COUNTERPARTY_CANNOT_BE_SELF)));
-        require(currency != 0 && currency <= _currentCurrencyGroupId, $$(ErrorCode(INVALID_CURRENCY)));
+        require(currency != 0 && currency <= currentCurrencyGroupId, $$(ErrorCode(INVALID_CURRENCY)));
         if (value == 0) return;
 
         // This cash account must have enough negative cash to settle against
@@ -529,12 +536,12 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient {
                         int256 answer = IAggregator(er.rateOracle).latestAnswer();
                         require(answer > 0, $$(ErrorCode(INVALID_EXCHANGE_RATE)));
 
-                        // G_SETTLEMENT_HAIRCUT defines a discount that the msg.sender receives for settling accounts
+                        // G_SETTLEMENT_DISCOUNT defines a discount that the msg.sender receives for settling accounts
                         // on behalf of the receiver.
                         uint256 collateralToPurchase = uint256(answer)
                             .mul(collateralRemaining)
                             .div(Common.DECIMALS)
-                            .mul(G_SETTLEMENT_HAIRCUT)
+                            .mul(G_SETTLEMENT_DISCOUNT)
                             .div(Common.DECIMALS);
 
                         // Transfer the collateral between accounts. The msg.sender must have enough to cover the collateral
@@ -552,6 +559,8 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient {
                     // is that we simply partially settle cash and leave the account for liquidation.
                     address collateralToken = currencyGroups[G_COLLATERAL_CURRENCY].primary;
 
+                    // TODO: if we allow multi-currency collateralization this gets more complicated, we have to ensure that the entire
+                    // portfolio is empty and there are no currency balances and cash balances left
                     if (currencyBalances[collateralToken][payer] == 0) {
                         // This call will attempt to sell future cash tokens in return for local currency. We do this as a last ditch effort
                         // before we dip into reserves. The free collateral position will not change as a result of this method since positive
@@ -654,7 +663,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient {
             uint256 collateralToTransfer = uint256(answer)
                 .mul(shortfallRemaining)
                 .div(Common.DECIMALS)
-                .mul(G_LIQUIDATION_HAIRCUT)
+                .mul(G_LIQUIDATION_DISCOUNT)
                 .div(Common.DECIMALS);
 
             uint256 collateralBalance = currencyBalances[collateralToken][account];
@@ -666,7 +675,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient {
                         .mul(Common.DECIMALS)
                         .div(uint256(answer))
                         .mul(Common.DECIMALS)
-                        .div(G_LIQUIDATION_HAIRCUT)
+                        .div(G_LIQUIDATION_DISCOUNT)
                 );
                 collateralToTransfer = collateralBalance;
             }
@@ -693,6 +702,8 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient {
         );
 
         currencyBalances[localCurrency][account] = currencyBalances[localCurrency][account].add(unspentShortfall);
+
+        emit Liquidate(localCurrency, msg.sender, account);
     }
 
     /********** Settle Cash / Liquidation *************/
@@ -739,7 +750,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient {
 
             // We fail if the rate diff between the two exchanges is larger than the settlement haircut. This means that
             // there is an arbitrage opportunity for the receiver and we fail out here to protect the payer.
-            require(rateDiff < uint256(G_SETTLEMENT_HAIRCUT).sub(Common.DECIMALS), $$(ErrorCode(CANNOT_SETTLE_PRICE_DISCREPENCY)));
+            require(rateDiff < uint256(G_SETTLEMENT_DISCOUNT).sub(Common.DECIMALS), $$(ErrorCode(CANNOT_SETTLE_PRICE_DISCREPENCY)));
         }
 
         uint256 collateralBalance = currencyBalances[collateralToken][account];

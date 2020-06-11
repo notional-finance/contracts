@@ -14,7 +14,7 @@ contract PortfoliosStorage {
     // Mapping between instrument group ids and instrument groups
     mapping(uint8 => Common.InstrumentGroup) public instrumentGroups;
     // The current instrument group id, 0 is unused
-    uint8 internal _currentInstrumentGroupId;
+    uint8 public currentInstrumentGroupId;
 
     /****** Governance Parameters ******/
 

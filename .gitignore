@@ -4,8 +4,7 @@ build/
 typechain/
 sandbox/chaindb
 sandbox/build
-graph/build
-graph/generated
-.env
+.env*
+!.env.local
 coverage
 coverage.json

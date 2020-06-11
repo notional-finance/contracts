@@ -6,6 +6,9 @@ pragma solidity ^0.6.0;
  * the optional functions; to access them see {ERC20Detailed}.
  */
 interface IERC20 {
+    function name() external view returns (string memory);
+    function decimals() external view returns (uint8);
+
     /**
      * @dev Returns the amount of tokens in existence.
      */

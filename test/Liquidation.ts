@@ -475,7 +475,7 @@ describe("Liquidation", () => {
         const portfolioAfter = await portfolios.getTrades(wallet.address);
 
         // Liquidator Purchased 2.1 ETH for 105 Dai
-        const liquidationBonus = await escrow.G_LIQUIDATION_HAIRCUT();
+        const liquidationBonus = await escrow.G_LIQUIDATION_DISCOUNT();
         const portfolioHaircut = WeiPerEther.add(WeiPerEther.div(100).mul(5));
         const daiShortfall = WeiPerEther.mul(100).mul(portfolioHaircut).div(WeiPerEther)
         const ethPurchased = daiShortfall.sub(daiLeft).div(50).mul(liquidationBonus).div(WeiPerEther);

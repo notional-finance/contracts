@@ -42,7 +42,7 @@ contract EscrowStorage {
     }
 
     // 1: The current currency group id.
-    uint16 internal _currentCurrencyGroupId;
+    uint16 public currentCurrencyGroupId;
 
     // 2: Mapping from currencyId to a currency group object.
     mapping(uint16 => CurrencyGroup) public currencyGroups;
@@ -80,11 +80,11 @@ contract EscrowStorage {
     // 9: The address of the account that holds reserve balances in each currency. Fees are paid to this
     // account on trading and in the case of a default, this account is drained.
     address public G_RESERVE_ACCOUNT;
-    // 10: The haircut given to a liquidator when they purchase ETH for the local currency of an obligation.
-    // This haircut is taken off of the exchange rate oracle price.
-    uint128 public G_LIQUIDATION_HAIRCUT;
-    // 11: The haircut given to an account that settles obligations collateralized by ETH in order to settle
+    // 10: The discount given to a liquidator when they purchase ETH for the local currency of an obligation.
+    // This discount is taken off of the exchange rate oracle price.
+    uint128 public G_LIQUIDATION_DISCOUNT;
+    // 11: The discount given to an account that settles obligations collateralized by ETH in order to settle
     // cash balances for accounts.
-    uint128 public G_SETTLEMENT_HAIRCUT;
+    uint128 public G_SETTLEMENT_DISCOUNT;
     /********** Governance Settings ******************/
 }

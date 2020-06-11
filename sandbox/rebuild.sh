@@ -12,10 +12,11 @@ mkdir ./chaindb
 node ../../../node_modules/ganache-cli/cli.js \
     --gasLimit "0x7A1200" \
     --db ./chaindb \
+    --networkId 1337 \
     --defaultBalanceEther 100000 \
     --mnemonic "myth like bonus scare over problem client lizard pioneer submit female collect" &
 
-ts-node ../scripts/deployLocal.ts
+DEBUG=* DOTENV_CONFIG_PATH=../.env.local ts-node ../scripts/deploy.ts
 
 # Stop ganache-cli
 pkill -f ganache-cli
