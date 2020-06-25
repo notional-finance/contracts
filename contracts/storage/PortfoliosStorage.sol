@@ -23,8 +23,6 @@ contract PortfoliosStorage {
     uint256 public G_MAX_TRADES;
     // Number of currency groups, set by the Escrow account.
     uint16 public G_NUM_CURRENCIES;
-    // The currency that is used to collateralize obligations. Used in free collateral and set by Escrow.
-    uint16 public G_COLLATERAL_CURRENCY;
 
     /****** Governance Parameters ******/
 

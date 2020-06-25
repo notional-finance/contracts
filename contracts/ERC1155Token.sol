@@ -8,9 +8,6 @@ import "./interface/IERC1155.sol";
 import "./interface/IERC1155TokenReceiver.sol";
 import "./interface/IERC165.sol";
 
-import "./Portfolios.sol";
-import "./Escrow.sol";
-
 
 /**
  * @title ERC1155 Token Standard
@@ -25,6 +22,8 @@ contract ERC1155Token is Governed, IERC1155, IERC165 {
     bytes4 internal constant ERC1155_BATCH_ACCEPTED = 0xbc197c81;
     bytes4 internal constant ERC1155_INTERFACE = 0xd9b67a26;
 
+    mapping(address => mapping(address => bool)) public operators;
+
     /**
      * ERC165 compatibility for ERC1155
      */
@@ -38,34 +37,32 @@ contract ERC1155Token is Governed, IERC1155, IERC165 {
      *
      * @dev Caller must be approved to manage the tokens being transferred out of the
      * `_from` account (see "Approval" section of the standard).
-     * @param _from    Source address
-     * @param _to      Target address
-     * @param _id      ID of the token type
-     * @param _value   Transfer amount
-     * @param _data    Additional data with no specified format, MUST be sent unaltered
+     * @param from    Source address
+     * @param to      Target address
+     * @param id      ID of the token type
+     * @param value   Transfer amount
+     * @param data    Additional data with no specified format, MUST be sent unaltered
      *     in call to `onERC1155Received` on `_to`
      */
     function safeTransferFrom(
-        address _from,
-        address _to,
-        uint256 _id,
-        uint256 _value,
-        bytes calldata _data
+        address from,
+        address to,
+        uint256 id,
+        uint256 value,
+        bytes calldata data
     ) external override {
-        require(_to != address(0), $$(ErrorCode(INVALID_ADDRESS)));
-
-        _transfer(_from, _to, _id, _value);
-        emit TransferSingle(msg.sender, _from, _to, _id, _value);
+        _transfer(from, to, id, value);
+        emit TransferSingle(msg.sender, from, to, id, value);
 
         // If code size > 0 call onERC1155received
         uint256 codeSize;
         // solium-disable-next-line security/no-inline-assembly
         assembly {
-            codeSize := extcodesize(_to)
+            codeSize := extcodesize(to)
         }
         if (codeSize > 0) {
             require(
-                IERC1155TokenReceiver(_to).onERC1155Received(msg.sender, _from, _id, _value, _data) == ERC1155_ACCEPTED,
+                IERC1155TokenReceiver(to).onERC1155Received(msg.sender, from, id, value, data) == ERC1155_ACCEPTED,
                 $$(ErrorCode(ERC1155_NOT_ACCEPTED))
             );
         }
@@ -77,37 +74,35 @@ contract ERC1155Token is Governed, IERC1155, IERC165 {
      *
      * @dev Caller must be approved to manage the tokens being transferred out of the
      * `_from` account (see "Approval" section of the standard).
-     * @param _from    Source address
-     * @param _to      Target address
-     * @param _ids     IDs of each token type (order and length must match _values array)
-     * @param _values  Transfer amounts per token type (order and length must match _ids array)
-     * @param _data    Additional data with no specified format, MUST be sent unaltered in call
+     * @param from    Source address
+     * @param to      Target address
+     * @param ids     IDs of each token type (order and length must match _values array)
+     * @param values  Transfer amounts per token type (order and length must match _ids array)
+     * @param data    Additional data with no specified format, MUST be sent unaltered in call
      *      to the `ERC1155TokenReceiver` hook(s) on `_to`
      */
     function safeBatchTransferFrom(
-        address _from,
-        address _to,
-        uint256[] calldata _ids,
-        uint256[] calldata _values,
-        bytes calldata _data
+        address from,
+        address to,
+        uint256[] calldata ids,
+        uint256[] calldata values,
+        bytes calldata data
     ) external override {
-        require(_to != address(0), $$(ErrorCode(INVALID_ADDRESS)));
-
-        for (uint256 i; i < _ids.length; i++) {
-            _transfer(_from, _to, _ids[i], _values[i]);
+        for (uint256 i; i < ids.length; i++) {
+            _transfer(from, to, ids[i], values[i]);
         }
 
-        emit TransferBatch(msg.sender, _from, _to, _ids, _values);
+        emit TransferBatch(msg.sender, from, to, ids, values);
 
         // If code size > 0 call onERC1155received
         uint256 codeSize;
         // solium-disable-next-line security/no-inline-assembly
         assembly {
-            codeSize := extcodesize(_to)
+            codeSize := extcodesize(to)
         }
         if (codeSize > 0) {
             require(
-                IERC1155TokenReceiver(_to).onERC1155BatchReceived(msg.sender, _from, _ids, _values, _data) ==
+                IERC1155TokenReceiver(to).onERC1155BatchReceived(msg.sender, from, ids, values, data) ==
                     ERC1155_BATCH_ACCEPTED,
                 $$(ErrorCode(ERC1155_NOT_ACCEPTED))
             );
@@ -120,28 +115,29 @@ contract ERC1155Token is Governed, IERC1155, IERC165 {
      * code and updating storage on each loop, we can do it in memory and then flush to
      * storage just once.
      *
-     * @param _from the token holder
-     * @param _to the new token holder
-     * @param _id the token id
+     * @param from the token holder
+     * @param to the new token holder
+     * @param id the token id
      * @param _value the notional amount to transfer
      */
-    function _transfer(address _from, address _to, uint256 _id, uint256 _value) internal {
+    function _transfer(address from, address to, uint256 id, uint256 _value) internal {
+        require(to != address(0), $$(ErrorCode(INVALID_ADDRESS)));
         uint128 value = uint128(_value);
         require(uint256(value) == _value, $$(ErrorCode(INTEGER_OVERFLOW)));
-        // We do not support operators at thispoint.
-        require(msg.sender == _from, $$(ErrorCode(UNAUTHORIZED_CALLER)));
+        require(msg.sender == from || isApprovedForAll(from, msg.sender), $$(ErrorCode(UNAUTHORIZED_CALLER)));
 
-        bytes1 swapType = Common.getSwapType(_id);
+        bytes1 swapType = Common.getSwapType(id);
         // Transfers can only be entitlements to receive which are a net benefit.
         require(Common.isReceiver(swapType), $$(ErrorCode(CANNOT_TRANSFER_PAYER)));
 
         (uint8 instrumentGroupId, uint16 instrumentId, uint32 startBlock, uint32 duration) = Common.decodeTradeId(
-            _id
+            id
         );
+        require(startBlock + duration > block.number, $$(ErrorCode(CANNOT_TRANSFER_MATURED_TRADE)));
 
-        Portfolios(contracts[uint256(CoreContracts.Portfolios)]).transferAccountTrade(
-            _from,
-            _to,
+        Portfolios().transferAccountTrade(
+            from,
+            to,
             swapType,
             instrumentGroupId,
             instrumentId,
@@ -156,16 +152,16 @@ contract ERC1155Token is Governed, IERC1155, IERC165 {
      * but is not very useful for most Swapnet functionality.
      *
      * @param account  The address of the token holder
-     * @param _id     ID of the token
+     * @param id     ID of the token
      * @return        The account's balance of the token type requested
      */
-    function balanceOf(address account, uint256 _id) external view override returns (uint256) {
-        bytes1 swapType = Common.getSwapType(_id);
+    function balanceOf(address account, uint256 id) external view override returns (uint256) {
+        bytes1 swapType = Common.getSwapType(id);
 
-        ( uint8 instrumentGroupId, uint16 instrumentId, uint32 startBlock, uint32 duration) = Common.decodeTradeId(
-            _id
+        (uint8 instrumentGroupId, uint16 instrumentId, uint32 startBlock, uint32 duration) = Common.decodeTradeId(
+            id
         );
-        (Common.Trade memory t, ) = Portfolios(contracts[uint256(CoreContracts.Portfolios)]).searchAccountTrade(
+        (Common.Trade memory t, ) = Portfolios().searchAccountTrade(
             account,
             swapType,
             instrumentGroupId,
@@ -181,10 +177,10 @@ contract ERC1155Token is Governed, IERC1155, IERC165 {
      * Get the balance of multiple account/token pairs.
      *
      * @param accounts The addresses of the token holders
-     * @param _ids     ID of the tokens
+     * @param ids     ID of the tokens
      * @return         The account's balance of the token types requested (i.e. balance for each (owner, id) pair)
      */
-    function balanceOfBatch(address[] calldata accounts, uint256[] calldata _ids)
+    function balanceOfBatch(address[] calldata accounts, uint256[] calldata ids)
         external
         view
         override
@@ -193,7 +189,7 @@ contract ERC1155Token is Governed, IERC1155, IERC165 {
         uint256[] memory results = new uint256[](accounts.length);
 
         for (uint256 i; i < accounts.length; i++) {
-            results[i] = this.balanceOf(accounts[i], _ids[i]);
+            results[i] = this.balanceOf(accounts[i], ids[i]);
         }
 
         return results;
@@ -231,11 +227,11 @@ contract ERC1155Token is Governed, IERC1155, IERC165 {
         );
     }
 
-    function setApprovalForAll(address _operator, bool _approved) external override {
-        revert($$(ErrorCode(UNIMPLEMENTED)));
+    function setApprovalForAll(address operator, bool approved) external override {
+        operators[msg.sender][operator] = approved;
     }
 
-    function isApprovedForAll(address _owner, address _operator) external override view returns (bool) {
-        return false;
+    function isApprovedForAll(address owner, address operator) public override view returns (bool) {
+        return operators[owner][operator];
     }
 }

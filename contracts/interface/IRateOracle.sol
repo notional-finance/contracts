@@ -58,7 +58,6 @@ interface IRateOracle {
      *
      * @param instrumentGroupId this cannot change once set
      * @param instrumentId cannot change once set
-     * @param currency cannot change once set
      * @param precision will only take effect on a new period
      * @param periodSize will take effect immediately, must be careful
      * @param numPeriods will take effect immediately, makers can create new markets
@@ -67,7 +66,6 @@ interface IRateOracle {
     function setParameters(
         uint8 instrumentGroupId,
         uint16 instrumentId,
-        uint16 currency,
         uint32 precision,
         uint32 periodSize,
         uint32 numPeriods,

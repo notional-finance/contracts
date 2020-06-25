@@ -23,6 +23,18 @@ export const ErrorCodes = {
     UNIMPLEMENTED: "22",
     CANNOT_SETTLE_PRICE_DISCREPENCY: "23",
     CANNOT_TRANSFER_PAYER: "23",
+    INVALID_ADDRESS: "24",
+    ERC1155_NOT_ACCEPTED: "25",
+    INTEGER_OVERFLOW: "26",
+    OVER_MAX_ETH_BALANCE: "27",
+    INVALID_EXCHANGE_RATE: "28",
+    INSUFFICIENT_COLLATERAL_BALANCE: "29",
+    INSUFFICIENT_COLLATERAL_FOR_SETTLEMENT: "30",
+    OVER_MAX_FUTURE_CASH: "31",
+    OVER_INSTRUMENT_LIMIT: "32",
+    INVALID_INSTRUMENT_GROUP: "33",
+    PORTFOLIO_TOO_LARGE: "34",
+    CANNOT_TRANSFER_MATURED_TRADE: "35",
 
     INT256_ADDITION_OVERFLOW: "100",
     INT256_MULTIPLICATION_OVERFLOW: "101",
@@ -42,10 +54,21 @@ export const ErrorCodes = {
 
     ABDK_INT256_OVERFLOW: "113",
     ABDK_UINT256_OVERFLOW: "114",
-    ABDK_MULTIPLACTION_OVERFLOW: "115",
+    ABDK_MULTIPLICATION_OVERFLOW: "115",
     ABDK_NEGATIVE_LOG: "116",
 
     ErrorCode: function(code: number) {
+        const matches = Object.values(ErrorCodes).filter((v) => {
+            if (typeof v === "string") {
+                return v === code.toString();
+            }
+            return false;
+        });
+
+        if (matches.length === 0) {
+            throw new Error(`Unknown error code value: ${code}`);
+        }
+
         return `"${code}"`;
     }
 };

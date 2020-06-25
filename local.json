@@ -1,7 +1,6 @@
 {
   "chainId": 1337,
   "networkName": "unknown",
-  "owner": "0x4f3edf983ac636a65a842ce7c78d9aa706d3b113bce9c46f30d7d21715b23b1d",
   "escrow": "0x59d3631c86BbE35EF041872d502F218A39FBa150",
   "portfolios": "0x9b1f7F645351AF3631a656421eD2e40f2802E6c0",
   "risk": "0x2612Af3A521c2df9EAF28422Ca335b04AdF3ac66",

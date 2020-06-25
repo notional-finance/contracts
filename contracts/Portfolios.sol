@@ -9,21 +9,26 @@ import "./lib/SafeInt256.sol";
 import "./lib/SafeUInt128.sol";
 
 import "./interface/IRateOracle.sol";
-import "./interface/IRiskFramework.sol";
-
-import "./Escrow.sol";
-import "./FutureCash.sol";
+import "./interface/IPortfoliosCallable.sol";
 
 import "./storage/PortfoliosStorage.sol";
+import "./FutureCash.sol";
 
 /**
  * @title Portfolios
  * @notice Holds all the methods for managing an account's portfolio of trades
  */
-contract Portfolios is PortfoliosStorage, Governed {
+contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
     using SafeMath for uint256;
     using SafeInt256 for int256;
     using SafeUInt128 for uint128;
+
+    struct TradePortfolioState {
+        uint128 amountRemaining;
+        uint256 indexCount;
+        int256 unlockedCollateral;
+        Common.Trade[] portfolioChanges;
+    }
 
     event SettleAccount(address operator, address account);
     event SettleAccountBatch(address operator, address[] account);
@@ -40,17 +45,13 @@ contract Portfolios is PortfoliosStorage, Governed {
 
     /****** Governance Parameters ******/
 
-    function setNumCurrencies(uint16 numCurrencies) public {
-        require(msg.sender == contracts[uint256(CoreContracts.Escrow)], $$(ErrorCode(UNAUTHORIZED_CALLER)));
+    function setNumCurrencies(uint16 numCurrencies) public override {
+        require(calledByEscrow(), $$(ErrorCode(UNAUTHORIZED_CALLER)));
         G_NUM_CURRENCIES = numCurrencies;
     }
 
     function setMaxTrades(uint256 maxTrades) public onlyOwner {
         G_MAX_TRADES = maxTrades;
-    }
-
-    function setCollateralCurrency(uint16 currency) public onlyOwner {
-        G_COLLATERAL_CURRENCY = currency;
     }
 
     /**
@@ -62,38 +63,33 @@ contract Portfolios is PortfoliosStorage, Governed {
      * @param periodSize the baseline period length (in blocks) for periodic swaps in this instrument.
      * @param precision the discount rate precision
      * @param currency the token address of the currenty this instrument settles in
-     * @param discountRateOracle the rate oracle that defines the discount rate
+     * @param futureCashMarket the rate oracle that defines the discount rate
      */
     function createInstrumentGroup(
         uint32 numPeriods,
         uint32 periodSize,
         uint32 precision,
         uint16 currency,
-        address discountRateOracle,
+        address futureCashMarket,
         address riskFormula
     ) external onlyOwner {
         require(currentInstrumentGroupId <= MAX_INSTRUMENT_GROUPS, $$(ErrorCode(OVER_INSTRUMENT_LIMIT)));
-        require(
-            Escrow(contracts[uint256(CoreContracts.Escrow)]).isCurrencyGroup(currency),
-            $$(ErrorCode(INVALID_CURRENCY))
-        );
-        // We don't need to check for the validity of discountRateOracles on the SettlementOracle because
-        // future cash markets do not require settlement.
+        require(Escrow().isTradableCurrency(currency), $$(ErrorCode(INVALID_CURRENCY)));
+
         currentInstrumentGroupId++;
         instrumentGroups[currentInstrumentGroupId] = Common.InstrumentGroup(
             numPeriods,
             periodSize,
             precision,
             currency,
-            discountRateOracle,
+            futureCashMarket,
             riskFormula
         );
 
         // The instrument is set to 0 for discount rate oracles and there is no max rate as well.
-        IRateOracle(discountRateOracle).setParameters(
+        IRateOracle(futureCashMarket).setParameters(
             currentInstrumentGroupId,
             0,
-            currency,
             precision,
             periodSize,
             numPeriods,
@@ -105,7 +101,7 @@ contract Portfolios is PortfoliosStorage, Governed {
 
     /**
      * @notice Updates instrument groups. Be very careful when calling this function! When changing periods and
-     * period sizes the oracles must be updated as well. If the discountRateOracle is shared by other
+     * period sizes the oracles must be updated as well. If the futureCashMarket is shared by other
      * instrument groups, their numPeriod and periodSize must be updated as well or this will result in
      * incompatibility.
      *
@@ -114,7 +110,7 @@ contract Portfolios is PortfoliosStorage, Governed {
      * @param periodSize this is only safe to update when there are no trades left
      * @param precision this is only safe to update when there are no trades left
      * @param currency this is safe to update if there are no trades or the new currency is equivalent
-     * @param discountRateOracle this is safe to update once the oracle is established
+     * @param futureCashMarket this is safe to update once the oracle is established
      */
     function updateInstrumentGroup(
         uint8 instrumentGroupId,
@@ -122,31 +118,27 @@ contract Portfolios is PortfoliosStorage, Governed {
         uint32 periodSize,
         uint32 precision,
         uint16 currency,
-        address discountRateOracle,
+        address futureCashMarket,
         address riskFormula
     ) external onlyOwner {
         require(
             instrumentGroupId != 0 && instrumentGroupId <= currentInstrumentGroupId,
             $$(ErrorCode(INVALID_INSTRUMENT_GROUP))
         );
-        require(
-            Escrow(contracts[uint256(CoreContracts.Escrow)]).isCurrencyGroup(currency),
-            $$(ErrorCode(INVALID_CURRENCY))
-        );
+        require(Escrow().isTradableCurrency(currency), $$(ErrorCode(INVALID_CURRENCY)));
 
         Common.InstrumentGroup storage i = instrumentGroups[instrumentGroupId];
         if (i.numPeriods != numPeriods) i.numPeriods = numPeriods;
         if (i.periodSize != periodSize) i.periodSize = periodSize;
         if (i.precision != precision) i.precision = precision;
         if (i.currency != currency) i.currency = currency;
-        if (i.discountRateOracle != discountRateOracle) i.discountRateOracle = discountRateOracle;
+        if (i.futureCashMarket != futureCashMarket) i.futureCashMarket = futureCashMarket;
         if (i.riskFormula != riskFormula) i.riskFormula = riskFormula;
 
         // The instrument is set to 0 for discount rate oracles and there is no max rate as well.
-        IRateOracle(discountRateOracle).setParameters(
+        IRateOracle(futureCashMarket).setParameters(
             instrumentGroupId,
             0,
-            currency,
             precision,
             periodSize,
             numPeriods,
@@ -183,7 +175,9 @@ contract Portfolios is PortfoliosStorage, Governed {
      *
      * @param instrumentGroupId to retrieve
      */
-    function getInstrumentGroup(uint8 instrumentGroupId) public view returns (Common.InstrumentGroup memory) {
+    function getInstrumentGroup(
+        uint8 instrumentGroupId
+    ) public view override returns (Common.InstrumentGroup memory) {
         return instrumentGroups[instrumentGroupId];
     }
 
@@ -192,7 +186,9 @@ contract Portfolios is PortfoliosStorage, Governed {
      *
      * @param groupIds array of instrument group ids to retrieve
      */
-    function getInstrumentGroups(uint8[] memory groupIds) public view returns (Common.InstrumentGroup[] memory) {
+    function getInstrumentGroups(
+        uint8[] memory groupIds
+    ) public view override returns (Common.InstrumentGroup[] memory) {
         Common.InstrumentGroup[] memory results = new Common.InstrumentGroup[](groupIds.length);
 
         for (uint256 i; i < groupIds.length; i++) {
@@ -220,15 +216,16 @@ contract Portfolios is PortfoliosStorage, Governed {
         uint16 instrumentId,
         uint32 startBlock,
         uint32 duration
-    ) public view returns (Common.Trade memory, uint256) {
+    ) public override view returns (Common.Trade memory, uint256) {
         Common.Trade[] storage portfolio = _accountTrades[account];
-        (Common.Trade memory t, uint256 index) = _searchTrade(
+        (Common.Trade memory t, uint256 index, /* bool */) = _searchTrade(
             portfolio,
             swapType,
             instrumentGroupId,
             instrumentId,
             startBlock,
-            duration
+            duration,
+            false
         );
 
         return (t, index);
@@ -240,7 +237,7 @@ contract Portfolios is PortfoliosStorage, Governed {
      *
      * @param account to get free collateral for
      */
-    function freeCollateral(address account) public returns (int256, uint128[] memory) {
+    function freeCollateral(address account) public override returns (int256, uint128[] memory) {
         // This will emit an event, which is the correct action here.
         settleAccount(account);
 
@@ -256,49 +253,50 @@ contract Portfolios is PortfoliosStorage, Governed {
     function freeCollateralView(address account) public view returns (int256, uint128[] memory) {
         Common.Trade[] memory portfolio = _accountTrades[account];
         // This is the net balance after cash of each currency
-        int256[] memory cash = Escrow(contracts[uint256(CoreContracts.Escrow)]).getNetBalances(account);
-        // This array will hold the requirements in each currency
-        uint128[] memory currencyRequirement = new uint128[](cash.length);
-        Common.Requirement[] memory requirements;
+        Common.AccountBalance[] memory balances = Escrow().getNetBalances(account);
 
         if (portfolio.length > 0) {
             // This returns the net requirement in each currency held by the portfolio.
-            requirements = IRiskFramework(contracts[uint256(CoreContracts.RiskFramework)]).getRequirement(portfolio);
+            Common.Requirement[] memory requirements = RiskFramework().getRequirement(portfolio);
 
             // Net out the cash that and requirements provided by the risk framework.
             for (uint256 i; i < requirements.length; i++) {
                 uint256 currency = uint256(requirements[i].currency);
                 // This new cash balance represents any net collateral position after taking the portfolio
                 // into account.
-
-                // TODO: update this to a separate array?
-                cash[currency] = cash[currency].add(requirements[i].npv).sub(requirements[i].requirement);
+                balances[currency].netBalance = balances[currency].netBalance
+                    .add(requirements[i].npv)
+                    .sub(requirements[i].requirement);
             }
         }
 
         // We do this in a separate loop in case the portfolio is empty and the account just holds
         // a negative cash balance. We still need to ensure that it is collateralized.
-        for (uint256 i; i < cash.length; i++) {
-            if (cash[i] < 0) {
-                currencyRequirement[i] = uint128(cash[i].neg());
-                // TODO: credit back positive cash that is not collateralizing obligations, we cannot credit back
-                // npv here because we won't be able to determine which currency we need to extract cash from.
+        uint128[] memory currencyRequirements = new uint128[](balances.length);
+        for (uint256 i; i < balances.length; i++) {
+            if (balances[i].netBalance < 0) {
+                currencyRequirements[i] = uint128(balances[i].netBalance.neg());
+            } else if (balances[i].isDepositCurrency) {
+                currencyRequirements[i] = uint128(balances[i].netBalance);
             }
         }
 
-        // Collateral requirements are denominated in G_COLLATERAL_CURRENCY and positive.
-        uint128[] memory collateralRequirement = Escrow(contracts[uint256(CoreContracts.Escrow)])
-            .convertBalancesToCollateral(currencyRequirement);
+        // Collateral requirements are denominated in ETH and positive.
+        uint128[] memory ethBalances = Escrow().convertBalancesToETH(currencyRequirements);
 
-        // Sum up the required balances in G_COLLATERAL_CURRENCY and then net it out with the balance that
+        // Sum up the required balances in ETH and then net it out with the balance that
         // the account holds
         int256 fc;
-        for (uint256 i; i < collateralRequirement.length; i++) {
-            fc = fc.sub(collateralRequirement[i]);
+        for (uint256 i; i < balances.length; i++) {
+            if (balances[i].isDepositCurrency) {
+                fc = fc.add(ethBalances[i]);
+                currencyRequirements[i] = 0;
+            } else {
+                fc = fc.sub(ethBalances[i]);
+            }
         }
 
-        // TODO: fc here is not really free collateral, it's more like the net currency requirement
-        return (fc.add(cash[G_COLLATERAL_CURRENCY]), currencyRequirement);
+        return (fc, currencyRequirements);
     }
 
     /***** Public Authenticated Methods *****/
@@ -310,11 +308,10 @@ contract Portfolios is PortfoliosStorage, Governed {
      * @param account to insert the trade to
      * @param trade trade to insert into the account
      */
-    function upsertAccountTrade(address account, Common.Trade memory trade) public {
-        // Only the rate oracle (in this case the Future Cash market) can call insert trades
-        // for this instrument group.
-        address rateOracle = instrumentGroups[trade.instrumentGroupId].discountRateOracle;
-        require(msg.sender == rateOracle, $$(ErrorCode(UNAUTHORIZED_CALLER)));
+    function upsertAccountTrade(address account, Common.Trade memory trade) public override {
+        // Only the future cash market can insert trades into a portfolio
+        address futureCashMarket = instrumentGroups[trade.instrumentGroupId].futureCashMarket;
+        require(msg.sender == futureCashMarket, $$(ErrorCode(UNAUTHORIZED_CALLER)));
 
         Common.Trade[] storage portfolio = _accountTrades[account];
         _upsertTrade(portfolio, trade);
@@ -332,18 +329,13 @@ contract Portfolios is PortfoliosStorage, Governed {
     function upsertAccountTradeBatch(
         address account,
         Common.Trade[] memory trades
-    ) public {
-        // Only the rate oracle (in this case the Future Cash market) can call insert trades
-        // for this instrument group. Liquidation is also allowed to call this function in order to
-        // sell off portions of the portfolio.
-
-        // No point in calling this function with an empty trade array.
+    ) public override {
         if (trades.length == 0) {
             return;
         }
 
         // Here we check that all the instrument group ids are the same if the liquidation auction
-        // is not calling this function. If this is not the case then we have an issue. Rate oracles
+        // is not calling this function. If this is not the case then we have an issue. Cash markets
         // should only ever call this function with the same instrument group id for all the trades
         // they submit.
         uint16 id = trades[0].instrumentGroupId;
@@ -351,14 +343,11 @@ contract Portfolios is PortfoliosStorage, Governed {
             require(trades[i].instrumentGroupId == id, $$(ErrorCode(UNAUTHORIZED_CALLER)));
         }
 
-        address rateOracle = instrumentGroups[trades[0].instrumentGroupId].discountRateOracle;
-        require(msg.sender == rateOracle, $$(ErrorCode(UNAUTHORIZED_CALLER)));
+        address futureCashMarket = instrumentGroups[trades[0].instrumentGroupId].futureCashMarket;
+        require(msg.sender == futureCashMarket, $$(ErrorCode(UNAUTHORIZED_CALLER)));
 
         Common.Trade[] storage portfolio = _accountTrades[account];
         for (uint256 i; i < trades.length; i++) {
-            // If an array contains an empty swap type then quit. This cannot be possible
-            // via the Swap contract since it will validate trades before they are submitted.
-            if (trades[i].swapType == 0) break;
             _upsertTrade(portfolio, trades[i]);
         }
 
@@ -387,18 +376,19 @@ contract Portfolios is PortfoliosStorage, Governed {
         uint32 startBlock,
         uint32 duration,
         uint128 value
-    ) public {
+    ) public override {
         // Can only be called by ERC1155 token to transfer trades between accounts.
-        require(msg.sender == contracts[uint256(CoreContracts.ERC1155Token)], $$(ErrorCode(UNAUTHORIZED_CALLER)));
+        require(calledByERC1155(), $$(ErrorCode(UNAUTHORIZED_CALLER)));
 
         Common.Trade[] storage fromPortfolio = _accountTrades[from];
-        (Common.Trade storage trade, uint256 index) = _searchTrade(
+        (Common.Trade storage trade, uint256 index, /* bool */) = _searchTrade(
             fromPortfolio,
             swapType,
             instrumentGroupId,
             instrumentId,
             startBlock,
-            duration
+            duration,
+            false
         );
         _reduceTrade(fromPortfolio, trade, index, value);
 
@@ -423,7 +413,7 @@ contract Portfolios is PortfoliosStorage, Governed {
      *
      * @param account the account referenced
      */
-    function settleAccount(address account) public {
+    function settleAccount(address account) public override {
         _settleAccount(account);
 
         emit SettleAccount(msg.sender, account);
@@ -434,7 +424,7 @@ contract Portfolios is PortfoliosStorage, Governed {
      *
      * @param accounts an array of accounts to settle
      */
-    function settleAccountBatch(address[] calldata accounts) external {
+    function settleAccountBatch(address[] calldata accounts) external override {
         for (uint256 i; i < accounts.length; i++) {
             _settleAccount(accounts[i]);
         }
@@ -465,21 +455,19 @@ contract Portfolios is PortfoliosStorage, Governed {
                 // will not be multiple matured trades in the same instrument group.
                 uint16 currency = instrumentGroups[portfolio[i].instrumentGroupId].currency;
 
-                if (Common.isCash(portfolio[i].swapType)) {
-                    if (Common.isPayer(portfolio[i].swapType)) {
-                        // If the trade is a payer, we subtract from the cash balance
-                        settledCash[currency] = settledCash[currency].sub(portfolio[i].notional);
-                    } else {
-                        // If the trade is a receiver, we add to the cash balance
-                        settledCash[currency] = settledCash[currency].add(portfolio[i].notional);
-                    }
+                if (Common.isCashPayer(portfolio[i].swapType)) {
+                    // If the trade is a payer, we subtract from the cash balance
+                    settledCash[currency] = settledCash[currency].sub(portfolio[i].notional);
+                } else if (Common.isCashReceiver(portfolio[i].swapType)) {
+                    // If the trade is a receiver, we add to the cash balance
+                    settledCash[currency] = settledCash[currency].add(portfolio[i].notional);
                 } else if (Common.isLiquidityToken(portfolio[i].swapType)) {
                     // Settling liquidity tokens is a bit more involved since we need to remove
                     // money from the collateral pools. This function returns the amount of future cash
                     // the liquidity token has a claim to.
-                    address rateOracle = instrumentGroups[portfolio[i].instrumentGroupId].discountRateOracle;
+                    address futureCashMarket = instrumentGroups[portfolio[i].instrumentGroupId].futureCashMarket;
                     // This function call will transfer the collateral claim back to the Escrow account.
-                    uint128 futureCashAmount = FutureCash(rateOracle).settleLiquidityToken(
+                    uint128 futureCashAmount = FutureCash(futureCashMarket).settleLiquidityToken(
                         account,
                         portfolio[i].notional,
                         portfolio[i].startBlock + portfolio[i].duration
@@ -497,7 +485,7 @@ contract Portfolios is PortfoliosStorage, Governed {
         }
 
         // We call the escrow contract to update the account's cash balances.
-        Escrow(contracts[uint256(CoreContracts.Escrow)]).portfolioSettleCash(account, settledCash);
+        Escrow().portfolioSettleCash(account, settledCash);
     }
 
     /***** Public Authenticated Methods *****/
@@ -511,17 +499,23 @@ contract Portfolios is PortfoliosStorage, Governed {
      * @param account the account to extract cash from
      * @param currency the currency that the token should be denominated in
      * @param amount the amount of collateral to extract from the portfolio
-     * @param sellFutureCash whether or not we should sell future cash
      * @return returns the amount of remaining collateral value (if any) that the function was unable
      *  to extract from the portfolio
      */
-    function extractCash(
+    function raiseCollateralViaLiquidityToken(
         address account,
         uint16 currency,
-        uint128 amount,
-        bool sellFutureCash
-    ) public returns (uint128) {
-        return _tradePortfolio(account, currency, amount, false, sellFutureCash);
+        uint128 amount
+    ) public override returns (uint128) {
+        return _tradePortfolio(account, currency, amount, Common.getLiquidityToken());
+    }
+
+    function raiseCollateralViaCashReceiver(
+        address account,
+        uint16 currency,
+        uint128 amount
+    ) public override returns (uint128) {
+        return _tradePortfolio(account, currency, amount, Common.getCashReceiver());
     }
 
     /**
@@ -532,12 +526,12 @@ contract Portfolios is PortfoliosStorage, Governed {
      * @param amount the amount of current cash available to pay off obligations
      * @return returns the excess amount of collateral after obligations have been closed
      */
-    function closeObligations(
+    function repayCashPayer(
         address account,
         uint16 currency,
         uint128 amount
-    ) public returns (uint128) {
-        return _tradePortfolio(account, currency, amount, true, false);
+    ) public override returns (uint128) {
+        return _tradePortfolio(account, currency, amount, Common.getCashPayer());
     }
 
     /**
@@ -547,40 +541,30 @@ contract Portfolios is PortfoliosStorage, Governed {
      * @param account account that holds the portfolio to trade
      * @param currency the currency that the trades should be denominated in
      * @param amount of collateral available
-     * @param isCloseObligations if this function should be closing obligations
-     * @param sellFutureCash if this function should sell future cash
+     * @param tradeType the swapType to trade in the portfolio
      */
     function _tradePortfolio(
         address account,
         uint16 currency,
         uint128 amount,
-        bool isCloseObligations,
-        bool sellFutureCash
+        bytes1 tradeType
     ) public returns (uint128) {
         // Only Escrow can execute actions to trade the portfolio
-        require(
-            msg.sender == contracts[uint256(CoreContracts.Escrow)],
-            $$(ErrorCode(UNAUTHORIZED_CALLER))
-        );
+        require(calledByEscrow(), $$(ErrorCode(UNAUTHORIZED_CALLER)));
 
         // Sorting the portfolio ensures that as we iterate through it we see each instrument group
         // in batches. However, this means that we won't be able to track the indexes to remove correctly.
         Common.Trade[] memory portfolio = Common._sortPortfolio(_accountTrades[account]);
-        if (portfolio.length == 0) {
-            // Nothing to do here.
-            return amount;
-        }
+        if (portfolio.length == 0) return amount;
 
-        // Amount of collateral remaining
-        uint128 amountRemaining = uint128(amount);
-        // Number of indexes in the portfolioChanges array that have been used.
-        uint256 indexCount;
-        // At most we will add twice as many trades as the portfolio (this would be for liquidity token)
-        // changes where we update both liquidity tokens as well as cash obligations.
-        Common.Trade[] memory portfolioChanges = new Common.Trade[](portfolio.length * 2);
-        // This variable holds the amount of collateral that the future cash contract needs to transfer
-        // between to the escrow contract since it has been taken out of or added to future cash markets.
-        int256 unlockedCollateral;
+        TradePortfolioState memory state = TradePortfolioState(
+            uint128(amount),
+            0,
+            0,
+            // At most we will add twice as many trades as the portfolio (this would be for liquidity token)
+            // changes where we update both liquidity tokens as well as cash obligations.
+            new Common.Trade[](portfolio.length * 2)
+        );
 
         // We initialize these instrument groups here knowing that there is at least one trade in the portfolio
         uint8 instrumentGroupId = portfolio[0].instrumentGroupId;
@@ -591,149 +575,92 @@ contract Portfolios is PortfoliosStorage, Governed {
             if (instrumentGroupId != portfolio[i].instrumentGroupId) {
                 // Here the instrument group has changed and therefore the future cash market has also
                 // changed. We need to unlock collateral from the previous future cash market.
-                Escrow(contracts[uint256(CoreContracts.Escrow)]).unlockCollateral(
-                    currency,
-                    ig.discountRateOracle,
-                    unlockedCollateral
-                );
+                Escrow().unlockCollateral(currency, ig.futureCashMarket, state.unlockedCollateral);
                 // Reset this counter for the next group
-                unlockedCollateral = 0;
+                state.unlockedCollateral = 0;
 
                 // Fetch the new instrument group.
                 instrumentGroupId = portfolio[i].instrumentGroupId;
                 ig = instrumentGroups[instrumentGroupId];
             }
 
-            if (ig.currency != currency) {
-                // Only operate on trades in this currency
-                continue;
-            }
+            if (ig.currency != currency) continue;
+            if (portfolio[i].swapType != tradeType) continue;
 
-            if (isCloseObligations &&
-                Common.isCash(portfolio[i].swapType) &&
-                Common.isPayer(portfolio[i].swapType)
-            ) {
-                // Close obligations on CASH_PAYER tokens
-                (indexCount, amountRemaining, unlockedCollateral) = _closeObligation(
-                    portfolio[i],
-                    portfolioChanges,
-                    ig.discountRateOracle,
-                    indexCount,
-                    amountRemaining,
-                    unlockedCollateral
-                );
-            } else if (!isCloseObligations && Common.isLiquidityToken(portfolio[i].swapType)) {
-                // Extract cash from liquidity tokens
-                (indexCount, amountRemaining, unlockedCollateral) = _extractLiquidityToken(
-                    portfolio[i],
-                    portfolioChanges,
-                    ig.discountRateOracle,
-                    indexCount,
-                    amountRemaining,
-                    unlockedCollateral
-                );
-            } else if (!isCloseObligations && sellFutureCash &&
-                Common.isCash(portfolio[i].swapType) &&
-                Common.isReceiver(portfolio[i].swapType) &&
-                !Common.isLiquidityToken(portfolio[i].swapType)
-            ) {
-                // Trade future cash for current cash
-                (indexCount, amountRemaining, unlockedCollateral) = _extractFutureCash(
-                    account,
-                    portfolio[i],
-                    portfolioChanges,
-                    ig.discountRateOracle,
-                    indexCount,
-                    amountRemaining,
-                    unlockedCollateral
-                );
+            if (Common.isCashPayer(portfolio[i].swapType)) {
+                _tradeCashPayer(portfolio[i], ig.futureCashMarket, state);
+            } else if (Common.isLiquidityToken(portfolio[i].swapType)) {
+                _tradeLiquidityToken(portfolio[i], ig.futureCashMarket, state);
+            } else if (Common.isCashReceiver(portfolio[i].swapType)) {
+                _tradeCashReceiver(account, portfolio[i], ig.futureCashMarket, state);
             }
 
             // No more collateral left so we break out of the loop
-            if (amountRemaining == 0) {
+            if (state.amountRemaining == 0) {
                 break;
             }
         }
 
-        if (unlockedCollateral != 0) {
+        if (state.unlockedCollateral != 0) {
             // Transfer cash from the last instrument group in the previous loop
-            Escrow(contracts[uint256(CoreContracts.Escrow)]).unlockCollateral(
-                currency,
-                ig.discountRateOracle,
-                unlockedCollateral
-            );
+            Escrow().unlockCollateral(currency, ig.futureCashMarket, state.unlockedCollateral);
         }
 
         Common.Trade[] storage accountStorage = _accountTrades[account];
-        for (uint256 i; i < indexCount; i++) {
+        for (uint256 i; i < state.indexCount; i++) {
             // This bypasses the free collateral check which is required here.
-            _upsertTrade(accountStorage, portfolioChanges[i]);
+            _upsertTrade(accountStorage, state.portfolioChanges[i]);
         }
 
-        return amountRemaining;
+        return state.amountRemaining;
     }
 
     /**
      * @notice Extracts collateral from liquidity tokens.
      *
      * @param trade the liquidity token to extract cash from
-     * @param portfolioChanges an array of the changes to the portfolio
-     * @param discountRateOracle the address of the future cash market
-     * @param indexCount index of portfolio changes to add trades to
-     * @param amountRemaining amount of collateral to raise remaining
-     * @param unlockedCollateral amount of collateral to unlock
+     * @param futureCashMarket the address of the future cash market
+     * @param state state of the portfolio trade operation
      */
-    // solium-disable-next-line security/no-assign-params
-    function _extractLiquidityToken(
+    function _tradeLiquidityToken(
         Common.Trade memory trade,
-        Common.Trade[] memory portfolioChanges,
-        address discountRateOracle,
-        uint256 indexCount,
-        uint128 amountRemaining,
-        int256 unlockedCollateral
-    ) internal returns (uint256, uint128, int256) {
-        // Do this in order to prevent the stack from getting too large
-        uint128[] memory args = new uint128[](3);
-        // 0 = collateralAmount
-        // 1 = futureCashAmount
-        // 2 = tokensToRemove
-
-        (args[0], args[1], args[2]) = FutureCash(discountRateOracle)
-            .extractCashLiquidityToken(
-                amountRemaining,
+        address futureCashMarket,
+        TradePortfolioState memory state
+    ) internal  {
+        (uint128 collateral, uint128 futureCash, uint128 tokens) = FutureCash(futureCashMarket)
+            .tradeLiquidityToken(
+                state.amountRemaining,
                 trade.notional,
                 trade.startBlock + trade.duration
             );
-        amountRemaining = amountRemaining - args[0];
+        state.amountRemaining = state.amountRemaining.sub(collateral);
 
         // This amount of collateral has been removed from the market
-        unlockedCollateral = unlockedCollateral + args[0];
+        state.unlockedCollateral = state.unlockedCollateral.add(collateral);
 
         // This is a CASH_RECEIVER that is credited back as a result of settling the liquidity token.
-        portfolioChanges[indexCount] = Common.Trade(
+        state.portfolioChanges[state.indexCount] = Common.Trade(
             trade.instrumentGroupId,
             trade.instrumentId,
             trade.startBlock,
             trade.duration,
-            Common.getFutureCash(false),
+            Common.getCashReceiver(),
             trade.rate,
-            args[1]
+            futureCash
         );
-        indexCount++;
+        state.indexCount++;
 
         // This marks the removal of an amount of liquidity tokens
-        portfolioChanges[indexCount] = Common.Trade(
+        state.portfolioChanges[state.indexCount] = Common.Trade(
             trade.instrumentGroupId,
             trade.instrumentId,
             trade.startBlock,
             trade.duration,
             Common.makeCounterparty(Common.getLiquidityToken()),
             trade.rate,
-            args[2]
+            tokens
         );
-        indexCount++;
-
-        return (indexCount, amountRemaining, unlockedCollateral);
+        state.indexCount++;
     }
 
     /**
@@ -741,96 +668,80 @@ contract Portfolios is PortfoliosStorage, Governed {
      *
      * @param account the account that holds the future cash
      * @param trade the future cash token to extract cash from
-     * @param portfolioChanges an array of the changes to the portfolio
-     * @param discountRateOracle the address of the future cash market
-     * @param indexCount index of portfolio changes to add trades to
-     * @param amountRemaining amount of collateral to raise remaining
-     * @param unlockedCollateral amount of collateral to unlock
+     * @param futureCashMarket the address of the future cash market
+     * @param state state of the portfolio trade operation
      */
-    // solium-disable-next-line security/no-assign-params
-    function _extractFutureCash(
+    function _tradeCashReceiver(
         address account,
         Common.Trade memory trade,
-        Common.Trade[] memory portfolioChanges,
-        address discountRateOracle,
-        uint256 indexCount,
-        uint128 amountRemaining,
-        int256 unlockedCollateral
-    ) internal returns (uint256, uint128, int256) {
+        address futureCashMarket,
+        TradePortfolioState memory state
+    ) internal {
         // This will sell off the entire amount of future cash and return collateral
-        uint128 collateralAmount = FutureCash(discountRateOracle).extractFutureCash(
+        uint128 collateral = FutureCash(futureCashMarket).tradeCashReceiver(
             account,
-            amountRemaining,
+            state.amountRemaining,
             trade.notional,
             trade.startBlock + trade.duration
         );
 
-        // This amount of collateral has been removed from the market
-        unlockedCollateral = unlockedCollateral + collateralAmount;
+        // Trade failed, do not update any state variables
+        if (collateral == 0) return;
 
-        amountRemaining = amountRemaining - collateralAmount;
+        // This amount of collateral has been removed from the market
+        state.unlockedCollateral = state.unlockedCollateral.add(collateral);
+        state.amountRemaining = state.amountRemaining.sub(collateral);
 
         // This is a CASH_PAYER that will offset the future cash in the portfolio, it will
         // always be the entire future cash amount.
-        portfolioChanges[indexCount] = Common.Trade(
+        state.portfolioChanges[state.indexCount] = Common.Trade(
             trade.instrumentGroupId,
             trade.instrumentId,
             trade.startBlock,
             trade.duration,
-            Common.getFutureCash(true),
+            Common.getCashPayer(),
             trade.rate,
             trade.notional
         );
-        indexCount++;
-
-        return (indexCount, amountRemaining, unlockedCollateral);
+        state.indexCount++;
     }
 
     /**
      * @notice Purchases future cash to offset obligations
      *
      * @param trade the future cash token to pay off
-     * @param portfolioChanges an array of the changes to the portfolio
-     * @param discountRateOracle the address of the future cash market
-     * @param indexCount index of portfolio changes to add trades to
-     * @param amountRemaining amount of collateral to raise remaining
-     * @param unlockedCollateral amount of collateral to unlock
+     * @param futureCashMarket the address of the future cash market
+     * @param state state of the portfolio trade operation
      */
-    // solium-disable-next-line security/no-assign-params
-    function _closeObligation(
+    function _tradeCashPayer(
         Common.Trade memory trade,
-        Common.Trade[] memory portfolioChanges,
-        address discountRateOracle,
-        uint256 indexCount,
-        uint128 amountRemaining,
-        int256 unlockedCollateral
+        address futureCashMarket,
+        TradePortfolioState memory state
     ) internal returns (uint256, uint128, int256) {
         // This will purchase future cash in order to close out the obligations
-        (uint128 receiverCost, uint128 futureCashAmount) = FutureCash(discountRateOracle).closeObligation(
-            amountRemaining,
+        (uint128 repayCost, uint128 futureCash) = FutureCash(futureCashMarket).tradeCashPayer(
+            state.amountRemaining,
             trade.notional,
             trade.startBlock + trade.duration
         );
 
         // This amount of collateral has to be deposited in the market
-        unlockedCollateral = unlockedCollateral - receiverCost;
-
-        amountRemaining = amountRemaining - receiverCost;
+        state.unlockedCollateral = state.unlockedCollateral.sub(repayCost);
+        state.amountRemaining = state.amountRemaining.sub(repayCost);
 
         // This is a CASH_RECEIVER that will offset the obligation in the portfolio
-        portfolioChanges[indexCount] = Common.Trade(
+        state.portfolioChanges[state.indexCount] = Common.Trade(
             trade.instrumentGroupId,
             trade.instrumentId,
             trade.startBlock,
             trade.duration,
-            Common.getFutureCash(false),
+            Common.getCashReceiver(),
             trade.rate,
-            futureCashAmount
+            futureCash
         );
-        indexCount++;
-
-        return (indexCount, amountRemaining, unlockedCollateral);
+        state.indexCount++;
     }
+
     /***** Liquidation Methods *****/
 
     /***** Internal Portfolio Methods *****/
@@ -846,8 +757,9 @@ contract Portfolios is PortfoliosStorage, Governed {
      * @param instrumentId the instrument id
      * @param startBlock the starting block
      * @param duration the duration of the swap
+     * @param findCounterparty find the counterparty of the trade
      *
-     * @return (storage pointer to the trade, index of trade)
+     * @return (storage pointer to the trade, index of trade, is counterparty trade or not)
      */
     function _searchTrade(
         Common.Trade[] storage portfolio,
@@ -855,10 +767,11 @@ contract Portfolios is PortfoliosStorage, Governed {
         uint8 instrumentGroupId,
         uint16 instrumentId,
         uint32 startBlock,
-        uint32 duration
-    ) internal view returns (Common.Trade storage, uint256) {
+        uint32 duration,
+        bool findCounterparty
+    ) internal view returns (Common.Trade storage, uint256, bool) {
         if (portfolio.length == 0) {
-            return (NULL_TRADE, portfolio.length);
+            return (NULL_TRADE, portfolio.length, false);
         }
 
         for (uint256 i; i < portfolio.length; i++) {
@@ -867,12 +780,15 @@ contract Portfolios is PortfoliosStorage, Governed {
             if (t.instrumentId != instrumentId) continue;
             if (t.startBlock != startBlock) continue;
             if (t.duration != duration) continue;
-            if (t.swapType != swapType) continue;
 
-            return (t, i);
+            if (t.swapType == swapType) {
+                return (t, i, false);
+            } else if (findCounterparty && t.swapType == Common.makeCounterparty(swapType)) {
+                return (t, i, true);
+            }
         }
 
-        return (NULL_TRADE, portfolio.length);
+        return (NULL_TRADE, portfolio.length, false);
     }
 
     /**
@@ -883,32 +799,17 @@ contract Portfolios is PortfoliosStorage, Governed {
      * @param trade the new trade to add
      */
     function _upsertTrade(Common.Trade[] storage portfolio, Common.Trade memory trade) internal {
-        Common.Trade storage t = NULL_TRADE;
-        uint256 index;
-        bool isCounterparty;
+        (Common.Trade storage matchedTrade, uint256 index, bool isCounterparty) = _searchTrade(
+            portfolio,
+            trade.swapType,
+            trade.instrumentGroupId,
+            trade.instrumentId,
+            trade.startBlock,
+            trade.duration,
+            true
+        );
 
-        if (portfolio.length > 0) {
-            for (; index < portfolio.length; index++) {
-                // These factors are what are required to find a trade that will match
-                if (portfolio[index].instrumentGroupId != trade.instrumentGroupId) continue;
-                if (portfolio[index].instrumentId != trade.instrumentId) continue;
-                if (portfolio[index].startBlock != trade.startBlock) continue;
-                if (portfolio[index].duration != trade.duration) continue;
-
-                // If the swap type matches exactly or is the counterparty version, we can match here.
-                if (portfolio[index].swapType == trade.swapType) {
-                    t = portfolio[index];
-                    break;
-                } else if (portfolio[index].swapType == Common.makeCounterparty(trade.swapType)) {
-                    // We have a trade that will net out against the trade in the portfolio.
-                    t = portfolio[index];
-                    isCounterparty = true;
-                    break;
-                }
-            }
-        }
-
-        if (t.swapType == 0x00) {
+        if (matchedTrade.swapType == 0x00) {
             // This is the NULL_TRADE so we append. This restriction should never work against extracting
             // cash or liquidation because in those cases we will always be trading offsetting positions
             // rather than adding new positions.
@@ -917,46 +818,26 @@ contract Portfolios is PortfoliosStorage, Governed {
             if (Common.isLiquidityToken(trade.swapType) && Common.isPayer(trade.swapType)) {
                 // You cannot have a payer liquidity token without an existing liquidity token entry in
                 // your portfolio since liquidity tokens must always have a positive balance.
-                revert($$(ErrorCode(INVALID_SWAP)));
+                revert($$(ErrorCode(INSUFFICIENT_BALANCE)));
             }
 
             // Append the new trade
             portfolio.push(trade);
-        } else if (Common.isLiquidityToken(trade.swapType)) {
-            // Liquidity tokens cannot have a negative balance but we need to differentiate between
-            // the act of removing tokens and adding tokens so they have a payer or receiver marker.
-            // When we store them in the portfolio this marker is not saved.
-            if (isCounterparty) {
-                // These are offsetting trades so we are reducing the notional amount of tokens
-                if (t.notional == trade.notional) {
-                    _removeTrade(portfolio, index);
-                } else {
-                    t.notional = t.notional.sub(trade.notional);
-                }
-            } else {
-                // If it is not the counterparty, then add the tokens
-                t.notional = t.notional.add(trade.notional);
-            }
-        } else if (Common.isCash(trade.swapType)) {
-            // Receiver cash tokens are a positive cash flow, payer cash tokens are a negative cash flow. When
-            // we merge in here we just need to ensure that we set the receiver / payer flag appropriately.
-            if (isCounterparty) {
-                if (t.notional == trade.notional) {
-                    // If they are equal then the cash just nets out. Remove the trade.
-                    _removeTrade(portfolio, index);
-                } else if (t.notional > trade.notional) {
-                    // If the existing trade has more notional, then we subtract the notional from
-                    // the new trade. This will throw an error if it goes below zero.
-                    t.notional = t.notional.sub(trade.notional);
-                } else {
-                    // Otherwise, we need to flip the sign of the swap and set the notional amount
-                    // to the difference.
-                    t.notional = trade.notional.sub(t.notional);
-                    t.swapType = trade.swapType;
-                }
-            } else {
-                // In this case we are on the same side so just add.
-                t.notional = t.notional.add(trade.notional);
+        } else if (!isCounterparty) {
+            // If the trade types match, then just aggregate the notional amounts.
+            matchedTrade.notional = matchedTrade.notional.add(trade.notional);
+        } else {
+            if (matchedTrade.notional >= trade.notional) {
+                // We have enough notional of the trade to reduce or remove the trade.
+                _reduceTrade(portfolio, matchedTrade, index, trade.notional);
+            } else if (Common.isLiquidityToken(trade.swapType)) {
+                // Liquidity tokens cannot go below zero.
+                revert($$(ErrorCode(INSUFFICIENT_BALANCE)));
+            } else if (Common.isCash(trade.swapType)) {
+                // Otherwise, we need to flip the sign of the swap and set the notional amount
+                // to the difference.
+                matchedTrade.notional = trade.notional.sub(matchedTrade.notional);
+                matchedTrade.swapType = trade.swapType;
             }
         }
     }

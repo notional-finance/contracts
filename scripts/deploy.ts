@@ -65,12 +65,15 @@ async function main() {
     const swapnet = await SwapnetDeployer.deploy(owner, prereqs.registry.address);
 
     // Deploy mock currencies and markets, don't do this if it is mainnet
+    let currencyId = process.env.CURRENCY_ID !== undefined ? parseInt(process.env.CURRENCY_ID) : 0;
     if (process.env.DEPLOY_MOCK === "true") {
-        await swapnet.deployMockCurrency(
+        let obj = await swapnet.deployMockCurrency(
             prereqs.uniswapFactory,
             WeiPerEther.div(100),               // ETH/MOCK exchange rate
             WeiPerEther.div(100).mul(30),       // Haircut
+            true
         );
+        currencyId = obj.currencyId;
     }
 
     const numPeriods = process.env.NUM_PERIODS !== undefined ? parseInt(process.env.NUM_PERIODS) : 4;
@@ -85,7 +88,7 @@ async function main() {
         process.env.TRANSACTION_FEE !== undefined ? parseInt(process.env.TRANSACTION_FEE) : 0
     );
     await swapnet.deployFutureCashMarket(
-        2,                          // Currency Id
+        currencyId,
         numPeriods,
         periodSize,
         maxTradeSize,

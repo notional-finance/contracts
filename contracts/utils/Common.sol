@@ -65,7 +65,7 @@ library Common {
      * the group such that their risk ladders can net against each other.
      *
      * Each risk ladder is defined by its maturity cadence which maps to an underlying future cash market,
-     * therefore each Instrument Group will map to a future cash market called `discountRateOracle`.
+     * therefore each Instrument Group will map to a future cash market called `futureCashMarket`.
      */
     struct InstrumentGroup {
         // The maximum number of future periods that instruments in this group will trade
@@ -77,9 +77,16 @@ library Common {
         // The currency group identifier for this instrument group
         uint16 currency;
         // The discount rate oracle that applies to all instruments in this group
-        address discountRateOracle;
+        address futureCashMarket;
         // The address where the risk formula is stored
         address riskFormula;
+    }
+
+    struct AccountBalance {
+        // Balance of currency net of cash
+        int256 netBalance;
+        // If the currency can only be used as deposits and cannot be traded
+        bool isDepositCurrency;
     }
 
     /**
@@ -123,6 +130,14 @@ library Common {
         return ((swapType & MASK_ORDER) == 0x00 && (swapType & MASK_CASH) == MASK_CASH);
     }
 
+    function isCashPayer(bytes1 swapType) internal pure returns (bool) {
+        return isCash(swapType) && isPayer(swapType);
+    }
+
+    function isCashReceiver(bytes1 swapType) internal pure returns (bool) {
+        return isCash(swapType) && isReceiver(swapType) && !isLiquidityToken(swapType);
+    }
+
     /**
      * Changes a trade into its counterparty trade.
      */
@@ -149,11 +164,12 @@ library Common {
         return MASK_RECEIVER | MASK_CASH | MASK_PERIODIC | MASK_ORDER;
     }
 
-    /**
-     * Returns a future cash token, either a payer or a receiver.
-     */
-    function getFutureCash(bool payer) internal pure returns (bytes1) {
-        return (payer ? MASK_PAYER : MASK_RECEIVER) | MASK_CASH | MASK_PERIODIC;
+    function getCashPayer() internal pure returns (bytes1) {
+        return MASK_PAYER | MASK_CASH | MASK_PERIODIC;
+    }
+
+    function getCashReceiver() internal pure returns (bytes1) {
+        return MASK_RECEIVER | MASK_CASH | MASK_PERIODIC;
     }
 
     /**

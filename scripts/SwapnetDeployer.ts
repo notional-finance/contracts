@@ -9,7 +9,6 @@ import DirectoryArtifact from "../build/Directory.json";
 import EscrowArtifact from "../build/Escrow.json";
 import PortfoliosArtifact from "../build/Portfolios.json";
 import RiskFrameworkArtifact from "../build/RiskFramework.json";
-import FutureCashArtifact from "../build/FutureCash.json";
 import ERC1155TokenArtifact from "../build/ERC1155Token.json";
 
 import ERC1820RegistryArtifact from "../mocks/ERC1820Registry.json";
@@ -33,20 +32,15 @@ import {FutureCash} from "../typechain/FutureCash";
 import {ERC1155Token} from '../typechain/ERC1155Token';
 
 import Debug from "debug";
+import path from 'path';
 const log = Debug("swapnet:deploy");
 
 // This is a mirror of the enum in Governed
 export const enum CoreContracts {
     Escrow = 0,
-    Instruments,
-    LiquidationAuction,
     RiskFramework,
-    Swap,
     Portfolios,
-    SettlementOracle,
-    ERC1155Token,
-    SwapnetUtils,
-    PoolShares
+    ERC1155Token
 }
 
 export class SwapnetDeployer {
@@ -62,10 +56,18 @@ export class SwapnetDeployer {
     ) {}
 
     private static deployContract = async (owner: Wallet, artifact: any, args: any[]) => {
+        let gasLimit;
+        if (process.env.COVERAGE == "true") {
+            gasLimit = 20_000_000;
+        } else {
+            gasLimit = 6_000_000;
+        }
         const factory = new ContractFactory(artifact.abi, artifact.bytecode, owner);
-        const contract = await factory.deploy(...args);
+        const txn = factory.getDeployTransaction(...args);
+        txn.gasLimit = gasLimit;
         log(`Deploying ${artifact.contractName}...`);
-        await contract.deployed();
+        const receipt = await (await owner.sendTransaction(txn)).wait();
+        const contract = new Contract(receipt.contractAddress as string, artifact.abi, owner);
         log(`Successfully deployed ${artifact.contractName}...`);
 
         return contract;
@@ -111,16 +113,32 @@ export class SwapnetDeployer {
         return await (await tx).wait();
     }
 
-    public static deploy = async (owner: Wallet, registryAddress: string) => {
+    private static loadArtifact = (contract: string): any => {
+        let buildDir;
+        if (process.env.COVERAGE == "true") {
+            buildDir = ".coverage_artifacts"
+        } else {
+            buildDir = "build"
+        }
+        return JSON.parse(readFileSync(path.join(buildDir, `${contract}.json`), "utf8"));
+    }
+
+    public static deploy = async (
+        owner: Wallet,
+        registryAddress: string,
+        liquidationDiscount = WeiPerEther,
+        settlementDiscount = WeiPerEther,
+        portfolioHaircut = WeiPerEther
+    ) => {
         const proxyAdmin = await SwapnetDeployer.deployContract(
             owner,
-            ProxyAdminArtifact,
+            SwapnetDeployer.loadArtifact("ProxyAdmin"),
             []
         ) as ProxyAdmin;
 
         const directory = await SwapnetDeployer.deployProxyContract<Directory>(
             owner,
-            DirectoryArtifact,
+            SwapnetDeployer.loadArtifact("Directory"),
             '',
             [],
             proxyAdmin
@@ -128,7 +146,7 @@ export class SwapnetDeployer {
 
         const escrow = await SwapnetDeployer.deployProxyContract<Escrow>(
             owner,
-            EscrowArtifact,
+            SwapnetDeployer.loadArtifact("Escrow"),
             'address,address',
             [directory.address, registryAddress],
             proxyAdmin
@@ -136,7 +154,7 @@ export class SwapnetDeployer {
 
         const portfolios = await SwapnetDeployer.deployProxyContract<Portfolios>(
             owner,
-            PortfoliosArtifact,
+            SwapnetDeployer.loadArtifact("Portfolios"),
             'address,uint256',
             [directory.address, 100],
             proxyAdmin
@@ -144,7 +162,7 @@ export class SwapnetDeployer {
 
         const risk = await SwapnetDeployer.deployProxyContract<RiskFramework>(
             owner,
-            RiskFrameworkArtifact,
+            SwapnetDeployer.loadArtifact("RiskFramework"),
             'address',
             [directory.address],
             proxyAdmin
@@ -152,7 +170,7 @@ export class SwapnetDeployer {
 
         const erc1155 = await SwapnetDeployer.deployProxyContract<ERC1155Token>(
             owner,
-            ERC1155TokenArtifact,
+            SwapnetDeployer.loadArtifact("ERC1155Token"),
             'address',
             [directory.address],
             proxyAdmin
@@ -177,18 +195,11 @@ export class SwapnetDeployer {
         await SwapnetDeployer.txMined(directory.setDependencies(CoreContracts.Portfolios, [CoreContracts.Escrow, CoreContracts.RiskFramework, CoreContracts.ERC1155Token]));
 
         // Setup some contract defaults
-        log("Setting contract default parameters")
-        await SwapnetDeployer.txMined(escrow.createCurrencyGroup(AddressZero)); // This creates a group for ETH
         log("Setting liquidation discounts")
-        await SwapnetDeployer.txMined(escrow.setDiscounts(
-            WeiPerEther.add(WeiPerEther.div(100).mul(5)),
-            WeiPerEther.add(WeiPerEther.div(100).mul(1))
-        ));
+        await SwapnetDeployer.txMined(escrow.setDiscounts(liquidationDiscount, settlementDiscount));
 
         log("Setting collateral currencies")
-        await SwapnetDeployer.txMined(escrow.setCollateralCurrency(1));
-        await SwapnetDeployer.txMined(portfolios.setCollateralCurrency(1));
-        await SwapnetDeployer.txMined(risk.setHaircut(WeiPerEther.add(WeiPerEther.div(100).mul(5))));
+        await SwapnetDeployer.txMined(risk.setHaircut(portfolioHaircut));
 
         return new SwapnetDeployer(owner, escrow, portfolios, risk, owner.provider, proxyAdmin, directory, erc1155);
     };
@@ -196,7 +207,9 @@ export class SwapnetDeployer {
     public deployMockCurrency = async (
         uniswapFactory: UniswapFactoryInterface,
         initialExchangeRate: BigNumber,
-        haircut: BigNumber
+        haircut: BigNumber,
+        isTradable: boolean,
+        seedEthBalance = WeiPerEther
     ) => {
         // A mock currency has an ERC20 token, chainlink, and uniswap exchange.
         log("Deploying mock currency")
@@ -224,11 +237,11 @@ export class SwapnetDeployer {
             this.owner
         ) as UniswapExchangeInterface;
 
-        const ethBalance = WeiPerEther.mul(1);
-        const tokenBalance = ethBalance.mul(WeiPerEther).div(initialExchangeRate);
+        const tokenBalance = seedEthBalance.mul(WeiPerEther).div(initialExchangeRate);
         await SwapnetDeployer.txMined(erc20.approve(uniswapExchange.address, WeiPerEther.mul(100_000_000)));
 
-        if ((await this.provider.getNetwork()).name == "ganache") {
+        const chainId = (await this.provider.getNetwork()).chainId;
+        if (chainId === 1337) {
             // This is required in ganache to get the block timestamp correct.
             log("Resetting network timestamp")
             await (this.provider as JsonRpcProvider).send(
@@ -239,24 +252,30 @@ export class SwapnetDeployer {
         const currentBlock = await this.provider.getBlock(await this.provider.getBlockNumber());
 
         // Setup the liquidity pool
-        log("Seeding mock uniswap pool")
+        log(`Seeding mock uniswap pool at ${uniswapExchange.address}`);
         await SwapnetDeployer.txMined(uniswapExchange.addLiquidity(
-            ethBalance,
+            seedEthBalance,
             tokenBalance,
             currentBlock.timestamp + 10000,
-            { value: ethBalance }
+            { value: seedEthBalance }
         ));
 
         log("Registering new exchange rate")
-        await SwapnetDeployer.txMined(this.escrow.createCurrencyGroup(erc20.address));
-        const currencyId = await this.escrow.tokensToGroups(erc20.address);
+        if (isTradable) {
+            await SwapnetDeployer.txMined(this.escrow.listTradableCurrency(erc20.address));
+        } else {
+            await SwapnetDeployer.txMined(this.escrow.listDepositCurrency(erc20.address));
+        }
+        const currencyId = await this.escrow.addressToCurrencyId(erc20.address) as number;
         await SwapnetDeployer.txMined(this.escrow.addExchangeRate(
             currencyId,
-            1,
+            0,
             chainlink.address,
             uniswapExchange.address,
             haircut
         ));
+
+        return {currencyId, erc20, chainlink, uniswapExchange}
     };
 
     public deployFutureCashMarket = async (
@@ -270,15 +289,16 @@ export class SwapnetDeployer {
         rateAnchor: number = 1_050_000_000,
         rateScalar: number = 100
     ) => {
-        const cg = await this.escrow.getCurrencyGroup(currencyId);
+        const tokenAddress = await this.escrow.currencyIdToAddress(currencyId);
         const futureCash = await SwapnetDeployer.deployProxyContract(
             this.owner,
-            FutureCashArtifact,
+            SwapnetDeployer.loadArtifact("FutureCash"),
             'address,address',
-            [this.directory.address, cg.primary],
+            [this.directory.address, tokenAddress],
             this.proxyAdmin
         ) as FutureCash;
 
+        log("Creating instrument group...");
         await SwapnetDeployer.txMined(this.portfolios.createInstrumentGroup(
             numPeriods,
             periodSize,
@@ -288,6 +308,7 @@ export class SwapnetDeployer {
             AddressZero
         ));
 
+        log("Setting future cash parameters...");
         await SwapnetDeployer.txMined(futureCash.setMaxTradeSize(maxTradeSize));
         await SwapnetDeployer.txMined(futureCash.setFee(liquidityFee, transactionFee));
         await SwapnetDeployer.txMined(futureCash.setRateFactors(rateAnchor, rateScalar))

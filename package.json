@@ -13,7 +13,8 @@
     "test": "npx buidler test",
     "test:coverage": "export COVERAGE=true; npm run build && npx buidler coverage --network coverage",
     "docs:build": "solc --userdoc --devdoc cache/solpp-generated-contracts/FutureCash.sol > ./docs/docs.json",
-    "deploy:rinkeby": "DEBUG=* DOTENV_CONFIG_PATH=.env.rinkeby ts-node scripts/deploy.ts"
+    "deploy:rinkeby": "DEBUG=* DOTENV_CONFIG_PATH=.env.rinkeby ts-node scripts/deploy.ts",
+    "sloc": "rename 's/\\.sol/\\.c/' contracts/*.sol && scc contracts/* --wide --by-file && rename 's/\\.c/\\.sol/' contracts/*.c"
   },
   "repository": {
     "type": "git",

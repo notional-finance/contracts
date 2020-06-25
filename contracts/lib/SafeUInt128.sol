@@ -33,9 +33,4 @@ library SafeUInt128 {
         require(y > 0, $$(ErrorCode(UINT128_DIVIDE_BY_ZERO)));
         return x / y;
     }
-
-    function abs(uint128 x) internal pure returns (uint128) {
-        if (x < 0) return -x;
-        else return x;
-    }
 }

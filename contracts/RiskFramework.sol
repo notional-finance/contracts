@@ -16,12 +16,10 @@ contract RiskFramework is IRiskFramework, Governed {
     using SafeMath for uint256;
     using SafeInt256 for int256;
 
-    /**** TODO: MOVE THESE ****/
     uint128 public G_PORTFOLIO_HAIRCUT;
     function setHaircut(uint128 haircut) public onlyOwner {
         G_PORTFOLIO_HAIRCUT = haircut;
     }
-    /**** TODO ****************/
 
     /** The cash ladder for a single instrument or instrument group */
     struct CashLadder {
@@ -101,40 +99,48 @@ contract RiskFramework is IRiskFramework, Governed {
                 groupIndex++;
             }
 
-            // This is the offset in the cash ladder
             uint32 maturity = portfolio[i].startBlock + portfolio[i].duration;
-            uint256 offset = (maturity - blockNum) / instrumentGroups[groupIndex].periodSize;
 
-            if (Common.isLiquidityToken(portfolio[i].swapType)) {
-                (uint128 collateralClaim, uint128 futureCashClaim) = _calculateLiquidityTokenClaims(
-                    portfolio[i],
-                    instrumentGroups[groupIndex].discountRateOracle,
-                    maturity
-                );
-                // Collateral claims are considered NPV because they can be extacted and returned back to the account at
-                // face value by removing tokens.
-                npv[groupIndex] = npv[groupIndex].add(collateralClaim);
+            (int256 cashAmount, int256 npvAmount) = _updateCashLadder(
+                portfolio[i],
+                instrumentGroups[groupIndex],
+                maturity
+            );
 
-                // This is the future cash claim, future cash is not considered NPV because it must be traded for collateral
-                // and in the current iteration we are not certain that there will be enough liquidity to trade this future
-                // cash when required during liquidation.
-                ladders[groupIndex].cashLadder[offset] = ladders[groupIndex].cashLadder[offset].add(futureCashClaim);
-
-            } else if (Common.isCash(portfolio[i].swapType) && Common.isPayer(portfolio[i].swapType)) {
-                // This is an obligation to pay
-                ladders[groupIndex].cashLadder[offset] = ladders[groupIndex].cashLadder[offset].sub(portfolio[i].notional);
-            } else if (Common.isCash(portfolio[i].swapType) && Common.isReceiver(portfolio[i].swapType)) {
-                // This is an entitlement to receive
-                ladders[groupIndex].cashLadder[offset] = ladders[groupIndex].cashLadder[offset].add(portfolio[i].notional);
+            npv[groupIndex] = npv[groupIndex].add(npvAmount);
+            if (maturity <= blockNum) {
+                // If trade has matured then all the future cash is considered NPV
+                npv[groupIndex] = npv[groupIndex].add(cashAmount);
+            } else {
+                uint256 offset = (maturity - blockNum) / instrumentGroups[groupIndex].periodSize;
+                ladders[groupIndex].cashLadder[offset] = ladders[groupIndex].cashLadder[offset].add(cashAmount);
             }
         }
 
         return (ladders, npv);
     }
 
+    function _updateCashLadder(
+        Common.Trade memory trade,
+        Common.InstrumentGroup memory ig,
+        uint32 maturity
+    ) internal view returns (int256, int256) {
+        // This is the offset in the cash ladder
+        int256 npv;
+        int256 futureCash;
+
+        if (Common.isLiquidityToken(trade.swapType)) {
+            (npv, futureCash) = _calculateLiquidityTokenClaims(trade, ig.futureCashMarket, maturity);
+        } else if (Common.isCash(trade.swapType)) {
+            futureCash = Common.isPayer(trade.swapType) ? int256(trade.notional).neg() : trade.notional;
+        }
+
+        return (futureCash, npv);
+    }
+
     function _calculateLiquidityTokenClaims(
         Common.Trade memory trade,
-        address discountRateOracle,
+        address futureCashMarket,
         uint32 maturity
     ) internal view returns (uint128, uint128) {
         (
@@ -142,7 +148,7 @@ contract RiskFramework is IRiskFramework, Governed {
             uint128 totalLiquidity,
             uint128 totalCollateral,
             /* */, /* */, /* */
-        ) = FutureCash(discountRateOracle).markets(maturity);
+        ) = FutureCash(futureCashMarket).markets(maturity);
 
         // These are the claims on the collateral and future cash in the markets. The collateral claim
         // goes to npv. This is important to note since we will use this collateralClaim to settle negative
@@ -180,8 +186,7 @@ contract RiskFramework is IRiskFramework, Governed {
             requestGroups[i] = groupIds[i];
         }
 
-        Common.InstrumentGroup[] memory igs = Portfolios(contracts[uint256(CoreContracts.Portfolios)])
-            .getInstrumentGroups(requestGroups);
+        Common.InstrumentGroup[] memory igs = Portfolios().getInstrumentGroups(requestGroups);
 
         CashLadder[] memory ladders = new CashLadder[](igs.length);
         for (uint256 i; i < ladders.length; i++) {
