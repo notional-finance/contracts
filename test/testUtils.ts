@@ -62,7 +62,9 @@ export class TestUtils {
 
     const ethAmount = borrowFutureCash
       .mul(exchangeRate)
-      .div(haircut)
+      .div(WeiPerEther)
+      .mul(haircut)
+      .div(WeiPerEther)
       .mul(parseEther(collateralRatio.toString()))
       .div(WeiPerEther);
 
@@ -89,6 +91,16 @@ export class TestUtils {
   public async isCollateralized(account: Wallet) {
     const fc = await this.portfolios.freeCollateralView(account.address);
     return fc[0].gte(0);
+  }
+
+  public async checkEthBalanceIntegrity(accounts: Wallet[]) {
+    const totalEthBalance = await provider.getBalance(this.escrow.address);
+    let escrowEthBalance = new BigNumber(0);
+    for (let a of accounts) {
+      escrowEthBalance = escrowEthBalance.add(await this.escrow.currencyBalances(AddressZero, a.address));
+    }
+
+    return escrowEthBalance.eq(totalEthBalance);
   }
 
   public async checkBalanceIntegrity(accounts: Wallet[]) {
@@ -235,7 +247,8 @@ export class TestUtils {
     receiver: Wallet,
     balance?: BigNumber,
     operator?: Wallet,
-    currencyId = CURRENCY.DAI
+    currencyId = CURRENCY.DAI,
+    depositCurrencyId = CURRENCY.ETH
   ) {
     if (balance === undefined) {
       balance = (await this.escrow.cashBalances(currencyId, payer.address)).mul(-1);
@@ -248,7 +261,7 @@ export class TestUtils {
     const receiverCurrencyBefore = await this.escrow.currencyBalances(this.dai.address, receiver.address);
 
     await this.escrow.connect(operator)
-      .settleCashBalance(CURRENCY.DAI, payer.address, receiver.address, balance);
+      .settleCashBalance(currencyId, depositCurrencyId, payer.address, receiver.address, balance);
 
     const payerCashBalanceAfter = await this.escrow.cashBalances(currencyId, payer.address);
     const receiverCashBalanceAfter = await this.escrow.cashBalances(currencyId, receiver.address);
@@ -271,9 +284,6 @@ export class TestUtils {
     await this.escrow.setReserveAccount(reserve.address);
     await this.escrow.connect(reserve).deposit(this.dai.address, WeiPerEther.mul(1000));
 
-    // Set the haircut to be higher so we can liquidate easier
-    await this.escrow.addExchangeRate(CURRENCY.DAI, CURRENCY.ETH, this.chainlink.address, this.uniswap.address, WeiPerEther.div(100).mul(90));
-
     const maturities = await this.futureCash.getActiveMaturities();
     await this.borrowAndWithdraw(wallet, borrowAmount);
 
@@ -281,9 +291,6 @@ export class TestUtils {
     await this.futureCash.connect(wallet).takeFutureCash(maturities[1], futureCashAmount, 1000, 20_000_000);
 
     await this.chainlink.setAnswer(WeiPerEther);
-    await this.escrow.liquidate(wallet.address, CURRENCY.DAI);
+    await this.escrow.liquidate(wallet.address, CURRENCY.DAI, CURRENCY.ETH);
   }
-
-  // public async calculateTradeImpliedRate();
-  // public async setOraclePrice();
 }

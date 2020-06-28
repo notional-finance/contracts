@@ -55,6 +55,7 @@ describe("Future Cash", () => {
     });
 
     afterEach(async () => {
+        expect(await t.checkEthBalanceIntegrity([owner, wallet, wallet2])).to.be.true;
         expect(await t.checkBalanceIntegrity([owner, wallet, wallet2])).to.be.true;
         expect(await t.checkCashIntegrity([owner, wallet, wallet2])).to.be.true;
         expect(await t.checkMarketIntegrity([owner, wallet, wallet2])).to.be.true;

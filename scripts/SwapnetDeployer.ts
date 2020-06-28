@@ -219,6 +219,28 @@ export class SwapnetDeployer {
             []
         )) as ERC20;
 
+        if (isTradable) {
+            await SwapnetDeployer.txMined(this.escrow.listTradableCurrency(erc20.address));
+        } else {
+            await SwapnetDeployer.txMined(this.escrow.listDepositCurrency(erc20.address));
+        }
+        const currencyId = await this.escrow.addressToCurrencyId(erc20.address) as number;
+
+        log("Registering new exchange rate")
+        const {chainlink, uniswapExchange} = await this.deployExchangeRate(
+            currencyId,
+            0,
+            initialExchangeRate,
+            seedEthBalance,
+            haircut,
+            { erc20, uniswapFactory }
+        );
+
+        return {currencyId, erc20, chainlink, uniswapExchange}
+    };
+
+    public async deployExchangeRate(base: number, quote: number, initialExchangeRate: BigNumber,
+        seedEthBalance: BigNumber, haircut: BigNumber, uniswap?: {erc20: ERC20, uniswapFactory: UniswapFactoryInterface}) {
         log("Deploying mock chainlink")
         const chainlink = (await SwapnetDeployer.deployContract(
             this.owner,
@@ -227,56 +249,52 @@ export class SwapnetDeployer {
         ) as MockAggregator;
         await SwapnetDeployer.txMined(chainlink.setAnswer(initialExchangeRate));
 
-        log("Deploying mock uniswap")
-        await SwapnetDeployer.txMined(
-            uniswapFactory.createExchange(erc20.address, {gasLimit: 5_000_000})
-        );
-        const uniswapExchange = new ethers.Contract(
-            await uniswapFactory.getExchange(erc20.address),
-            UniswapExchangeArtifact.abi,
-            this.owner
-        ) as UniswapExchangeInterface;
-
-        const tokenBalance = seedEthBalance.mul(WeiPerEther).div(initialExchangeRate);
-        await SwapnetDeployer.txMined(erc20.approve(uniswapExchange.address, WeiPerEther.mul(100_000_000)));
-
-        const chainId = (await this.provider.getNetwork()).chainId;
-        if (chainId === 1337) {
-            // This is required in ganache to get the block timestamp correct.
-            log("Resetting network timestamp")
-            await (this.provider as JsonRpcProvider).send(
-                "evm_mine",
-                [Math.floor(new Date().getTime() / 1000)]
+        let uniswapExchange: any = { address: AddressZero };
+        if (uniswap !== undefined) {
+            log("Deploying mock uniswap")
+            await SwapnetDeployer.txMined(
+                uniswap.uniswapFactory.createExchange(uniswap.erc20.address, {gasLimit: 5_000_000})
             );
-        }
-        const currentBlock = await this.provider.getBlock(await this.provider.getBlockNumber());
+            uniswapExchange = new ethers.Contract(
+                await uniswap.uniswapFactory.getExchange(uniswap.erc20.address),
+                UniswapExchangeArtifact.abi,
+                this.owner
+            ) as UniswapExchangeInterface;
 
-        // Setup the liquidity pool
-        log(`Seeding mock uniswap pool at ${uniswapExchange.address}`);
-        await SwapnetDeployer.txMined(uniswapExchange.addLiquidity(
-            seedEthBalance,
-            tokenBalance,
-            currentBlock.timestamp + 10000,
-            { value: seedEthBalance }
-        ));
+            const tokenBalance = seedEthBalance.mul(WeiPerEther).div(initialExchangeRate);
+            await SwapnetDeployer.txMined(uniswap.erc20.approve(uniswapExchange.address, WeiPerEther.mul(100_000_000)));
 
-        log("Registering new exchange rate")
-        if (isTradable) {
-            await SwapnetDeployer.txMined(this.escrow.listTradableCurrency(erc20.address));
-        } else {
-            await SwapnetDeployer.txMined(this.escrow.listDepositCurrency(erc20.address));
+            const chainId = (await this.provider.getNetwork()).chainId;
+            if (chainId === 1337) {
+                // This is required in ganache to get the block timestamp correct.
+                log("Resetting network timestamp")
+                await (this.provider as JsonRpcProvider).send(
+                    "evm_mine",
+                    [Math.floor(new Date().getTime() / 1000)]
+                );
+            }
+            const currentBlock = await this.provider.getBlock(await this.provider.getBlockNumber());
+
+            // Setup the liquidity pool
+            log(`Seeding mock uniswap pool at ${uniswapExchange.address}`);
+            await SwapnetDeployer.txMined(uniswapExchange.addLiquidity(
+                seedEthBalance,
+                tokenBalance,
+                currentBlock.timestamp + 10000,
+                { value: seedEthBalance }
+            ));
         }
-        const currencyId = await this.escrow.addressToCurrencyId(erc20.address) as number;
+
         await SwapnetDeployer.txMined(this.escrow.addExchangeRate(
-            currencyId,
-            0,
+            base,
+            quote,
             chainlink.address,
             uniswapExchange.address,
             haircut
         ));
 
-        return {currencyId, erc20, chainlink, uniswapExchange}
-    };
+        return {chainlink, uniswapExchange};
+    }
 
     public deployFutureCashMarket = async (
         currencyId: number,

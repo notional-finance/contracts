@@ -4,6 +4,7 @@ pragma experimental ABIEncoderV2;
 import "../utils/Common.sol";
 
 interface IPortfoliosCallable {
+    function getTrades(address account) external view returns (Common.Trade[] memory);
     function getInstrumentGroup(uint8 instrumentGroupId) external view returns (Common.InstrumentGroup memory);
     function getInstrumentGroups(uint8[] calldata groupIds) external view returns (Common.InstrumentGroup[] memory);
     function settleAccount(address account) external;

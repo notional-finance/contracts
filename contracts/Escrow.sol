@@ -140,13 +140,23 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
      * @param currency currency group id
      */
     function isTradableCurrency(uint16 currency) public override view returns (bool) {
-        if (currency > maxCurrencyId) return false;
+        if (!isValidCurrency(currency)) return false;
 
         for (uint256 i; i < depositCurrencies.length; i++) {
             if (depositCurrencies[i] == currency) return false;
         }
 
         return true;
+    }
+
+    function isDepositCurrency(uint16 currency) public view returns (bool) {
+        if (!isValidCurrency(currency)) return false;
+
+        for (uint256 i; i < depositCurrencies.length; i++) {
+            if (depositCurrencies[i] == currency) return true;
+        }
+
+        return false;
     }
 
     /**
@@ -222,7 +232,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
 
             address base = currencyIdToAddress[uint16(i)];
             // We are converting from the base to quote here, the quote is the collateral currency
-            results[i] = uint128(_convert(base, G_ETH_CURRENCY, amounts[i]));
+            results[i] = uint128(_convertToETHWithHaircut(base, amounts[i]));
         }
 
         return results;
@@ -274,7 +284,6 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         address to = msg.sender;
         uint16 currencyGroupId = addressToCurrencyId[token];
         require(currencyGroupId != 0, $$(ErrorCode(INVALID_CURRENCY)));
-        require(token != address(0), $$(ErrorCode(INVALID_CURRENCY)));
 
         currencyBalances[token][to] = currencyBalances[token][to].add(amount);
         IERC20(token).transferFrom(to, address(this), amount);
@@ -437,6 +446,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
      */
     function settleCashBalanceBatch(
         uint16 currency,
+        uint16 depositCurrency,
         address[] calldata payers,
         address[] calldata receivers,
         uint128[] calldata values
@@ -444,9 +454,11 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         // TODO: should we de-duplicate these arrays?
         Portfolios().settleAccountBatch(payers);
         Portfolios().settleAccountBatch(receivers);
+        require(isDepositCurrency(depositCurrency), $$(ErrorCode(INVALID_CURRENCY)));
+        address depositToken = currencyIdToAddress[depositCurrency];
 
         for (uint256 i; i < payers.length; i++) {
-            _settleCashBalance(currency, payers[i], receivers[i], values[i]);
+            _settleCashBalance(currency, depositToken, payers[i], receivers[i], values[i]);
         }
     }
 
@@ -454,12 +466,14 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
      * @notice Settles the cash balance between the payer and the receiver.
      *
      * @param currency the currency group to settle
+     * @param depositCurrency the deposit currency to sell to cover
      * @param payer the party that has a negative cash balance and will transfer collateral to the receiver
      * @param receiver the party that has a positive cash balance and will receive collateral from the payer
      * @param value the amount of collateral to transfer
      */
     function settleCashBalance(
         uint16 currency,
+        uint16 depositCurrency,
         address payer,
         address receiver,
         uint128 value
@@ -471,20 +485,24 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         accounts[0] = payer;
         accounts[1] = receiver;
         Portfolios().settleAccountBatch(accounts);
+        require(isDepositCurrency(depositCurrency), $$(ErrorCode(INVALID_CURRENCY)));
+        address depositToken = currencyIdToAddress[depositCurrency];
 
-        _settleCashBalance(currency, payer, receiver, value);
+        _settleCashBalance(currency, depositToken, payer, receiver, value);
     }
 
     /**
      * @notice Settles the cash balance between the payer and the receiver.
      *
      * @param currency the currency group to settle
+     * @param depositToken the deposit currency to sell to cover
      * @param payer the party that has a negative cash balance and will transfer collateral to the receiver
      * @param receiver the party that has a positive cash balance and will receive collateral from the payer
      * @param value the amount of collateral to transfer
      */
     function _settleCashBalance(
         uint16 currency,
+        address depositToken,
         address payer,
         address receiver,
         uint128 value
@@ -536,7 +554,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
                     receiver,
                     localCurrencyToken,
                     localCurrencyRequired,
-                    G_ETH_CURRENCY,
+                    depositToken,
                     value
                 );
             }
@@ -555,10 +573,14 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
      *
      * @param accounts the account to liquidate
      * @param currency the currency group that is undercollateralized
+     * @param depositCurrency the deposit currency to liquidate
      */
-    function liquidateBatch(address[] calldata accounts, uint16 currency) external {
+    function liquidateBatch(address[] calldata accounts, uint16 currency, uint16 depositCurrency) external {
+        require(isDepositCurrency(depositCurrency), $$(ErrorCode(INVALID_CURRENCY)));
+        address depositToken = currencyIdToAddress[depositCurrency];
+
         for (uint256 i; i < accounts.length; i++) {
-            liquidate(accounts[i], currency);
+            _liquidate(accounts[i], currency, depositToken);
         }
     }
 
@@ -569,8 +591,16 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
      *
      * @param account the account to liquidate
      * @param currency the currency group that is undercollateralized
+     * @param depositCurrency the deposit currency to liquidate
      */
-    function liquidate(address account, uint16 currency) public {
+    function liquidate(address account, uint16 currency, uint16 depositCurrency) external {
+        require(isDepositCurrency(depositCurrency), $$(ErrorCode(INVALID_CURRENCY)));
+        address depositToken = currencyIdToAddress[depositCurrency];
+
+        _liquidate(account, currency, depositToken);
+    }
+
+    function _liquidate(address account, uint16 currency, address depositToken) internal {
         int256 fc;
         uint128[] memory currencyRequirement;
 
@@ -596,7 +626,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
                 localCurrencyToken,
                 localCurrencyRequired,
                 G_LIQUIDATION_DISCOUNT,
-                G_ETH_CURRENCY,
+                depositToken,
                 true
             );
             localCurrencyRequired = localCurrencyRequired - localCurrencyRaised;
@@ -627,12 +657,13 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         address receiver,
         address localCurrencyToken,
         uint128 localCurrencyRequired,
-        address collateralToken,
+        address depositToken,
         uint128 valueToSettle
     ) internal returns (uint128) {
         // When we calculate free collateral here we need to add back in the value that we've extracted to ensure that the
         // free collateral calculation returns the appropriate value.
-        int256 freeCollateral = _freeCollateral(payer).add(valueToSettle).sub(localCurrencyRequired);
+        int256 freeCollateral = _freeCollateral(payer)
+            .add(int256(_convertToETHWithHaircut(localCurrencyToken, valueToSettle - localCurrencyRequired)));
 
         if (freeCollateral >= 0) {
             if (msg.sender == receiver) {
@@ -642,7 +673,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
                 _tradeCollateralOnExchange(
                     payer,
                     localCurrencyToken,
-                    collateralToken,
+                    depositToken,
                     localCurrencyRequired
                 );
             } else {
@@ -651,28 +682,29 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
                     localCurrencyToken,
                     localCurrencyRequired,
                     G_SETTLEMENT_DISCOUNT,
-                    collateralToken,
+                    depositToken,
                     false
                 );
             }
 
             return valueToSettle;
         } else {
-            if (currencyBalances[collateralToken][payer] == 0) {
+            if (!_hasCollateral(payer)) {
                 // This call will attempt to sell future cash tokens in return for local currency. We do this as a last ditch effort
                 // before we dip into reserves. The free collateral position will not change as a result of this method since positive
                 // future cash (in this version) does not affect free collateral.
                 uint16 currencyId = addressToCurrencyId[localCurrencyToken];
                 uint128 cashShortfall = Portfolios().raiseCollateralViaCashReceiver(payer, currencyId, localCurrencyRequired);
 
-                if (cashShortfall > 0) {
+                if (cashShortfall > 0 && _isInsolvent(payer)) {
                     // At this point, the portfolio has no positive future value associated with it and no collateral. It
                     // the account is completely insolvent and therfore we need to pay out the remaining obligation from the
                     // reserve account.
                     currencyBalances[localCurrencyToken][G_RESERVE_ACCOUNT] = currencyBalances[localCurrencyToken][G_RESERVE_ACCOUNT].sub(cashShortfall);
+                    return valueToSettle;
                 }
 
-                return valueToSettle;
+                return valueToSettle - cashShortfall;
             } else {
                 // Here we are trying to settle cash against an undercollateralized account. What we do here is settle the max
                 // amount of collateral we can at this point. The remaining value can be settled after liquidation.
@@ -689,31 +721,29 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         address localCurrencyToken,
         uint128 localCurrencyRequired,
         uint128 discountFactor,
-        address collateralToken,
+        address depositToken,
         bool canSellPartial
     ) internal returns (uint128) {
         // If the msg sender does not equal the receiver, then it is settling the position on behalf
         // of the receiver. In this case, the msg.sender can purchase the ETH from the payer at a small
         // discount from the oracle price for their service.
-        ExchangeRate memory er = exchangeRateOracles[localCurrencyToken][collateralToken];
 
-        int256 answer = IAggregator(er.rateOracle).latestAnswer();
-        require(answer > 0, $$(ErrorCode(INVALID_EXCHANGE_RATE)));
+        uint256 rate = _exchangeRate(localCurrencyToken, depositToken);
 
         uint128 localCurrencyPurchased = localCurrencyRequired;
-        uint256 collateralToPurchase = uint256(answer)
+        uint256 collateralToPurchase = rate
             .mul(localCurrencyPurchased)
             .div(Common.DECIMALS)
             .mul(discountFactor)
             .div(Common.DECIMALS);
-        uint256 collateralBalance = currencyBalances[collateralToken][payer];
+        uint256 collateralBalance = currencyBalances[depositToken][payer];
 
         if (collateralToPurchase > collateralBalance) {
             require(canSellPartial, $$(ErrorCode(INSUFFICIENT_COLLATERAL_BALANCE)));
             localCurrencyPurchased = uint128(
                 collateralBalance
                     .mul(Common.DECIMALS)
-                    .div(uint256(answer))
+                    .div(rate)
                     .mul(Common.DECIMALS)
                     .div(discountFactor)
             );
@@ -725,9 +755,9 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         currencyBalances[localCurrencyToken][msg.sender] = currencyBalances[localCurrencyToken][msg.sender].sub(localCurrencyPurchased);
 
         // Transfer the collateral currency between accounts
-        currencyBalances[collateralToken][msg.sender] = currencyBalances[collateralToken][msg.sender].add(collateralToPurchase);
+        currencyBalances[depositToken][msg.sender] = currencyBalances[depositToken][msg.sender].add(collateralToPurchase);
         // We expect the payer to have enough here because they passed the free collateral check.
-        currencyBalances[collateralToken][payer] = currencyBalances[collateralToken][payer].sub(collateralToPurchase);
+        currencyBalances[depositToken][payer] = currencyBalances[depositToken][payer].sub(collateralToPurchase);
 
         return localCurrencyPurchased;
     }
@@ -742,10 +772,12 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
     function _tradeCollateralOnExchange(
         address account,
         address targetToken,
-        address collateralToken,
+        address depositToken,
         uint128 amountToRaise
     ) internal {
-        ExchangeRate memory er = exchangeRateOracles[targetToken][collateralToken];
+        ExchangeRate memory er = exchangeRateOracles[targetToken][depositToken];
+        require(er.onChainExchange != address(0), $$(ErrorCode(NO_EXCHANGE_LISTED_FOR_PAIR)));
+
         uint256 amountRemaining = amountToRaise;
         // First determine how much local currency the collateral would trade for. If it is enough to cover the obligation then
         // we just trade for what is required. If not then we will trade all the collateral.
@@ -755,7 +787,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
 
         _checkUniswapRateDifference(amountRemaining, collateralRequired, er.rateOracle);
 
-        uint256 collateralBalance = currencyBalances[collateralToken][account];
+        uint256 collateralBalance = currencyBalances[depositToken][account];
         require(collateralBalance >= collateralRequired, $$(ErrorCode(INSUFFICIENT_COLLATERAL_FOR_SETTLEMENT)));
         // This will trade exactly the amount of collateralRequired for exactly the target currency required.
         UniswapExchangeInterface(er.onChainExchange).ethToTokenSwapOutput.value(collateralRequired)(
@@ -765,7 +797,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         );
 
         // Reduce the collateral balance by the amount traded.
-        currencyBalances[collateralToken][account] = collateralBalance - collateralRequired;
+        currencyBalances[depositToken][account] = collateralBalance - collateralRequired;
     }
 
     /**
@@ -815,25 +847,67 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
      * @notice Converts a balance between token addresses.
      *
      * @param base base currency
-     * @param quote quote currency
      * @param balance amount to convert
      * @return the converted balance
      */
-    function _convert(
+    function _convertToETHWithHaircut(
         address base,
-        address quote,
         uint256 balance
     ) internal view returns (uint256) {
-        ExchangeRate memory er = exchangeRateOracles[base][quote];
+        ExchangeRate memory er = exchangeRateOracles[base][G_ETH_CURRENCY];
 
         // Fetches the latest answer from the chainlink oracle and haircut it by the apporpriate amount.
         int256 answer = IAggregator(er.rateOracle).latestAnswer();
         require(answer > 0, $$(ErrorCode(INVALID_EXCHANGE_RATE)));
 
         uint256 rate = uint256(answer)
-            .mul(Common.DECIMALS)
-            .div(er.haircut);
+            .mul(er.haircut)
+            .div(Common.DECIMALS);
 
         return balance.mul(rate).div(Common.DECIMALS);
+    }
+
+    function _exchangeRate(
+        address base,
+        address quote
+    ) internal view returns (uint256) {
+        ExchangeRate memory er = exchangeRateOracles[base][G_ETH_CURRENCY];
+
+        int256 rate = IAggregator(er.rateOracle).latestAnswer();
+        require(rate > 0, $$(ErrorCode(INVALID_EXCHANGE_RATE)));
+
+        if (quote != G_ETH_CURRENCY) {
+            ExchangeRate memory quoteER = exchangeRateOracles[quote][G_ETH_CURRENCY];
+
+            int256 quoteRate = IAggregator(quoteER.rateOracle).latestAnswer();
+            require(quoteRate > 0, $$(ErrorCode(INVALID_EXCHANGE_RATE)));
+
+            rate = rate.mul(Common.DECIMALS).div(quoteRate);
+        }
+
+        return uint256(rate);
+    }
+
+    function _hasCollateral(address account) internal returns (bool) {
+        for(uint256 i; i < depositCurrencies.length; i++) {
+            if (currencyBalances[currencyIdToAddress[depositCurrencies[i]]][account] > 0) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    function _isInsolvent(address account) internal returns (bool) {
+        if (_hasCollateral(account)) return false;
+
+        Common.Trade[] memory portfolio = Portfolios().getTrades(account);
+        for (uint256 i; i < portfolio.length; i++) {
+            if (Common.isReceiver(portfolio[i].swapType)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 }

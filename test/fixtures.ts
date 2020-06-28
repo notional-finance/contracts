@@ -1,11 +1,12 @@
-import {waffle} from "@nomiclabs/buidler";
+import {waffle, ethers} from "@nomiclabs/buidler";
 import { createFixtureLoader} from "ethereum-waffle";
 import {Wallet, providers} from "ethers";
-import { WeiPerEther } from 'ethers/constants';
 import { SwapnetDeployer } from "../scripts/SwapnetDeployer";
 import defaultAccounts from "./defaultAccounts.json";
 import { parseEther, BigNumber } from 'ethers/utils';
 
+// Silences multiple initialize signature errors
+ethers.errors.setLogLevel("error");
 export const provider = waffle.provider;
 export const wallets = defaultAccounts.map(acc => {
     return new Wallet(acc.secretKey, provider);
@@ -13,8 +14,7 @@ export const wallets = defaultAccounts.map(acc => {
 export const fixtureLoader = createFixtureLoader(provider, [wallets[0]]);
 export const CURRENCY = {
     ETH: 0,
-    DAI: 1,
-    BTC: 2
+    DAI: 1
 }
 
 /**
@@ -27,7 +27,7 @@ export async function fixture(provider: providers.Provider, [owner]: Wallet[]) {
     const swapnet = await SwapnetDeployer.deploy(
         owner,
         prereqs.registry.address,
-        WeiPerEther,
+        parseEther("1.10"),
         parseEther("1.05"),
         parseEther("1.05")
     );
@@ -35,7 +35,7 @@ export async function fixture(provider: providers.Provider, [owner]: Wallet[]) {
     const {currencyId, erc20, chainlink, uniswapExchange} = await swapnet.deployMockCurrency(
         prereqs.uniswapFactory,
         parseEther("0.01"), 
-        parseEther("0.30"),
+        parseEther("1.30"),
         true,
         parseEther("10000")
     );

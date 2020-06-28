@@ -156,7 +156,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
      *
      * @param account to retrieve
      */
-    function getTrades(address account) public view returns (Common.Trade[] memory) {
+    function getTrades(address account) public override view returns (Common.Trade[] memory) {
         return _accountTrades[account];
     }
 
