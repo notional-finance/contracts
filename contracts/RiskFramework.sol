@@ -12,11 +12,21 @@ import "./interface/IRiskFramework.sol";
 
 import "./FutureCash.sol";
 
+/**
+ * @title Risk Framework
+ * @notice Calculates the currency requirements for a portfolio.
+ */
 contract RiskFramework is IRiskFramework, Governed {
     using SafeMath for uint256;
     using SafeInt256 for int256;
 
     uint128 public G_PORTFOLIO_HAIRCUT;
+
+    /**
+     * @notice Sets the haircut amount for the portfolio
+     * @dev governance
+     * @param haircut amount of negative haircut applied to debt
+     */
     function setHaircut(uint128 haircut) public onlyOwner {
         G_PORTFOLIO_HAIRCUT = haircut;
     }
@@ -32,13 +42,12 @@ contract RiskFramework is IRiskFramework, Governed {
     }
 
     /**
-     * Given a portfolio of trades, returns a set of requirements in every currency represented.
-     *
+     * @notice Given a portfolio of trades, returns a set of requirements in every currency represented.
      * @param portfolio a portfolio of trades
      * @return a set of requirements in every currency represented by the portfolio
      */
     function getRequirement(Common.Trade[] memory portfolio) public override view returns (Common.Requirement[] memory) {
-        (CashLadder[] memory ladders, int256[] memory npv) = getCashLadders(portfolio);
+        (CashLadder[] memory ladders, int256[] memory npv) = _getCashLadders(portfolio);
 
         // We now take the per instrument group cash ladder and summarize it into per currency requirements. In the
         // future we may have multiple instrument groups per currency but that is not the case right now so we can
@@ -76,7 +85,7 @@ contract RiskFramework is IRiskFramework, Governed {
      * @param portfolio a portfolio of trades
      * @return an array of cash ladders and an npv figure for every instrument group
      */
-    function getCashLadders(Common.Trade[] memory portfolio) internal view returns (CashLadder[] memory, int256[] memory) {
+    function _getCashLadders(Common.Trade[] memory portfolio) internal view returns (CashLadder[] memory, int256[] memory) {
         Common._sortPortfolio(portfolio);
         uint32 blockNum = uint32(block.number);
 

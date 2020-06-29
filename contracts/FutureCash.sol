@@ -25,6 +25,11 @@ contract FutureCash is Governed {
     // This is used in _tradeCalculation to shift the ln calculation
     int128 internal constant PRECISION_64x64 = 0x3b9aca000000000000000000;
 
+    /**
+     * @dev skip
+     * @param _directory reference to other contracts
+     * @param collateralToken address of the token that will be used in this market
+     */
     function initialize(address _directory, address collateralToken) public initializer {
         Governed.initialize(_directory);
 
@@ -87,7 +92,7 @@ contract FutureCash is Governed {
 
     /**
      * @notice Sets governance parameters on the rate oracle.
-     *
+     * @dev skip
      * @param instrumentGroupId this cannot change once set
      * @param instrumentId cannot change once set
      * @param precision will only take effect on a new period
@@ -116,16 +121,33 @@ contract FutureCash is Governed {
         G_NUM_PERIODS = numPeriods;
     }
 
+    /**
+     * @notice Sets rate factors that will determine the liquidity curve
+     * @dev governance
+     * @param rateAnchor the offset of the liquidity curve
+     * @param rateScalar the sensitivity of the liquidity curve to changes
+     */
     function setRateFactors(uint32 rateAnchor, uint16 rateScalar) external onlyOwner {
         require(rateScalar > 0 && rateAnchor > 0, $$(ErrorCode(INVALID_RATE_FACTORS)));
         G_RATE_SCALAR = rateScalar;
         G_RATE_ANCHOR = rateAnchor;
     }
 
+    /**
+     * @notice Sets the maximum amount that can be traded in a single trade
+     * @dev governance
+     * @param amount the max trade size
+     */
     function setMaxTradeSize(uint128 amount) external onlyOwner {
         G_MAX_TRADE_SIZE = amount;
     }
 
+    /**
+     * @notice Sets fee parameters for the market
+     * @dev governance
+     * @param liquidityFee a change in the traded exchange rate paid to liquidity providers
+     * @param transactionFee percentage of a transaction that accrues to the reserve account
+     */
     function setFee(uint32 liquidityFee, uint128 transactionFee) external onlyOwner {
         G_LIQUIDITY_FEE = liquidityFee;
         G_TRANSACTION_FEE = transactionFee;
@@ -142,9 +164,8 @@ contract FutureCash is Governed {
     /********** Liquidity Tokens **************************/
 
     /**
-     * @notice Adds some amount of future cash to the liquidity pool up to the corresponding amount defined by
-     * `maxCollateral`. Mints liquidity tokens back to the sender.
-     *
+     * @notice Adds some amount of collateral to the liquidity pool up to the corresponding amount defined by
+     * `maxFutureCash`. Mints liquidity tokens back to the sender.
      * @param maturity the period to add liquidity to
      * @param minCollateral the amount of collateral to add to the pool
      * @param maxFutureCash the maximum amount of future cash to add to the pool
@@ -237,9 +258,7 @@ contract FutureCash is Governed {
      * @notice Removes liquidity from the future cash market. The sender's liquidity tokens are burned and they
      * are credited back with future cash and collateral at the prevailing exchange rate. This function
      * only works when removing liquidity from an active market. For markets that are matured, the sender
-     * must settle their liquidity token because it involves depositing current cash and settling future
-     * cash balances.
-     *
+     * must settle their liquidity token via `Portfolios().settleAccount()`.
      * @param maturity the period to remove liquidity from
      * @param amount the amount of liquidity tokens to burn
      * @param maxBlock after this block the trade will fail
@@ -297,7 +316,7 @@ contract FutureCash is Governed {
 
     /**
      * @notice Settles a liquidity token into future cash and collateral. Can only be called by the Portfolios contract.
-     *
+     * @dev skip
      * @param account the account that is holding the token
      * @param tokenAmount the amount of token to settle
      * @param maturity when the token matures
@@ -351,7 +370,6 @@ contract FutureCash is Governed {
     /**
      * @notice Given the amount of future cash put into a market, how much collateral this would
      * purchase at the current block.
-     *
      * @param maturity the maturity of the future cash
      * @param futureCashAmount the amount of future cash to input
      * @return the amount of collateral this would purchase, returns 0 if the trade will fail
@@ -362,8 +380,7 @@ contract FutureCash is Governed {
 
     /**
      * @notice Given the amount of future cash put into a market, how much collateral this would
-     * purchase at the given block
-     *
+     * purchase at the given block. Future cash exchange rates change as we go towards maturity.
      * @param maturity the maturity of the future cash
      * @param futureCashAmount the amount of future cash to input
      * @param blockNum the specified block number
@@ -382,7 +399,6 @@ contract FutureCash is Governed {
     /**
      * @notice Receive collateral in exchange for a future cash obligation. Equivalent to borrowing
      * collateral at a fixed rate.
-     *
      * @param maturity the maturity block of the future cash being exchange for current cash
      * @param futureCashAmount the amount of future cash to deposit, will convert this amount to current cash
      *  at the prevailing exchange rate
@@ -440,7 +456,6 @@ contract FutureCash is Governed {
     /**
      * @notice Given the amount of future cash to purchase, returns the amount of collateral this would cost at the current
      * block.
-     *
      * @param maturity the maturity of the future cash
      * @param futureCashAmount the amount of future cash to purchase
      * @return the amount of collateral this would cost, returns 0 on trade failure
@@ -451,7 +466,6 @@ contract FutureCash is Governed {
 
     /**
      * @notice Given the amount of future cash to purchase, returns the amount of collateral this would cost.
-     *
      * @param maturity the maturity of the future cash
      * @param futureCashAmount the amount of future cash to purchase
      * @param blockNum the block to calculate the price at
@@ -470,7 +484,6 @@ contract FutureCash is Governed {
     /**
      * @notice Deposit collateral in return for the right to receive cash at the specified maturity. Equivalent to lending
      * your collateral at a fixed rate.
-     *
      * @param maturity the period to receive future cash in
      * @param futureCashAmount the amount of future cash to purchase
      * @param maxBlock after this block the trade will not settle
@@ -531,7 +544,7 @@ contract FutureCash is Governed {
     /**
      * @notice Uses collateralAvailable to purchase future cash in order to offset the obligation amount at
      * the specified maturity. Used by the Portfolio contract during liquidation.
-     *
+     * @dev skip
      * @param collateralAvailable amount of collateral available to purchase offsetting obligations
      * @param obligation the max amount of obligations to offset
      * @param maturity the maturity of the obligation
@@ -571,7 +584,7 @@ contract FutureCash is Governed {
      * @notice Turns future cash tokens into a current collateral. Used by portfolios when settling cash.
      * This method currently sells `maxFutureCash` every time since it's not possible to calculate the
      * amount of future cash to sell from `collateralRequired`.
-     *
+     * @dev skip
      * @param account that holds the future cash
      * @param collateralRequired amount of collateral that needs to be raised
      * @param maxFutureCash the maximum amount of future cash that can be sold
@@ -607,7 +620,7 @@ contract FutureCash is Governed {
 
     /**
      * @notice Called by the portfolios contract when a liquidity token is being converted for collateral.
-     *
+     * @dev skip
      * @param collateralRequired the amount of collateral required
      * @param maxTokenAmount the max balance of tokens available
      * @param maturity when the token matures
@@ -645,7 +658,6 @@ contract FutureCash is Governed {
 
     /**
      * @notice Returns the current discount rate for the market. Will not return negative interest rates
-     *
      * @param maturity the maturity to get the rate for
      * @return a tuple where the first value is the simple discount rate and the second value is a boolean indicating
      *  whether or not the maturity has passed
@@ -665,7 +677,6 @@ contract FutureCash is Governed {
 
     /**
      * @notice Gets the rates for all the active markets.
-     *
      * @return an array of rates starting from the most current maturity to the furthest maturity
      */
     function getMarketRates() external view returns (uint32[] memory) {
@@ -683,7 +694,6 @@ contract FutureCash is Governed {
 
     /**
      * @notice Gets the maturities for all the active markets.
-     *
      * @return an array of blocks where the currently active markets will mature at
      */
     function getActiveMaturities() public view returns (uint32[] memory) {

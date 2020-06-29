@@ -26,6 +26,7 @@ contract EscrowStorage {
     uint16 public maxCurrencyId;
     mapping(uint16 => address) public currencyIdToAddress;
     mapping(address => uint16) public addressToCurrencyId;
+    // TODO: is this more efficient as a mapping or struct?
     uint16[] public depositCurrencies;
 
     // Mapping from base token address to quote token address

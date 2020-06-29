@@ -12,7 +12,7 @@
     "clean": "rm -Rf ./typechain && rm -Rf ./build",
     "test": "npx buidler test",
     "test:coverage": "export COVERAGE=true; npm run build && npx buidler coverage --network coverage",
-    "docs:build": "solc --userdoc --devdoc cache/solpp-generated-contracts/FutureCash.sol > ./docs/docs.json",
+    "docs:build": "yarn run build && yarn run solidity-docgen -e cache/solpp-generated-contracts/lib,cache/solpp-generated-contracts/interface,cache/solpp-generated-contracts/upgradeable,cache/solpp-generated-contracts/storage,cache/solpp-generated-contracts/utils -i cache/solpp-generated-contracts -o docs -t docs",
     "deploy:rinkeby": "DEBUG=* DOTENV_CONFIG_PATH=.env.rinkeby ts-node scripts/deploy.ts",
     "sloc": "rename 's/\\.sol/\\.c/' contracts/*.sol && scc contracts/* --wide --by-file && rename 's/\\.c/\\.sol/' contracts/*.c"
   },
@@ -55,7 +55,8 @@
     "typechain-target-web3-v1": "^1.0.4"
   },
   "dependencies": {
-    "debug": "^4.1.1"
+    "debug": "^4.1.1",
+    "solidity-docgen": "^0.5.3"
   },
   "private": true,
   "husky": {

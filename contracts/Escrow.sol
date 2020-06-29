@@ -17,14 +17,18 @@ import "./storage/EscrowStorage.sol";
 
 /**
  * @title Escrow
- * @notice Manages collateral balances and cash balances for accounts. Collateral is managed under
- * `Currency Groups` which define a group of tokens that are risk free (or practically risk free)
- * equivalents of one another.
+ * @notice Manages a account balances for the entire system including deposits, withdraws,
+ * cash balances, collateral lockup for trading, cash transfers (settlement), and liquidation.
  */
 contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
     using SafeMath for uint256;
     using SafeInt256 for int256;
 
+    /**
+     * @dev skip
+     * @param directory reference to other contracts
+     * @param registry ERC1820 registry for ERC777 token standard
+     */
     function initialize(address directory, address registry) public initializer {
         Governed.initialize(directory);
 
@@ -38,7 +42,8 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
     }
 
     /********** Events *******************************/
-    event NewCurrency(address indexed token, uint16 currencyId);
+    event NewTradableCurrency(address indexed token, uint16 currencyId);
+    event NewDepositCurrency(address indexed token, uint16 currencyId);
     event UpdateExchangeRate(address indexed baseCurrency, address indexed quoteCurrency);
     event Deposit(address indexed currency, address account, uint256 value);
     event Withdraw(address indexed currency, address account, uint256 value);
@@ -46,41 +51,50 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
     /********** Events *******************************/
 
     /********** Governance Settings ******************/
+
+    /**
+     * @notice Sets discounts applied when purchasing collateral during liquidation or settlement
+     * @dev governance
+     * @param liquidation discount applied to liquidation
+     * @param settlement discount applied to settlement
+     */
     function setDiscounts(uint128 liquidation, uint128 settlement) external onlyOwner {
         G_LIQUIDATION_DISCOUNT = liquidation;
         G_SETTLEMENT_DISCOUNT = settlement;
     }
 
+    /**
+     * @notice Sets the reserve account used to settle against for insolvent accounts
+     * @dev governance
+     * @param account address of reserve account
+     */
     function setReserveAccount(address account) external onlyOwner {
         G_RESERVE_ACCOUNT = account;
     }
 
     /**
      * @notice Lists a new currency that can be traded in future cash markets
-     *
+     * @dev governance
      * @param token address of the ERC20 or ERC777 token
      */
     function listTradableCurrency(address token) external onlyOwner {
-        // The first group id will be 1, we do not want 0 to be used as a group id.
-        maxCurrencyId++;
-        // We don't do a lot of checking here but since this is purely an administrative
-        // activity we just rely on governance not to set this improperly.
-        currencyIdToAddress[maxCurrencyId] = token;
-        addressToCurrencyId[token] = maxCurrencyId;
-        // We need to set this number so that the free collateral check can provision
-        // the right number of currencies.
-        Portfolios().setNumCurrencies(maxCurrencyId);
-
-        emit NewCurrency(token, maxCurrencyId);
+        _listCurrency(token);
+        emit NewTradableCurrency(token, maxCurrencyId);
     }
 
     /**
-     * @notice Lists a new currency that can be used as collateral
-     *
+     * @notice Lists a new currency that can only be used to collateralize `CASH_PAYER` tokens
+     * @dev governance
      * @param token address of the ERC20 or ERC777 token
      */
     function listDepositCurrency(address token) external onlyOwner {
-        // The first group id will be 1, we do not want 0 to be used as a group id.
+        _listCurrency(token);
+        depositCurrencies.push(maxCurrencyId);
+
+        emit NewDepositCurrency(token, maxCurrencyId);
+    }
+
+    function _listCurrency(address token) internal {
         maxCurrencyId++;
         // We don't do a lot of checking here but since this is purely an administrative
         // activity we just rely on governance not to set this improperly.
@@ -89,20 +103,16 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         // We need to set this number so that the free collateral check can provision
         // the right number of currencies.
         Portfolios().setNumCurrencies(maxCurrencyId);
-        // These currencies can be traded in future cash markets
-        depositCurrencies.push(maxCurrencyId);
-
-        emit NewCurrency(token, maxCurrencyId);
     }
 
     /**
      * @notice Creates an exchange rate between two currencies.
-     *
+     * @dev governance
      * @param base the base currency
      * @param quote the quote currency
      * @param rateOracle the oracle that will give the exchange rate between the two
      * @param onChainExchange uniswap exchange for trustless exchange
-     * @param haircut the amount of haircut to apply to the currency conversion
+     * @param haircut multiple to apply to the exchange rate that sets the collateralization ratio
      */
     function addExchangeRate(
         uint16 base,
@@ -126,18 +136,18 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
     /********** Getter Methods ***********************/
 
     /**
-     * @notice true or false if currency group is valid
-     *
-     * @param currency currency group id
+     * @notice Evaluates whether or not a currency id is valid
+     * @param currency currency id
+     * @return true if the currency is valid
      */
     function isValidCurrency(uint16 currency) public view returns (bool) {
         return currency <= maxCurrencyId;
     }
 
     /**
-     * @notice Returns true of a currency can be traded
-     *
-     * @param currency currency group id
+     * @notice Evaluates whether or not a currency can be traded
+     * @param currency currency id
+     * @return true if the currency is tradable
      */
     function isTradableCurrency(uint16 currency) public override view returns (bool) {
         if (!isValidCurrency(currency)) return false;
@@ -149,6 +159,11 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         return true;
     }
 
+    /**
+     * @notice Evaluates whether or not a currency can be used as collateral
+     * @param currency currency id
+     * @return true if the currency is a deposit currency
+     */
     function isDepositCurrency(uint16 currency) public view returns (bool) {
         if (!isValidCurrency(currency)) return false;
 
@@ -161,10 +176,9 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
 
     /**
      * @notice Getter method for exchange rates
-     *
      * @param base token address for the base currency
      * @param quote token address for the quote currency
-     * @return ExchangeRate
+     * @return ExchangeRate struct
      */
     function getExchangeRate(address base, address quote) external view returns (ExchangeRate memory) {
         return exchangeRateOracles[base][quote];
@@ -172,10 +186,9 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
 
     /**
      * @notice Returns the net balances of all the currencies owned by an account as
-     * an array. Each index of the array refers to the currency group id.
-     *
+     * an array. Each index of the array refers to the currency id.
      * @param account the account to query
-     * @return the net balance of each currency group and the currencies that are only allowed as deposits
+     * @return the balance of each currency net of the account's cash position
      */
     function getNetBalances(
         address account
@@ -197,8 +210,6 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
     /**
      * @notice Returns the net balance denominated in the currency for an account. This balance
      * may be less than zero due to negative cash balances.
-     * @dev This method needs to be modified to support secondary currencies
-     *
      * @param account to get the balance for
      * @param currency currency id
      * @return the net balance of the currency
@@ -213,7 +224,6 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
     /**
      * @notice Converts the balances given to ETH for the purposes of determining whether an account has
      * sufficient free collateral.
-     *
      * @param amounts the balance in each currency group as an array, each index refers to the currency group id.
      * @return an array the same length as amounts with each balance denominated in ETH
      */
@@ -227,11 +237,9 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         // Currency ID = 0 is already ETH so we don't need to convert it
         results[0] = amounts[0];
         for (uint256 i = 1; i < amounts.length; i++) {
-            // The zero currency group is unused.
             if (amounts[i] == 0) continue;
 
             address base = currencyIdToAddress[uint16(i)];
-            // We are converting from the base to quote here, the quote is the collateral currency
             results[i] = uint128(_convertToETHWithHaircut(base, amounts[i]));
         }
 
@@ -243,9 +251,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
     /********** Withdraw / Deposit Methods ***********/
 
     /**
-     * @notice Deposit ETH to use as collateral for loans. All future cash is denominated in Dai so this is only
-     * useful as collateral for borrowing. Lenders will have to deposit dai in order to purchase future cash.
-     * The amount of eth deposited should be set in `msg.value`.
+     * @notice This is a special function to handle ETH deposits. Value of ETH to be deposited must be specified in `msg.value`
      */
     function depositEth() public payable {
         require(msg.value <= Common.MAX_UINT_128, $$(ErrorCode(OVER_MAX_ETH_BALANCE)));
@@ -255,10 +261,9 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
     }
 
     /**
-     * @notice Withdraw ETH from the contract. This can only be done after a successful free collateral check.
+     * @notice Withdraw ETH from the contract.
      * @dev We do not use `msg.sender.transfer` or `msg.sender.send` as recommended by Consensys:
      * https://diligence.consensys.net/blog/2019/09/stop-using-soliditys-transfer-now/
-     *
      * @param amount the amount of eth to withdraw from the contract
      */
     function withdrawEth(uint128 amount) public {
@@ -276,7 +281,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
     }
 
     /**
-     * @notice Transfers a balance from an ERC20 token contract into the escrow.
+     * @notice Transfers a balance from an ERC20 token contract into the Escrow.
      * @param token token contract to send from
      * @param amount tokens to transfer
      */
@@ -292,8 +297,8 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
     }
 
     /**
-     * @dev See {IERC777TokenRecipient}
-     * Receives tokens from an ERC777-send message.
+     * @notice Receives tokens from an ERC777 send message.
+     * @dev skip
      * @param from address the tokens are being sent from (!= msg.sender)
      * @param amount amount
      */
@@ -315,7 +320,6 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
     /**
      * @notice Withdraws from an account's collateral holdings back to their account. Checks if the
      * account has sufficient free collateral after the withdraw or else it fails.
-     *
      * @param token collateral type to withdraw
      * @param amount total value to withdraw
      */
@@ -340,9 +344,10 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
     /**
      * @notice Transfers the collateral required between the Future Cash Market and the specified account. Collateral
      * held by the Future Cash Market is available to purchase in the liquidity pools.
-     *
+     * @dev skip
      * @param account the account to withdraw collateral from
      * @param collateralToken the address of the token to use as collateral
+     * @param instrumentGroupId the instrument group used to authenticate the future cash market
      * @param value the amount of collateral to deposit
      * @param fee the amount of `value` to pay as a fee
      */
@@ -365,6 +370,16 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         currencyBalances[collateralToken][account] = currencyBalances[collateralToken][account].sub(value + fee);
     }
 
+    /**
+     * @notice Transfers the collateral required between the Future Cash Market and the specified account. Collateral
+     * held by the Future Cash Market is available to purchase in the liquidity pools.
+     * @dev skip
+     * @param account the account to withdraw collateral from
+     * @param collateralToken the address of the token to use as collateral
+     * @param instrumentGroupId the instrument group used to authenticate the future cash market
+     * @param value the amount of collateral to deposit
+     * @param fee the amount of `value` to pay as a fee
+     */
     function withdrawFromMarket(
         address account,
         address collateralToken,
@@ -387,7 +402,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
     /**
      * @notice Adds or removes collateral from the future cash market when the portfolio is trading positions
      * as a result of settlement or liquidation.
-     *
+     * @dev skip
      * @param currency the currency group of the collateral
      * @param futureCashMarket the address of the future cash market to transfer between
      * @param amount the amount to transfer
@@ -413,7 +428,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
      * @notice Can only be called by Portfolios when trades are settled to cash. There is no free collateral
      * check for this function call because trade settlement is an equivalent transformation of a trade
      * to a net cash value. An account's free collateral position will remain unchanged after settlement.
-     *
+     * @dev skip
      * @param account account where the cash is settled
      * @param settledCash an array of the currency groups that need to have their cash balance updated
      */
@@ -438,7 +453,6 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
 
     /**
      * @notice Settles the cash balances between the payers and receivers in batch
-     *
      * @param currency the currency group to settle
      * @param payers the party that has a negative cash balance and will transfer collateral to the receiver
      * @param receivers the party that has a positive cash balance and will receive collateral from the payer
@@ -464,7 +478,6 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
 
     /**
      * @notice Settles the cash balance between the payer and the receiver.
-     *
      * @param currency the currency group to settle
      * @param depositCurrency the deposit currency to sell to cover
      * @param payer the party that has a negative cash balance and will transfer collateral to the receiver
@@ -493,7 +506,6 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
 
     /**
      * @notice Settles the cash balance between the payer and the receiver.
-     *
      * @param currency the currency group to settle
      * @param depositToken the deposit currency to sell to cover
      * @param payer the party that has a negative cash balance and will transfer collateral to the receiver
@@ -570,10 +582,9 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
 
     /**
      * @notice Liquidates a batch of accounts in a specific currency.
-     *
      * @param accounts the account to liquidate
-     * @param currency the currency group that is undercollateralized
-     * @param depositCurrency the deposit currency to liquidate
+     * @param currency the currency that is undercollateralized
+     * @param depositCurrency the deposit currency to exchange for `currency`
      */
     function liquidateBatch(address[] calldata accounts, uint16 currency, uint16 depositCurrency) external {
         require(isDepositCurrency(depositCurrency), $$(ErrorCode(INVALID_CURRENCY)));
@@ -585,13 +596,10 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
     }
 
     /**
-     * @notice Liquidates an account if it is under collateralized. First extracts any cash from the portfolio, then proceeds to
-     * allow the liquidator to purchase collateral from the account at a discount from the oracle price. Finally, uses the collateral
-     * raised to close out any obligations in the portfolio.
-     *
+     * @notice Liquidates a single account if it is undercollateralized
      * @param account the account to liquidate
-     * @param currency the currency group that is undercollateralized
-     * @param depositCurrency the deposit currency to liquidate
+     * @param currency the currency that is undercollateralized
+     * @param depositCurrency the deposit currency to exchange for `currency`
      */
     function liquidate(address account, uint16 currency, uint16 depositCurrency) external {
         require(isDepositCurrency(depositCurrency), $$(ErrorCode(INVALID_CURRENCY)));
@@ -621,6 +629,9 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         localCurrencyRequired = Portfolios().raiseCollateralViaLiquidityToken(account, currency, localCurrencyRequired);
 
         if (localCurrencyRequired > 0) {
+            // If liquidity tokens have not recollateralized the account, we allow the caller to purchase
+            // collateral from the account at `G_LIQUIDATION_DISCOUNT`. Partial liquidation is okay in this
+            // scenario.
             uint128 localCurrencyRaised = _purchaseCollateralForLocalCurrency(
                 account,
                 localCurrencyToken,

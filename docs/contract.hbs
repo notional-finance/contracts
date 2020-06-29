@@ -1,0 +1,103 @@
+# {{ name }}
+
+{{{natspec.userdoc}}}
+{{{natspec.devdoc}}}
+
+{{#if ownFunctions}}
+## Methods
+{{#ownFunctions}}
+{{#if (and (ne natspec.devdoc "skip
+") (ne natspec.devdoc "governance
+"))}}
+{{#if (or (eq visibility "public") (eq visibility "external"))}}
+- [`{{name}}({{args}})`](#{{name}})
+{{/if}}
+{{/if}}
+{{/ownFunctions}}
+{{/if}}
+
+{{#if ownEvents}}
+## Events
+{{#ownEvents}}
+- [`{{name}}({{args}})`](#{{name}})
+{{/ownEvents}}
+{{/if}}
+
+{{#if ownFunctions}}
+## Governance Methods
+{{#ownFunctions}}
+{{#if (or (eq visibility "public") (eq visibility "external"))}}
+{{#if (eq natspec.devdoc "governance
+")}}
+- [`{{name}}({{args}})`](#{{name}})
+{{/if}}
+{{/if}}
+{{/ownFunctions}}
+{{/if}}
+
+# Methods
+{{#ownFunctions}}
+{{#if (or (eq visibility "public") (eq visibility "external"))}}
+{{#if (and (ne natspec.devdoc "skip
+") (ne natspec.devdoc "governance
+"))}}
+### {{name}}
+> {{#if natspec.userdoc}}{{natspec.userdoc}}{{else}}No description{{/if}}
+{{#if natspec.params}}
+#### Parameters:
+{{#natspec.params}}
+- `{{param}}`: {{description}}
+{{/natspec.params}}
+{{/if}}
+{{#if natspec.returns}}
+#### Return Values:
+{{#natspec.returns}}
+- {{param}} {{description}}
+{{/natspec.returns}}
+{{/if}}
+
+***
+
+{{/if}}
+{{/if}}
+{{/ownFunctions}}
+
+# Events
+{{#ownEvents}}
+### `{{name}}`
+{{#if natspec.devdoc}}{{natspec.devdoc}}{{else}}No description{{/if}}
+{{#if natspec.params}}
+#### Parameters:
+{{#natspec.params}}
+- `{{param}}`: {{description}}
+{{/natspec.params}}
+{{/if}}
+
+***
+
+{{/ownEvents}}
+
+# Governance Methods
+{{#ownFunctions}}
+{{#if (or (eq visibility "public") (eq visibility "external"))}}
+{{#if (eq natspec.devdoc "governance
+")}}
+### {{name}}
+> {{#if natspec.userdoc}}{{natspec.userdoc}}{{else}}No description{{/if}}
+{{#if natspec.params}}
+#### Parameters:
+{{#natspec.params}}
+- `{{param}}`: {{description}}
+{{/natspec.params}}
+{{/if}}
+{{#if natspec.returns}}
+#### Return Values:
+{{#natspec.returns}}
+- {{param}} {{description}}
+{{/natspec.returns}}
+{{/if}}
+
+***
+{{/if}}
+{{/if}}
+{{/ownFunctions}}

@@ -16,7 +16,7 @@ import "./FutureCash.sol";
 
 /**
  * @title Portfolios
- * @notice Holds all the methods for managing an account's portfolio of trades
+ * @notice Manages account portfolios which includes all future cash positions and liquidity tokens.
  */
 contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
     using SafeMath for uint256;
@@ -35,6 +35,11 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
     event NewInstrumentGroup(uint8 indexed instrumentGroupId);
     event UpdateInstrumentGroup(uint8 indexed instrumentGroupId);
 
+    /**
+     * @dev skip
+     * @param directory holds contract addresses for dependencies
+     * @param maxTrades max trades that a portfolio can hold
+     */
     function initialize(address directory, uint256 maxTrades) public initializer {
         Governed.initialize(directory);
         G_MAX_TRADES = maxTrades;
@@ -45,11 +50,20 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
 
     /****** Governance Parameters ******/
 
+    /**
+     * @dev skip
+     * @param numCurrencies the total number of currencies set by escrow
+     */
     function setNumCurrencies(uint16 numCurrencies) public override {
         require(calledByEscrow(), $$(ErrorCode(UNAUTHORIZED_CALLER)));
         G_NUM_CURRENCIES = numCurrencies;
     }
 
+    /**
+     * @notice Set the max trades that a portfolio can hold
+     * @dev governance
+     * @param maxTrades new max trade number
+     */
     function setMaxTrades(uint256 maxTrades) public onlyOwner {
         G_MAX_TRADES = maxTrades;
     }
@@ -57,8 +71,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
     /**
      * @notice An instrument group defines a collection of similar instruments where the risk ladders can be netted
      * against each other. The identifier is only 1 byte so we can only have 255 instrument groups, 0 is unused.
-     * The periods are defined in the instrument group.
-     *
+     * @dev governance
      * @param numPeriods the total number of periods
      * @param periodSize the baseline period length (in blocks) for periodic swaps in this instrument.
      * @param precision the discount rate precision
@@ -101,10 +114,8 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
 
     /**
      * @notice Updates instrument groups. Be very careful when calling this function! When changing periods and
-     * period sizes the oracles must be updated as well. If the futureCashMarket is shared by other
-     * instrument groups, their numPeriod and periodSize must be updated as well or this will result in
-     * incompatibility.
-     *
+     * period sizes the markets must be updated as well.
+     * @dev governance
      * @param instrumentGroupId the group id to update
      * @param numPeriods this is safe to update as long as the discount rate oracle is not shared
      * @param periodSize this is only safe to update when there are no trades left
@@ -153,8 +164,8 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
 
     /**
      * @notice Returns the trades of an account
-     *
      * @param account to retrieve
+     * @return an array representing the account's portfolio
      */
     function getTrades(address account) public override view returns (Common.Trade[] memory) {
         return _accountTrades[account];
@@ -162,18 +173,18 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
 
     /**
      * @notice Returns a particular trade via index
-     *
      * @param account to retrieve
      * @param index of trade
+     * @return a single trade by index in the portfolio
      */
     function getTrade(address account, uint256 index) public view returns (Common.Trade memory) {
         return _accountTrades[account][index];
     }
 
     /**
-     * @notice Returns a particular instrumentGroupId
-     *
+     * @notice Returns a particular instrument group
      * @param instrumentGroupId to retrieve
+     * @return the given instrument group
      */
     function getInstrumentGroup(
         uint8 instrumentGroupId
@@ -182,9 +193,9 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
     }
 
     /**
-     * @notice Gets instrument groups by id
-     *
+     * @notice Returns a batch of instrument groups
      * @param groupIds array of instrument group ids to retrieve
+     * @return an array of instrument group objects
      */
     function getInstrumentGroups(
         uint8[] memory groupIds
@@ -200,7 +211,6 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
 
     /**
      * @notice Public method for searching for a trade in an account.
-     *
      * @param account account to search
      * @param swapType the type of swap to search for
      * @param instrumentGroupId the instrument group id
@@ -233,9 +243,11 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
 
     /**
      * @notice Stateful version of free collateral, first settles all trades in the account before returning
-     * the free collateral parameters.
-     *
-     * @param account to get free collateral for
+     * the free collateral parameters. Generally, external developers should not need to call this function. It is used
+     * internally to both check free collateral and ensure that the portfolio does not have any matured trades.
+     * Call `freeCollateralView` if you require a view function.
+     * @param account address of account to get free collateral for
+     * @return (net free collateral position, an array of the currency requirements)
      */
     function freeCollateral(address account) public override returns (int256, uint128[] memory) {
         // This will emit an event, which is the correct action here.
@@ -245,10 +257,9 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
     }
 
     /**
-     * @notice Returns the free collateral balance for an account.
-     *
+     * @notice Returns the free collateral balance for an account as a view functon.
      * @param account account in question
-     * @return the amount of free collateral and the per currency requirement
+     * @return (net free collateral position, an array of the currency requirements)
      */
     function freeCollateralView(address account) public view returns (int256, uint128[] memory) {
         Common.Trade[] memory portfolio = _accountTrades[account];
@@ -304,7 +315,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
     /**
      * @notice Updates the portfolio of an account with a trade, merging it into the rest of the
      * portfolio if necessary.
-     *
+     * @dev skip
      * @param account to insert the trade to
      * @param trade trade to insert into the account
      */
@@ -322,7 +333,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
     /**
      * @notice Updates the portfolio of an account with a batch of trades, merging it into the rest of the
      * portfolio if necessary.
-     *
+     * @dev skip
      * @param account to insert the trades into
      * @param trades array of trades to insert into the account
      */
@@ -357,7 +368,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
 
     /**
      * @notice Transfers a trade from one account to another.
-     *
+     * @dev skip
      * @param from account to transfer from
      * @param to account to transfer to
      * @param swapType the type of swap to search for
@@ -409,8 +420,9 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
     /**
      * @notice Settles all matured cash trades and liquidity tokens in a user's portfolio. This method is
      * unauthenticated, anyone may settle the trades in any account. This is required for accounts that
-     * have negative cash and counterparties need to settle against them.
-     *
+     * have negative cash and counterparties need to settle against them. Generally, external developers
+     * should not need to call this function. We ensure that accounts are settled on every free collateral
+     * check, cash settlement, and liquidation.
      * @param account the account referenced
      */
     function settleAccount(address account) public override {
@@ -420,8 +432,8 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
     }
 
     /**
-     * @notice Settle a batch of accounts.
-     *
+     * @notice Settle a batch of accounts. See note for `settleAccount`, external developers should not need
+     * to call this function.
      * @param accounts an array of accounts to settle
      */
     function settleAccountBatch(address[] calldata accounts) external override {
@@ -436,7 +448,6 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
      * @notice Settles all matured cash trades and liquidity tokens in a user's portfolio. This method is
      * unauthenticated, anyone may settle the trades in any account. This is required for accounts that
      * have negative cash and counterparties need to settle against them.
-     *
      * @param account the account referenced
      */
     function _settleAccount(address account) internal {
@@ -495,7 +506,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
     /**
      * @notice Looks for ways to take cash from the portfolio and return it to the escrow contract during
      * cash settlement.
-     *
+     * @dev skip
      * @param account the account to extract cash from
      * @param currency the currency that the token should be denominated in
      * @param amount the amount of collateral to extract from the portfolio
@@ -510,6 +521,16 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
         return _tradePortfolio(account, currency, amount, Common.getLiquidityToken());
     }
 
+    /**
+     * @notice Looks for ways to take cash from the portfolio and return it to the escrow contract during
+     * cash settlement.
+     * @dev skip
+     * @param account the account to extract cash from
+     * @param currency the currency that the token should be denominated in
+     * @param amount the amount of collateral to extract from the portfolio
+     * @return returns the amount of remaining collateral value (if any) that the function was unable
+     *  to extract from the portfolio
+     */
     function raiseCollateralViaCashReceiver(
         address account,
         uint16 currency,
@@ -520,7 +541,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
 
     /**
      * @notice Takes some amount of collateral and uses it to pay of obligations in the portfolio.
-     *
+     * @dev skip
      * @param account the account that holds the obligations
      * @param currency the currency that the trades should be denominated in
      * @param amount the amount of current cash available to pay off obligations
@@ -536,8 +557,6 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
 
     /**
      * @notice A generic, internal function that trades positions within a portfolio.
-     * @dev May want to refactor this to take swapType as an input instead of bools
-     *
      * @param account account that holds the portfolio to trade
      * @param currency the currency that the trades should be denominated in
      * @param amount of collateral available
@@ -548,7 +567,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
         uint16 currency,
         uint128 amount,
         bytes1 tradeType
-    ) public returns (uint128) {
+    ) internal returns (uint128) {
         // Only Escrow can execute actions to trade the portfolio
         require(calledByEscrow(), $$(ErrorCode(UNAUTHORIZED_CALLER)));
 
@@ -617,7 +636,6 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
 
     /**
      * @notice Extracts collateral from liquidity tokens.
-     *
      * @param trade the liquidity token to extract cash from
      * @param futureCashMarket the address of the future cash market
      * @param state state of the portfolio trade operation
@@ -665,7 +683,6 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
 
     /**
      * @notice Sells future cash in order to raise collateral
-     *
      * @param account the account that holds the future cash
      * @param trade the future cash token to extract cash from
      * @param futureCashMarket the address of the future cash market
@@ -708,7 +725,6 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
 
     /**
      * @notice Purchases future cash to offset obligations
-     *
      * @param trade the future cash token to pay off
      * @param futureCashMarket the address of the future cash market
      * @param state state of the portfolio trade operation
@@ -750,7 +766,6 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
      * @notice Returns the offset for a specific trade in an array of trades given a storage
      * pointer to a trade array. The parameters of this function define a unique id of
      * the trade.
-     *
      * @param portfolio storage pointer to the list of trades
      * @param swapType the type of swap to search for
      * @param instrumentGroupId the instrument group id
@@ -794,7 +809,6 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
     /**
      * @notice Checks for the existence of a matching trade and then chooses update or append
      * as appropriate.
-     *
      * @param portfolio a list of trades
      * @param trade the new trade to add
      */
@@ -845,7 +859,6 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
     /**
      * @notice Reduces the notional of a trade by value, if value is equal to the total notional
      * then removes it from the portfolio.
-     *
      * @param portfolio a storage pointer to the account's trades
      * @param trade a storage pointer to the trade
      * @param index of the trade in the portfolio
@@ -868,7 +881,6 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
     /**
      * @notice Removes a trade from a portfolio, used when trades are transferred by _reduceTrade
      * or when they are settled.
-     *
      * @param portfolio a storage pointer to the trades
      * @param index the index of the trade to remove
      */

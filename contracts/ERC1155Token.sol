@@ -10,9 +10,10 @@ import "./interface/IERC165.sol";
 
 
 /**
- * @title ERC1155 Token Standard
- * @notice Implements the ERC1155 token standard for Swapnet. All swaps, future cash and liquidity tokens
- * in a portfolio can be represented by the ERC1155 standard.
+ * @notice Implements the ERC1155 token standard for transferring future cash tokens within Swapnet. ERC1155 ids
+ * encode an identifier that represents trades that are fungible with each other. For example, two future cash tokens
+ * that trade in the same market and mature on the same block are fungible with each other and therefore will have the
+ * same id. `CASH_PAYER` tokens are not transferrable because they have negative value.
  */
 contract ERC1155Token is Governed, IERC1155, IERC165 {
 
@@ -25,24 +26,24 @@ contract ERC1155Token is Governed, IERC1155, IERC165 {
     mapping(address => mapping(address => bool)) public operators;
 
     /**
-     * ERC165 compatibility for ERC1155
+     * @notice ERC165 compatibility for ERC1155
+     * @dev skip
+     * @param interfaceId the hash signature of the interface id
      */
     function supportsInterface(bytes4 interfaceId) external override view returns (bool) {
         if (interfaceId == ERC1155_INTERFACE) return true;
     }
 
     /**
-     * @notice Transfers `_value` amount of an `id` from the `_from` address to the
-     * `_to` address specified (with safety call).
-     *
+     * @notice Transfers tokens between from and to addresses.
      * @dev Caller must be approved to manage the tokens being transferred out of the
      * `_from` account (see "Approval" section of the standard).
-     * @param from    Source address
-     * @param to      Target address
-     * @param id      ID of the token type
-     * @param value   Transfer amount
-     * @param data    Additional data with no specified format, MUST be sent unaltered
-     *     in call to `onERC1155Received` on `_to`
+     * @param from Source address
+     * @param to Target address
+     * @param id ID of the token type
+     * @param value Transfer amount
+     * @param data Additional data with no specified format, unused by this contract but forwarded unaltered
+     * to the ERC1155TokenReceiver.
      */
     function safeTransferFrom(
         address from,
@@ -69,17 +70,15 @@ contract ERC1155Token is Governed, IERC1155, IERC165 {
     }
 
     /**
-     * @notice Transfers `_values` amount(s) of `_ids` from the `_from` address to
-     * the `_to` address specified (with safety call).
-     *
+     * @notice Transfers tokens between from and to addresses in batch.
      * @dev Caller must be approved to manage the tokens being transferred out of the
      * `_from` account (see "Approval" section of the standard).
-     * @param from    Source address
-     * @param to      Target address
-     * @param ids     IDs of each token type (order and length must match _values array)
-     * @param values  Transfer amounts per token type (order and length must match _ids array)
-     * @param data    Additional data with no specified format, MUST be sent unaltered in call
-     *      to the `ERC1155TokenReceiver` hook(s) on `_to`
+     * @param from Source address
+     * @param to Target address
+     * @param ids IDs of each token type (order and length must match _values array)
+     * @param values Transfer amounts per token type (order and length must match _ids array)
+     * @param data Additional data with no specified format, unused by this contract but forwarded unaltered
+     * to the ERC1155TokenReceiver.
      */
     function safeBatchTransferFrom(
         address from,
@@ -148,12 +147,11 @@ contract ERC1155Token is Governed, IERC1155, IERC165 {
     }
 
     /**
-     * Get the balance of an account's tokens. This method is implemented for ERC1155 compatibility,
-     * but is not very useful for most Swapnet functionality.
-     *
-     * @param account  The address of the token holder
-     * @param id     ID of the token
-     * @return        The account's balance of the token type requested
+     * @notice Get the balance of an account's tokens. For a more complete picture of an account's
+     * portfolio, see the method `Portfolios.getTrades()`
+     * @param account The address of the token holder
+     * @param id ID of the token
+     * @return The account's balance of the token type requested
      */
     function balanceOf(address account, uint256 id) external view override returns (uint256) {
         bytes1 swapType = Common.getSwapType(id);
@@ -174,11 +172,11 @@ contract ERC1155Token is Governed, IERC1155, IERC165 {
     }
 
     /**
-     * Get the balance of multiple account/token pairs.
-     *
+     * @notice Get the balance of multiple account/token pairs. For a more complete picture of an account's
+     * portfolio, see the method `Portfolios.getTrades()`
      * @param accounts The addresses of the token holders
-     * @param ids     ID of the tokens
-     * @return         The account's balance of the token types requested (i.e. balance for each (owner, id) pair)
+     * @param ids ID of the tokens
+     * @return The account's balance of the token types requested (i.e. balance for each (owner, id) pair)
      */
     function balanceOfBatch(address[] calldata accounts, uint256[] calldata ids)
         external
@@ -196,17 +194,16 @@ contract ERC1155Token is Governed, IERC1155, IERC165 {
     }
 
     /**
-     * @notice Encodes a set of identifying characteristics of a swap into an uint256 id
-     *
+     * @notice Encodes a trade object into a uint256 id for ERC1155 compatibility
      * @param trade the trade object to encode
+     * @return a uint256 id that is representative of a matching fungible token
      */
     function encodeTradeId(Common.Trade calldata trade) external pure returns (uint256) {
         return Common.encodeTradeId(trade);
     }
 
     /**
-     * @notice Decodes an id into its subparts
-     *
+     * @notice Decodes an ERC1155 id into its attributes
      * @param id the trade id to decode
      * @return (instrumentGroupId, instrumentId, startBlock, duration, swapType)
      */
@@ -227,10 +224,21 @@ contract ERC1155Token is Governed, IERC1155, IERC165 {
         );
     }
 
+    /**
+     * @notice Sets approval for an operator to transfer tokens on the sender's behalf
+     * @param operator address of the operator
+     * @param approved true for complete appoval, false otherwise
+     */
     function setApprovalForAll(address operator, bool approved) external override {
         operators[msg.sender][operator] = approved;
     }
 
+    /**
+     * @notice Determines if the operator is approved for the owner's account
+     * @param owner address of the token holder
+     * @param operator address of the operator
+     * @return true for complete appoval, false otherwise
+     */
     function isApprovedForAll(address owner, address operator) public override view returns (bool) {
         return operators[owner][operator];
     }
