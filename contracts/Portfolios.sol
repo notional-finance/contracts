@@ -30,9 +30,28 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
         Common.Trade[] portfolioChanges;
     }
 
-    event SettleAccount(address operator, address account);
-    event SettleAccountBatch(address operator, address[] account);
+    /**
+     * @notice Emitted when an account has its portfolio settled, only emitted if the portfolio has changed
+     * @param account the account that had its porfolio modified
+     */
+    event SettleAccount(address account);
+
+    /**
+     * @notice Emitted when an account has its portfolio settled, all accounts are emitted in the batch
+     * @param accounts batch of accounts that *may* have been settled
+     */
+    event SettleAccountBatch(address[] accounts);
+
+    /**
+     * @notice Emitted when a new instrument group is listed
+     * @param instrumentGroupId id of the new instrument group
+     */
     event NewInstrumentGroup(uint8 indexed instrumentGroupId);
+
+    /**
+     * @notice Emitted when a new instrument group is updated
+     * @param instrumentGroupId id of the updated instrument group
+     */
     event UpdateInstrumentGroup(uint8 indexed instrumentGroupId);
 
     /**
@@ -426,9 +445,11 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
      * @param account the account referenced
      */
     function settleAccount(address account) public override {
-        _settleAccount(account);
+        bool didSettle = _settleAccount(account);
 
-        emit SettleAccount(msg.sender, account);
+        if (didSettle) {
+            emit SettleAccount(account);
+        }
     }
 
     /**
@@ -441,7 +462,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
             _settleAccount(accounts[i]);
         }
 
-        emit SettleAccountBatch(msg.sender, accounts);
+        emit SettleAccountBatch(accounts);
     }
 
     /**
@@ -449,8 +470,11 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
      * unauthenticated, anyone may settle the trades in any account. This is required for accounts that
      * have negative cash and counterparties need to settle against them.
      * @param account the account referenced
+     * @return true if the account had any trades that were settled, used to determine if we emit
+     * an event or not
      */
-    function _settleAccount(address account) internal {
+    function _settleAccount(address account) internal returns (bool) {
+        bool didSettle = false;
         Common.Trade[] storage portfolio = _accountTrades[account];
         uint32 blockNum = uint32(block.number);
 
@@ -492,11 +516,16 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
                 _removeTrade(portfolio, i);
                 // The portfolio has gotten smaller, so we need to go back to account for the removed trade.
                 i--;
+                didSettle = true;
             }
         }
 
         // We call the escrow contract to update the account's cash balances.
-        Escrow().portfolioSettleCash(account, settledCash);
+        if (didSettle) {
+            Escrow().portfolioSettleCash(account, settledCash);
+        }
+
+        return didSettle;
     }
 
     /***** Public Authenticated Methods *****/

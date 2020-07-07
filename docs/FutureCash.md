@@ -17,6 +17,9 @@ Marketplace for trading future cash tokens to create fixed rate entitlements or 
 - [`getActiveMaturities()`](#getActiveMaturities)
 
 ## Events
+- [`UpdateRateFactors(uint32 rateAnchor, uint16 rateScalar)`](#UpdateRateFactors)
+- [`UpdateMaxTradeSize(uint128 maxTradeSize)`](#UpdateMaxTradeSize)
+- [`UpdateFees(uint32 liquidityFee, uint128 transactionFee)`](#UpdateFees)
 - [`AddLiquidity(address account, uint32 maturity, uint128 tokens, uint128 futureCash, uint128 collateral)`](#AddLiquidity)
 - [`RemoveLiquidity(address account, uint32 maturity, uint128 tokens, uint128 futureCash, uint128 collateral)`](#RemoveLiquidity)
 - [`TakeCollateral(address account, uint32 maturity, uint128 futureCash, uint128 collateral, uint128 fee)`](#TakeCollateral)
@@ -28,7 +31,7 @@ Marketplace for trading future cash tokens to create fixed rate entitlements or 
 - [`setFee(uint32 liquidityFee, uint128 transactionFee)`](#setFee)
 
 # Methods
-### addLiquidity
+### `addLiquidity`
 > Adds some amount of collateral to the liquidity pool up to the corresponding amount defined by
 `maxFutureCash`. Mints liquidity tokens back to the sender.
 
@@ -43,7 +46,7 @@ Marketplace for trading future cash tokens to create fixed rate entitlements or 
 
 ***
 
-### removeLiquidity
+### `removeLiquidity`
 > Removes liquidity from the future cash market. The sender's liquidity tokens are burned and they
 are credited back with future cash and collateral at the prevailing exchange rate. This function
 only works when removing liquidity from an active market. For markets that are matured, the sender
@@ -58,7 +61,7 @@ must settle their liquidity token via `Portfolios().settleAccount()`.
 
 ***
 
-### getFutureCashToCollateral
+### `getFutureCashToCollateral`
 > Given the amount of future cash put into a market, how much collateral this would
 purchase at the current block.
 
@@ -72,7 +75,7 @@ purchase at the current block.
 
 ***
 
-### getFutureCashToCollateralBlock
+### `getFutureCashToCollateralBlock`
 > Given the amount of future cash put into a market, how much collateral this would
 purchase at the given block. Future cash exchange rates change as we go towards maturity.
 
@@ -88,7 +91,7 @@ purchase at the given block. Future cash exchange rates change as we go towards 
 
 ***
 
-### takeCollateral
+### `takeCollateral`
 > Receive collateral in exchange for a future cash obligation. Equivalent to borrowing
 collateral at a fixed rate.
 
@@ -107,7 +110,7 @@ at the prevailing exchange rate
 
 ***
 
-### getCollateralToFutureCash
+### `getCollateralToFutureCash`
 > Given the amount of future cash to purchase, returns the amount of collateral this would cost at the current
 block.
 
@@ -121,7 +124,7 @@ block.
 
 ***
 
-### getCollateralToFutureCashBlock
+### `getCollateralToFutureCashBlock`
 > Given the amount of future cash to purchase, returns the amount of collateral this would cost.
 
 #### Parameters:
@@ -136,7 +139,7 @@ block.
 
 ***
 
-### takeFutureCash
+### `takeFutureCash`
 > Deposit collateral in return for the right to receive cash at the specified maturity. Equivalent to lending
 your collateral at a fixed rate.
 
@@ -154,7 +157,7 @@ your collateral at a fixed rate.
 
 ***
 
-### getRate
+### `getRate`
 > Returns the current discount rate for the market. Will not return negative interest rates
 
 #### Parameters:
@@ -166,7 +169,7 @@ whether or not the maturity has passed
 
 ***
 
-### getMarketRates
+### `getMarketRates`
 > Gets the rates for all the active markets.
 
 #### Return Values:
@@ -174,7 +177,7 @@ whether or not the maturity has passed
 
 ***
 
-### getActiveMaturities
+### `getActiveMaturities`
 > Gets the maturities for all the active markets.
 
 #### Return Values:
@@ -184,29 +187,101 @@ whether or not the maturity has passed
 
 
 # Events
+### `UpdateRateFactors`
+> Emitted when rate factors are updated, will take effect at the next maturity
+
+#### Parameters:
+- `rateAnchor`: the new rate anchor
+
+- `rateScalar`: the new rate scalar
+
+***
+
+### `UpdateMaxTradeSize`
+> Emitted when max trade size is updated, takes effect immediately
+
+#### Parameters:
+- `maxTradeSize`: the new max trade size
+
+***
+
+### `UpdateFees`
+> Emitted when fees are updated, takes effect immediately
+
+#### Parameters:
+- `liquidityFee`: the new liquidity fee
+
+- `transactionFee`: the new transaction fee
+
+***
+
 ### `AddLiquidity`
-No description
+> Emitted when liquidity is added to a maturity
+
+#### Parameters:
+- `account`: the account that performed the trade
+
+- `maturity`: the maturity that this trade affects
+
+- `tokens`: amount of liquidity tokens issued
+
+- `futureCash`: amount of future cash tokens added
+
+- `collateral`: amount of collateral tokens added
 
 ***
 
 ### `RemoveLiquidity`
-No description
+> Emitted when liquidity is removed from a maturity
+
+#### Parameters:
+- `account`: the account that performed the trade
+
+- `maturity`: the maturity that this trade affects
+
+- `tokens`: amount of liquidity tokens burned
+
+- `futureCash`: amount of future cash tokens removed
+
+- `collateral`: amount of collateral tokens removed
 
 ***
 
 ### `TakeCollateral`
-No description
+> Emitted when collateral is taken from a maturity
+
+#### Parameters:
+- `account`: the account that performed the trade
+
+- `maturity`: the maturity that this trade affects
+
+- `futureCash`: amount of future cash tokens added
+
+- `collateral`: amount of collateral tokens removed
+
+- `fee`: amount of transaction fee charged
 
 ***
 
 ### `TakeFutureCash`
-No description
+> Emitted when future cash is taken from a maturity
+
+#### Parameters:
+- `account`: the account that performed the trade
+
+- `maturity`: the maturity that this trade affects
+
+- `futureCash`: amount of future cash tokens removed
+
+- `collateral`: amount of collateral tokens added
+
+- `fee`: amount of transaction fee charged
 
 ***
 
 
 # Governance Methods
-### setRateFactors
+### `setRateFactors`
 > Sets rate factors that will determine the liquidity curve
 
 #### Parameters:
@@ -215,14 +290,14 @@ No description
 - `rateScalar`: the sensitivity of the liquidity curve to changes
 
 ***
-### setMaxTradeSize
+### `setMaxTradeSize`
 > Sets the maximum amount that can be traded in a single trade
 
 #### Parameters:
 - `amount`: the max trade size
 
 ***
-### setFee
+### `setFee`
 > Sets fee parameters for the market
 
 #### Parameters:

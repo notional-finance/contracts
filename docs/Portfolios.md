@@ -15,8 +15,8 @@ Manages account portfolios which includes all future cash positions and liquidit
 - [`settleAccountBatch(address[] accounts)`](#settleAccountBatch)
 
 ## Events
-- [`SettleAccount(address operator, address account)`](#SettleAccount)
-- [`SettleAccountBatch(address operator, address[] account)`](#SettleAccountBatch)
+- [`SettleAccount(address account)`](#SettleAccount)
+- [`SettleAccountBatch(address[] accounts)`](#SettleAccountBatch)
 - [`NewInstrumentGroup(uint8 instrumentGroupId)`](#NewInstrumentGroup)
 - [`UpdateInstrumentGroup(uint8 instrumentGroupId)`](#UpdateInstrumentGroup)
 
@@ -26,7 +26,7 @@ Manages account portfolios which includes all future cash positions and liquidit
 - [`updateInstrumentGroup(uint8 instrumentGroupId, uint32 numPeriods, uint32 periodSize, uint32 precision, uint16 currency, address futureCashMarket, address riskFormula)`](#updateInstrumentGroup)
 
 # Methods
-### getTrades
+### `getTrades`
 > Returns the trades of an account
 
 #### Parameters:
@@ -37,7 +37,7 @@ Manages account portfolios which includes all future cash positions and liquidit
 
 ***
 
-### getTrade
+### `getTrade`
 > Returns a particular trade via index
 
 #### Parameters:
@@ -50,7 +50,7 @@ Manages account portfolios which includes all future cash positions and liquidit
 
 ***
 
-### getInstrumentGroup
+### `getInstrumentGroup`
 > Returns a particular instrument group
 
 #### Parameters:
@@ -61,7 +61,7 @@ Manages account portfolios which includes all future cash positions and liquidit
 
 ***
 
-### getInstrumentGroups
+### `getInstrumentGroups`
 > Returns a batch of instrument groups
 
 #### Parameters:
@@ -72,7 +72,7 @@ Manages account portfolios which includes all future cash positions and liquidit
 
 ***
 
-### searchAccountTrade
+### `searchAccountTrade`
 > Public method for searching for a trade in an account.
 
 #### Parameters:
@@ -93,7 +93,7 @@ Manages account portfolios which includes all future cash positions and liquidit
 
 ***
 
-### freeCollateral
+### `freeCollateral`
 > Stateful version of free collateral, first settles all trades in the account before returning
 the free collateral parameters. Generally, external developers should not need to call this function. It is used
 internally to both check free collateral and ensure that the portfolio does not have any matured trades.
@@ -107,7 +107,7 @@ Call `freeCollateralView` if you require a view function.
 
 ***
 
-### freeCollateralView
+### `freeCollateralView`
 > Returns the free collateral balance for an account as a view functon.
 
 #### Parameters:
@@ -118,7 +118,7 @@ Call `freeCollateralView` if you require a view function.
 
 ***
 
-### settleAccount
+### `settleAccount`
 > Settles all matured cash trades and liquidity tokens in a user's portfolio. This method is
 unauthenticated, anyone may settle the trades in any account. This is required for accounts that
 have negative cash and counterparties need to settle against them. Generally, external developers
@@ -130,7 +130,7 @@ check, cash settlement, and liquidation.
 
 ***
 
-### settleAccountBatch
+### `settleAccountBatch`
 > Settle a batch of accounts. See note for `settleAccount`, external developers should not need
 to call this function.
 
@@ -142,35 +142,47 @@ to call this function.
 
 # Events
 ### `SettleAccount`
-No description
+> Emitted when an account has its portfolio settled, only emitted if the portfolio has changed
+
+#### Parameters:
+- `account`: the account that had its porfolio modified
 
 ***
 
 ### `SettleAccountBatch`
-No description
+> Emitted when an account has its portfolio settled, all accounts are emitted in the batch
+
+#### Parameters:
+- `accounts`: batch of accounts that *may* have been settled
 
 ***
 
 ### `NewInstrumentGroup`
-No description
+> Emitted when a new instrument group is listed
+
+#### Parameters:
+- `instrumentGroupId`: id of the new instrument group
 
 ***
 
 ### `UpdateInstrumentGroup`
-No description
+> Emitted when a new instrument group is updated
+
+#### Parameters:
+- `instrumentGroupId`: id of the updated instrument group
 
 ***
 
 
 # Governance Methods
-### setMaxTrades
+### `setMaxTrades`
 > Set the max trades that a portfolio can hold
 
 #### Parameters:
 - `maxTrades`: new max trade number
 
 ***
-### createInstrumentGroup
+### `createInstrumentGroup`
 > An instrument group defines a collection of similar instruments where the risk ladders can be netted
 against each other. The identifier is only 1 byte so we can only have 255 instrument groups, 0 is unused.
 
@@ -186,7 +198,7 @@ against each other. The identifier is only 1 byte so we can only have 255 instru
 - `futureCashMarket`: the rate oracle that defines the discount rate
 
 ***
-### updateInstrumentGroup
+### `updateInstrumentGroup`
 > Updates instrument groups. Be very careful when calling this function! When changing periods and
 period sizes the markets must be updated as well.
 

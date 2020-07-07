@@ -22,6 +22,9 @@ async function main() {
     let owner: Wallet;
 
     switch (chainId) {
+        // Parity Local Dev Mode
+        case "17":
+        // Local Ganache
         case "1337":
             // This is the local ganache deployment
             log("Deploying to local ganache")

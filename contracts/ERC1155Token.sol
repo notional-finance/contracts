@@ -231,6 +231,7 @@ contract ERC1155Token is Governed, IERC1155, IERC165 {
      */
     function setApprovalForAll(address operator, bool approved) external override {
         operators[msg.sender][operator] = approved;
+        emit ApprovalForAll(msg.sender, operator, approved);
     }
 
     /**

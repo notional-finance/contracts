@@ -11,7 +11,7 @@ Calculates the currency requirements for a portfolio.
 - [`setHaircut(uint128 haircut)`](#setHaircut)
 
 # Methods
-### getRequirement
+### `getRequirement`
 > Given a portfolio of trades, returns a set of requirements in every currency represented.
 
 #### Parameters:
@@ -23,10 +23,9 @@ Calculates the currency requirements for a portfolio.
 ***
 
 
-# Events
 
 # Governance Methods
-### setHaircut
+### `setHaircut`
 > Sets the haircut amount for the portfolio
 
 #### Parameters:

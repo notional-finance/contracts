@@ -1,0 +1,11 @@
+{
+  "chainId": 42,
+  "networkName": "kovan",
+  "escrow": "0x275c9c3A90947EECFaf6975a3ac3440B5DedB050",
+  "portfolios": "0xba7Bc0CED37f03dDA26C66566e3fb5B5D3E2d13f",
+  "risk": "0xc4461eb7E4420eC8b1B3B353Ec5133286042161C",
+  "proxyAdmin": "0x8b4b462ef31B7F283aE0763724c2F254d0A2DAB2",
+  "directory": "0xe05881F3E2e79F349C8f51959e85B8093080b32d",
+  "erc1155": "0x02c22dC8865Bdd31FE7d055fa456B82779BDaAb6",
+  "startBlock": 19367522
+}

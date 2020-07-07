@@ -39,15 +39,77 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         currencyIdToAddress[0] = G_ETH_CURRENCY;
         addressToCurrencyId[G_ETH_CURRENCY] = 0;
         depositCurrencies.push(0);
+        emit NewDepositCurrency(G_ETH_CURRENCY);
     }
 
     /********** Events *******************************/
-    event NewTradableCurrency(address indexed token, uint16 currencyId);
-    event NewDepositCurrency(address indexed token, uint16 currencyId);
-    event UpdateExchangeRate(address indexed baseCurrency, address indexed quoteCurrency);
-    event Deposit(address indexed currency, address account, uint256 value);
-    event Withdraw(address indexed currency, address account, uint256 value);
-    event Liquidate(address indexed currency, address liquidator, address account);
+
+    /**
+     * @notice A new tradable currency
+     * @param token address of the tradable token
+     */
+    event NewTradableCurrency(address indexed token);
+
+    /**
+     * @notice A new deposit currency
+     * @param token address of the deposit token
+     */
+    event NewDepositCurrency(address indexed token);
+
+    /**
+     * @notice A new exchange rate between two currencies
+     * @param baseToken address of the base token
+     * @param quoteToken address of the quote token
+     */
+    event UpdateExchangeRate(address indexed baseToken, address indexed quoteToken);
+
+    /**
+     * @notice Notice of a deposit made to an account
+     * @param currency currency id of the deposit
+     * @param account address of the account where the deposit was made
+     * @param value amount of tokens deposited
+     */
+    event Deposit(uint16 indexed currency, address account, uint256 value);
+
+    /**
+     * @notice Notice of a withdraw from an account
+     * @param currency currency id of the withdraw
+     * @param account address of the account where the withdraw was made
+     * @param value amount of tokens withdrawn
+     */
+    event Withdraw(uint16 indexed currency, address account, uint256 value);
+
+    /**
+     * @notice Notice of a successful liquidation. `msg.sender` will be the liquidator.
+     * @param currency currency id that was liquidated
+     * @param account the account that was liquidated
+     */
+    event Liquidate(uint16 indexed currency, address account);
+
+    /**
+     * @notice Notice of a successful batch liquidation. `msg.sender` will be the liquidator.
+     * @param currency currency id that was liquidated
+     * @param accounts the accounts that were liquidated
+     */
+    event LiquidateBatch(uint16 indexed currency, address[] accounts);
+
+    /**
+     * @notice Notice of a successful cash settlement. `msg.sender` will be the settler.
+     * @param currency currency id that was settled
+     * @param payer the account that paid in the settlement
+     * @param receiver the account that received in the settlement
+     * @param settledAmount the amount settled between the parties
+     */
+    event SettleCash(uint16 currency, address indexed payer, address indexed receiver, uint128 settledAmount);
+
+    /**
+     * @notice Notice of a successful batch cash settlement. `msg.sender` will be the settler.
+     * @param currency currency id that was settled
+     * @param payers the accounts that paid in the settlement
+     * @param receivers the accounts that received in the settlement
+     * @param settledAmounts the amounts settled between the parties
+     */
+    event SettleCashBatch(uint16 currency, address[] payers, address[] receivers, uint128[] settledAmounts);
     /********** Events *******************************/
 
     /********** Governance Settings ******************/
@@ -79,7 +141,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
      */
     function listTradableCurrency(address token) external onlyOwner {
         _listCurrency(token);
-        emit NewTradableCurrency(token, maxCurrencyId);
+        emit NewTradableCurrency(token);
     }
 
     /**
@@ -91,7 +153,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         _listCurrency(token);
         depositCurrencies.push(maxCurrencyId);
 
-        emit NewDepositCurrency(token, maxCurrencyId);
+        emit NewDepositCurrency(token);
     }
 
     function _listCurrency(address token) internal {
@@ -257,7 +319,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         require(msg.value <= Common.MAX_UINT_128, $$(ErrorCode(OVER_MAX_ETH_BALANCE)));
         currencyBalances[G_ETH_CURRENCY][msg.sender] = currencyBalances[G_ETH_CURRENCY][msg.sender].add(uint128(msg.value));
 
-        emit Deposit(G_ETH_CURRENCY, msg.sender, msg.value);
+        emit Deposit(0, msg.sender, msg.value);
     }
 
     /**
@@ -277,7 +339,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         (bool success, ) = msg.sender.call.value(amount)("");
         require(success, $$(ErrorCode(TRANSFER_FAILED)));
 
-        emit Withdraw(G_ETH_CURRENCY, msg.sender, amount);
+        emit Withdraw(0, msg.sender, amount);
     }
 
     /**
@@ -293,7 +355,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         currencyBalances[token][to] = currencyBalances[token][to].add(amount);
         IERC20(token).transferFrom(to, address(this), amount);
 
-        emit Deposit(token, msg.sender, amount);
+        emit Deposit(currencyGroupId, msg.sender, amount);
     }
 
     /**
@@ -314,7 +376,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         require(currencyGroupId != 0, $$(ErrorCode(INVALID_CURRENCY)));
         currencyBalances[msg.sender][from] = currencyBalances[msg.sender][from].add(amount);
 
-        emit Deposit(msg.sender, from, amount);
+        emit Deposit(currencyGroupId, from, amount);
     }
 
     /**
@@ -333,8 +395,9 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         // We're checking this after the withdraw has been done on currency balances.
         require(_freeCollateral(to) >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL)));
         IERC20(token).transfer(to, amount);
+        uint16 currencyGroupId = addressToCurrencyId[token];
 
-        emit Withdraw(token, to, amount);
+        emit Withdraw(currencyGroupId, to, amount);
     }
 
     /********** Withdraw / Deposit Methods ***********/
@@ -470,10 +533,13 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         Portfolios().settleAccountBatch(receivers);
         require(isDepositCurrency(depositCurrency), $$(ErrorCode(INVALID_CURRENCY)));
         address depositToken = currencyIdToAddress[depositCurrency];
+        uint128[] memory settledAmounts = new uint128[](values.length);
 
         for (uint256 i; i < payers.length; i++) {
-            _settleCashBalance(currency, depositToken, payers[i], receivers[i], values[i]);
+            settledAmounts[i] = _settleCashBalance(currency, depositToken, payers[i], receivers[i], values[i]);
         }
+
+        emit SettleCashBatch(currency, payers, receivers, settledAmounts);
     }
 
     /**
@@ -501,7 +567,9 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         require(isDepositCurrency(depositCurrency), $$(ErrorCode(INVALID_CURRENCY)));
         address depositToken = currencyIdToAddress[depositCurrency];
 
-        _settleCashBalance(currency, depositToken, payer, receiver, value);
+        uint128 settledAmount = _settleCashBalance(currency, depositToken, payer, receiver, value);
+
+        emit SettleCash(currency, payer, receiver, settledAmount);
     }
 
     /**
@@ -518,10 +586,10 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         address payer,
         address receiver,
         uint128 value
-    ) internal {
+    ) internal returns (uint128) {
         require(payer != receiver, $$(ErrorCode(COUNTERPARTY_CANNOT_BE_SELF)));
         require(isValidCurrency(currency), $$(ErrorCode(INVALID_CURRENCY)));
-        if (value == 0) return;
+        if (value == 0) return 0;
 
         // This cash account must have enough negative cash to settle against
         require(cashBalances[currency][payer] <= int256(value).neg(), $$(ErrorCode(INCORRECT_CASH_BALANCE)));
@@ -578,6 +646,8 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
 
         // Transfer the required amount to the receiver
         currencyBalances[localCurrencyToken][receiver] = currencyBalances[localCurrencyToken][receiver].add(settledAmount);
+
+        return settledAmount;
     }
 
     /**
@@ -593,6 +663,8 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         for (uint256 i; i < accounts.length; i++) {
             _liquidate(accounts[i], currency, depositToken);
         }
+
+        emit LiquidateBatch(currency, accounts);
     }
 
     /**
@@ -606,6 +678,8 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         address depositToken = currencyIdToAddress[depositCurrency];
 
         _liquidate(account, currency, depositToken);
+
+        emit Liquidate(currency, account);
     }
 
     function _liquidate(address account, uint16 currency, address depositToken) internal {
@@ -655,8 +729,6 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         );
 
         currencyBalances[localCurrencyToken][account] = currencyBalances[localCurrencyToken][account].add(unspentShortfall);
-
-        emit Liquidate(localCurrencyToken, msg.sender, account);
     }
 
     /********** Settle Cash / Liquidation *************/
@@ -899,7 +971,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         return uint256(rate);
     }
 
-    function _hasCollateral(address account) internal returns (bool) {
+    function _hasCollateral(address account) internal view returns (bool) {
         for(uint256 i; i < depositCurrencies.length; i++) {
             if (currencyBalances[currencyIdToAddress[depositCurrencies[i]]][account] > 0) {
                 return true;
@@ -909,7 +981,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         return false;
     }
 
-    function _isInsolvent(address account) internal returns (bool) {
+    function _isInsolvent(address account) internal view returns (bool) {
         if (_hasCollateral(account)) return false;
 
         Common.Trade[] memory portfolio = Portfolios().getTrades(account);

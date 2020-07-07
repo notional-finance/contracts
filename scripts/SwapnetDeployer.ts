@@ -52,8 +52,24 @@ export class SwapnetDeployer {
         public provider: Provider,
         public proxyAdmin: ProxyAdmin,
         public directory: Directory,
-        public erc1155: ERC1155Token
+        public erc1155: ERC1155Token,
+        public startBlock: number
     ) {}
+
+    public coreContractToContract = (contract: CoreContracts) => {
+        switch(contract) {
+            case CoreContracts.ERC1155Token:
+                return this.erc1155;
+            case CoreContracts.Escrow:
+                return this.escrow;
+            case CoreContracts.Portfolios:
+                return this.portfolios;
+            case CoreContracts.RiskFramework:
+                return this.risk;
+            default:
+                throw new Error(`Unknown core contract ${contract}`);
+        }
+    }
 
     private static deployContract = async (owner: Wallet, artifact: any, args: any[]) => {
         let gasLimit;
@@ -68,7 +84,7 @@ export class SwapnetDeployer {
         log(`Deploying ${artifact.contractName}...`);
         const receipt = await (await owner.sendTransaction(txn)).wait();
         const contract = new Contract(receipt.contractAddress as string, artifact.abi, owner);
-        log(`Successfully deployed ${artifact.contractName}...`);
+        log(`Successfully deployed ${artifact.contractName} at ${contract.address}...`);
 
         return contract;
     };
@@ -116,9 +132,9 @@ export class SwapnetDeployer {
     private static loadArtifact = (contract: string): any => {
         let buildDir;
         if (process.env.COVERAGE == "true") {
-            buildDir = ".coverage_artifacts"
+            buildDir = path.join(__dirname, "../.coverage_artifacts");
         } else {
-            buildDir = "build"
+            buildDir = path.join(__dirname, "../build");
         }
         return JSON.parse(readFileSync(path.join(buildDir, `${contract}.json`), "utf8"));
     }
@@ -130,6 +146,7 @@ export class SwapnetDeployer {
         settlementDiscount = WeiPerEther,
         portfolioHaircut = WeiPerEther
     ) => {
+        const startBlock = await owner.provider.getBlockNumber();
         const proxyAdmin = await SwapnetDeployer.deployContract(
             owner,
             SwapnetDeployer.loadArtifact("ProxyAdmin"),
@@ -201,7 +218,7 @@ export class SwapnetDeployer {
         log("Setting collateral currencies")
         await SwapnetDeployer.txMined(risk.setHaircut(portfolioHaircut));
 
-        return new SwapnetDeployer(owner, escrow, portfolios, risk, owner.provider, proxyAdmin, directory, erc1155);
+        return new SwapnetDeployer(owner, escrow, portfolios, risk, owner.provider, proxyAdmin, directory, erc1155, startBlock);
     };
 
     public deployMockCurrency = async (
@@ -219,6 +236,7 @@ export class SwapnetDeployer {
             []
         )) as ERC20;
 
+        log("Listing currency on Escrow")
         if (isTradable) {
             await SwapnetDeployer.txMined(this.escrow.listTradableCurrency(erc20.address));
         } else {
@@ -334,10 +352,20 @@ export class SwapnetDeployer {
         return futureCash;
     }
 
+    public upgradeContract = async (name: CoreContracts, artifact: any) => {
+        const contract = this.coreContractToContract(name)
+        const proxy = new ethers.Contract(contract.address, AdminUpgradeabilityProxyArtifact.abi, this.owner);
+
+        // Deploy the upgraded logic contract
+        log("Deploying new logic contract");
+        const upgrade = await SwapnetDeployer.deployContract(this.owner, artifact, []);
+        log(`Deployed new logic contract at ${upgrade.address}`);
+        await SwapnetDeployer.txMined(this.proxyAdmin.upgrade(proxy.address, upgrade.address));
+        log(`Proxy Admin upgraded ${name.toString()}`);
+    }
 
     public static restoreFromFile = async (path: string, owner: Wallet) => {
-        const network = await owner.provider.getNetwork();
-        const addresses = JSON.parse(readFileSync(path, "utf8"))[network.chainId];
+        const addresses = JSON.parse(readFileSync(path, "utf8"));
 
         const escrow = new Contract(addresses.escrow, EscrowArtifact.abi, owner) as Escrow;
         const portfolios = new Contract(addresses.portfolios, PortfoliosArtifact.abi, owner) as Portfolios;
@@ -354,7 +382,8 @@ export class SwapnetDeployer {
             owner.provider,
             proxyAdmin,
             directory,
-            erc1155
+            erc1155,
+            addresses.startBlock
         );
     };
 
@@ -368,7 +397,8 @@ export class SwapnetDeployer {
             risk: this.risk.address,
             proxyAdmin: this.proxyAdmin.address,
             directory: this.directory.address,
-            erc1155: this.erc1155.address
+            erc1155: this.erc1155.address,
+            startBlock: this.startBlock
         }
         writeFileSync(path, JSON.stringify(addresses, null, 2));
     }

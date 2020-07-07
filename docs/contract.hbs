@@ -6,42 +6,32 @@
 {{#if ownFunctions}}
 ## Methods
 {{#ownFunctions}}
-{{#if (and (ne natspec.devdoc "skip
-") (ne natspec.devdoc "governance
-"))}}
-{{#if (or (eq visibility "public") (eq visibility "external"))}}
+{{#if (isUserMethod visibility natspec) }}
 - [`{{name}}({{args}})`](#{{name}})
-{{/if}}
 {{/if}}
 {{/ownFunctions}}
 {{/if}}
 
-{{#if ownEvents}}
+{{#if (hasEvents ownEvents)}}
 ## Events
 {{#ownEvents}}
 - [`{{name}}({{args}})`](#{{name}})
 {{/ownEvents}}
 {{/if}}
 
-{{#if ownFunctions}}
+{{#if (hasGovernance ownFunctions)}}
 ## Governance Methods
 {{#ownFunctions}}
-{{#if (or (eq visibility "public") (eq visibility "external"))}}
-{{#if (eq natspec.devdoc "governance
-")}}
+{{#if (isGovernance visibility natspec) }}
 - [`{{name}}({{args}})`](#{{name}})
-{{/if}}
 {{/if}}
 {{/ownFunctions}}
 {{/if}}
 
 # Methods
 {{#ownFunctions}}
-{{#if (or (eq visibility "public") (eq visibility "external"))}}
-{{#if (and (ne natspec.devdoc "skip
-") (ne natspec.devdoc "governance
-"))}}
-### {{name}}
+{{#if (isUserMethod visibility natspec) }}
+### `{{name}}`
 > {{#if natspec.userdoc}}{{natspec.userdoc}}{{else}}No description{{/if}}
 {{#if natspec.params}}
 #### Parameters:
@@ -59,13 +49,13 @@
 ***
 
 {{/if}}
-{{/if}}
 {{/ownFunctions}}
 
+{{#if (hasEvents ownEvents)}}
 # Events
 {{#ownEvents}}
 ### `{{name}}`
-{{#if natspec.devdoc}}{{natspec.devdoc}}{{else}}No description{{/if}}
+> {{#if natspec.userdoc}}{{natspec.userdoc}}{{else}}No description{{/if}}
 {{#if natspec.params}}
 #### Parameters:
 {{#natspec.params}}
@@ -76,13 +66,13 @@
 ***
 
 {{/ownEvents}}
+{{/if}}
 
+{{#if (hasGovernance ownFunctions)}}
 # Governance Methods
 {{#ownFunctions}}
-{{#if (or (eq visibility "public") (eq visibility "external"))}}
-{{#if (eq natspec.devdoc "governance
-")}}
-### {{name}}
+{{#if (isGovernance visibility natspec) }}
+### `{{name}}`
 > {{#if natspec.userdoc}}{{natspec.userdoc}}{{else}}No description{{/if}}
 {{#if natspec.params}}
 #### Parameters:
@@ -99,5 +89,5 @@
 
 ***
 {{/if}}
-{{/if}}
 {{/ownFunctions}}
+{{/if}}

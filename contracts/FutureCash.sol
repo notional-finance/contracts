@@ -131,6 +131,8 @@ contract FutureCash is Governed {
         require(rateScalar > 0 && rateAnchor > 0, $$(ErrorCode(INVALID_RATE_FACTORS)));
         G_RATE_SCALAR = rateScalar;
         G_RATE_ANCHOR = rateAnchor;
+
+        emit UpdateRateFactors(rateAnchor, rateScalar);
     }
 
     /**
@@ -140,6 +142,8 @@ contract FutureCash is Governed {
      */
     function setMaxTradeSize(uint128 amount) external onlyOwner {
         G_MAX_TRADE_SIZE = amount;
+
+        emit UpdateMaxTradeSize(amount);
     }
 
     /**
@@ -151,13 +155,70 @@ contract FutureCash is Governed {
     function setFee(uint32 liquidityFee, uint128 transactionFee) external onlyOwner {
         G_LIQUIDITY_FEE = liquidityFee;
         G_TRANSACTION_FEE = transactionFee;
+
+        emit UpdateFees(liquidityFee, transactionFee);
     }
     /********** Governance Parameters *********************/
 
     /********** Events ************************************/
+    /**
+     * @notice Emitted when rate factors are updated, will take effect at the next maturity
+     * @param rateAnchor the new rate anchor
+     * @param rateScalar the new rate scalar
+     */
+    event UpdateRateFactors(uint32 rateAnchor, uint16 rateScalar);
+
+    /**
+     * @notice Emitted when max trade size is updated, takes effect immediately
+     * @param maxTradeSize the new max trade size
+     */
+    event UpdateMaxTradeSize(uint128 maxTradeSize);
+
+    /**
+     * @notice Emitted when fees are updated, takes effect immediately
+     * @param liquidityFee the new liquidity fee
+     * @param transactionFee the new transaction fee
+     */
+    event UpdateFees(uint32 liquidityFee, uint128 transactionFee);
+
+    /**
+     * @notice Emitted when liquidity is added to a maturity
+     * @param account the account that performed the trade
+     * @param maturity the maturity that this trade affects
+     * @param tokens amount of liquidity tokens issued
+     * @param futureCash amount of future cash tokens added
+     * @param collateral amount of collateral tokens added
+     */
     event AddLiquidity(address indexed account, uint32 maturity, uint128 tokens, uint128 futureCash, uint128 collateral);
+
+    /**
+     * @notice Emitted when liquidity is removed from a maturity
+     * @param account the account that performed the trade
+     * @param maturity the maturity that this trade affects
+     * @param tokens amount of liquidity tokens burned
+     * @param futureCash amount of future cash tokens removed
+     * @param collateral amount of collateral tokens removed
+     */
     event RemoveLiquidity(address indexed account, uint32 maturity, uint128 tokens, uint128 futureCash, uint128 collateral);
+
+    /**
+     * @notice Emitted when collateral is taken from a maturity
+     * @param account the account that performed the trade
+     * @param maturity the maturity that this trade affects
+     * @param futureCash amount of future cash tokens added
+     * @param collateral amount of collateral tokens removed
+     * @param fee amount of transaction fee charged
+     */
     event TakeCollateral(address indexed account, uint32 maturity, uint128 futureCash, uint128 collateral, uint128 fee);
+
+    /**
+     * @notice Emitted when future cash is taken from a maturity
+     * @param account the account that performed the trade
+     * @param maturity the maturity that this trade affects
+     * @param futureCash amount of future cash tokens removed
+     * @param collateral amount of collateral tokens added
+     * @param fee amount of transaction fee charged
+     */
     event TakeFutureCash(address indexed account, uint32 maturity, uint128 futureCash, uint128 collateral, uint128 fee);
     /********** Events ************************************/
 

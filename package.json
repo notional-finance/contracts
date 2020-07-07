@@ -6,13 +6,11 @@
   "scripts": {
     "compile": "solium -d contracts && npx buidler compile",
     "build": "npm run compile && npx buidler typechain",
-    "sandbox:build": "npm run sandbox:down && cd sandbox && ./rebuild.sh",
-    "sandbox:down": "docker-compose -f sandbox/docker-compose.yml down",
-    "sandbox:up": "npm run sandbox:down && cd sandbox && ./start.sh",
+    "sandbox:build": "cd sandbox && ./rebuild.sh",
     "clean": "rm -Rf ./typechain && rm -Rf ./build",
     "test": "npx buidler test",
-    "test:coverage": "export COVERAGE=true; npm run build && npx buidler coverage --network coverage",
-    "docs:build": "yarn run build && yarn run solidity-docgen -e cache/solpp-generated-contracts/lib,cache/solpp-generated-contracts/interface,cache/solpp-generated-contracts/upgradeable,cache/solpp-generated-contracts/storage,cache/solpp-generated-contracts/utils -i cache/solpp-generated-contracts -o docs -t docs",
+    "test:coverage": "export COVERAGE=true; npx buidler coverage --network coverage",
+    "docs:build": "yarn run build && yarn run solidity-docgen -e cache/solpp-generated-contracts/lib,cache/solpp-generated-contracts/interface,cache/solpp-generated-contracts/upgradeable,cache/solpp-generated-contracts/storage,cache/solpp-generated-contracts/utils -i cache/solpp-generated-contracts -o docs -t docs -H docs/helpers.js",
     "deploy:rinkeby": "DEBUG=* DOTENV_CONFIG_PATH=.env.rinkeby ts-node scripts/deploy.ts",
     "sloc": "rename 's/\\.sol/\\.c/' contracts/*.sol && scc contracts/* --wide --by-file && rename 's/\\.c/\\.sol/' contracts/*.c"
   },
@@ -46,7 +44,7 @@
     "prettier-plugin-solidity": "^1.0.0-alpha.38",
     "pretty-quick": "^2.0.1",
     "solidity-coverage": "^0.7.2",
-    "solidity-docgen": "^0.4.1",
+    "solidity-docgen": "^0.5.4",
     "ts-generator": "0.0.8",
     "ts-node": "^8",
     "typechain": "^1.0.3",
@@ -55,8 +53,7 @@
     "typechain-target-web3-v1": "^1.0.4"
   },
   "dependencies": {
-    "debug": "^4.1.1",
-    "solidity-docgen": "^0.5.3"
+    "debug": "^4.1.1"
   },
   "private": true,
   "husky": {

@@ -17,10 +17,9 @@ same id. `CASH_PAYER` tokens are not transferrable because they have negative va
 - [`isApprovedForAll(address owner, address operator)`](#isApprovedForAll)
 
 
-## Governance Methods
 
 # Methods
-### safeTransferFrom
+### `safeTransferFrom`
 > Transfers tokens between from and to addresses.
 
 #### Parameters:
@@ -37,7 +36,7 @@ to the ERC1155TokenReceiver.
 
 ***
 
-### safeBatchTransferFrom
+### `safeBatchTransferFrom`
 > Transfers tokens between from and to addresses in batch.
 
 #### Parameters:
@@ -54,7 +53,7 @@ to the ERC1155TokenReceiver.
 
 ***
 
-### balanceOf
+### `balanceOf`
 > Get the balance of an account's tokens. For a more complete picture of an account's
 portfolio, see the method `Portfolios.getTrades()`
 
@@ -68,7 +67,7 @@ portfolio, see the method `Portfolios.getTrades()`
 
 ***
 
-### balanceOfBatch
+### `balanceOfBatch`
 > Get the balance of multiple account/token pairs. For a more complete picture of an account's
 portfolio, see the method `Portfolios.getTrades()`
 
@@ -82,7 +81,7 @@ portfolio, see the method `Portfolios.getTrades()`
 
 ***
 
-### encodeTradeId
+### `encodeTradeId`
 > Encodes a trade object into a uint256 id for ERC1155 compatibility
 
 #### Parameters:
@@ -93,7 +92,7 @@ portfolio, see the method `Portfolios.getTrades()`
 
 ***
 
-### decodeTradeId
+### `decodeTradeId`
 > Decodes an ERC1155 id into its attributes
 
 #### Parameters:
@@ -102,7 +101,7 @@ portfolio, see the method `Portfolios.getTrades()`
 
 ***
 
-### setApprovalForAll
+### `setApprovalForAll`
 > Sets approval for an operator to transfer tokens on the sender's behalf
 
 #### Parameters:
@@ -112,7 +111,7 @@ portfolio, see the method `Portfolios.getTrades()`
 
 ***
 
-### isApprovedForAll
+### `isApprovedForAll`
 > Determines if the operator is approved for the owner's account
 
 #### Parameters:
@@ -126,6 +125,4 @@ portfolio, see the method `Portfolios.getTrades()`
 ***
 
 
-# Events
 
-# Governance Methods
