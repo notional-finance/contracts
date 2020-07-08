@@ -20,6 +20,7 @@ Calculates the currency requirements for a portfolio.
 #### Return Values:
 - a set of requirements in every currency represented by the portfolio
 
+
 ***
 
 

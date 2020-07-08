@@ -24,6 +24,8 @@ contract FutureCash is Governed {
 
     // This is used in _tradeCalculation to shift the ln calculation
     int128 internal constant PRECISION_64x64 = 0x3b9aca000000000000000000;
+    uint256 internal constant MAX64 = 0x7FFFFFFFFFFFFFFF;
+    int64 internal constant LN_1E18 = 0x09a667e259;
 
     /**
      * @dev skip
@@ -227,6 +229,10 @@ contract FutureCash is Governed {
     /**
      * @notice Adds some amount of collateral to the liquidity pool up to the corresponding amount defined by
      * `maxFutureCash`. Mints liquidity tokens back to the sender.
+     * @dev - TRADE_FAILED_MAX_BLOCK: maturity specified is not yet active
+     * - MARKET_INACTIVE: maturity is not a valid one
+     * - OVER_MAX_FUTURE_CASH: depositing collateral would require more future cash than specified
+     * - INSUFFICIENT_BALANCE: insufficient collateral to deposit into market
      * @param maturity the period to add liquidity to
      * @param minCollateral the amount of collateral to add to the pool
      * @param maxFutureCash the maximum amount of future cash to add to the pool
@@ -320,6 +326,9 @@ contract FutureCash is Governed {
      * are credited back with future cash and collateral at the prevailing exchange rate. This function
      * only works when removing liquidity from an active market. For markets that are matured, the sender
      * must settle their liquidity token via `Portfolios().settleAccount()`.
+     * @dev - TRADE_FAILED_MAX_BLOCK: maturity specified is not yet active
+     * - MARKET_INACTIVE: maturity is not a valid one
+     * - INSUFFICIENT_BALANCE: account does not have sufficient tokens to remove
      * @param maturity the period to remove liquidity from
      * @param amount the amount of liquidity tokens to burn
      * @param maxBlock after this block the trade will fail
@@ -460,6 +469,12 @@ contract FutureCash is Governed {
     /**
      * @notice Receive collateral in exchange for a future cash obligation. Equivalent to borrowing
      * collateral at a fixed rate.
+     * @dev - TRADE_FAILED_MAX_BLOCK: maturity specified is not yet active
+     * - MARKET_INACTIVE: maturity is not a valid one
+     * - TRADE_FAILED_TOO_LARGE: trade is larger than allowed by the governance settings
+     * - TRADE_FAILED_LACK_OF_LIQUIDITY: there is insufficient liquidity in this maturity to handle the trade
+     * - TRADE_FAILED_SLIPPAGE: trade is greater than the max implied rate set
+     * - INSUFFICIENT_FREE_COLLATERAL: insufficient free collateral to take on the debt
      * @param maturity the maturity block of the future cash being exchange for current cash
      * @param futureCashAmount the amount of future cash to deposit, will convert this amount to current cash
      *  at the prevailing exchange rate
@@ -545,6 +560,12 @@ contract FutureCash is Governed {
     /**
      * @notice Deposit collateral in return for the right to receive cash at the specified maturity. Equivalent to lending
      * your collateral at a fixed rate.
+     * @dev - TRADE_FAILED_MAX_BLOCK: maturity specified is not yet active
+     * - MARKET_INACTIVE: maturity is not a valid one
+     * - TRADE_FAILED_TOO_LARGE: trade is larger than allowed by the governance settings
+     * - TRADE_FAILED_LACK_OF_LIQUIDITY: there is insufficient liquidity in this maturity to handle the trade
+     * - TRADE_FAILED_SLIPPAGE: trade is lower than the min implied rate set
+     * - INSUFFICIENT_BALANCE: not enough collateral to complete this trade
      * @param maturity the period to receive future cash in
      * @param futureCashAmount the amount of future cash to purchase
      * @param maxBlock after this block the trade will not settle
@@ -950,13 +971,13 @@ contract FutureCash is Governed {
         int64 rateScalar = int64(uint256(market.rateScalar).mul(G_PERIOD_SIZE).div(blocksToMaturity));
 
         // (1 / scalar) * ln(proportion') + anchor_rate
-        int64 rate = (((ABDKMath64x64.toInt(
-            ABDKMath64x64.mul(
-                ABDKMath64x64.ln(ABDKMath64x64.fromUInt(proportion)),
-                PRECISION_64x64 // This is the 64x64 represntation of INSTRUMENT_PRECISION
-            )
-            // This is ln(1e18), subtract this to scale proportion back
-        ) - 0x09a667e259) / rateScalar) + market.rateAnchor);
+        (int64 abdkResult, bool success) = _abdkMath(proportion);
+
+        if (!success) return 0;
+
+        // This is ln(1e18), subtract this to scale proportion back
+        // TODO: rateScalar and rateAnchor math must not lose precision?
+        int64 rate = (((abdkResult - LN_1E18) / rateScalar) + market.rateAnchor);
 
         // These checks simply prevent math errors, not negative interest rates.
         if (rate < 0 || rate > 0xffffffff) {
@@ -964,5 +985,26 @@ contract FutureCash is Governed {
         } else {
             return uint32(rate);
         }
+    }
+
+    function _abdkMath(uint256 proportion) internal pure returns (int64, bool) {
+        // This is the max 64 bit integer for ABDKMath
+        if (proportion > MAX64) return (0, false);
+
+        int128 abdkProportion = ABDKMath64x64.fromUInt(proportion);
+        // If abdkProportion is negative, this means that it is less than 1 and will
+        // return a negative log so we exit here
+        if (abdkProportion <= 0) return (0, false);
+
+        int256 abdkLog = ABDKMath64x64.ln(abdkProportion);
+        // This is the ABDK 64x64 multiplication with the 64x64 represenation of 1e18
+        int256 result = (abdkLog * PRECISION_64x64) >> 64;
+
+        if (result < ABDKMath64x64.MIN_64x64 || result > ABDKMath64x64.MAX_64x64) {
+            return (0, false);
+        }
+
+        // Must to int128 conversion after the overflow checks above.
+        return (ABDKMath64x64.toInt(int128(result)), true);
     }
 }

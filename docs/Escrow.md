@@ -49,6 +49,7 @@ cash balances, collateral lockup for trading, cash transfers (settlement), and l
 #### Return Values:
 - true if the currency is valid
 
+
 ***
 
 ### `isTradableCurrency`
@@ -60,6 +61,7 @@ cash balances, collateral lockup for trading, cash transfers (settlement), and l
 #### Return Values:
 - true if the currency is tradable
 
+
 ***
 
 ### `isDepositCurrency`
@@ -70,6 +72,7 @@ cash balances, collateral lockup for trading, cash transfers (settlement), and l
 
 #### Return Values:
 - true if the currency is a deposit currency
+
 
 ***
 
@@ -84,6 +87,7 @@ cash balances, collateral lockup for trading, cash transfers (settlement), and l
 #### Return Values:
 - ExchangeRate struct
 
+
 ***
 
 ### `getNetBalances`
@@ -95,6 +99,7 @@ an array. Each index of the array refers to the currency id.
 
 #### Return Values:
 - the balance of each currency net of the account's cash position
+
 
 ***
 
@@ -110,6 +115,7 @@ may be less than zero due to negative cash balances.
 #### Return Values:
 - the net balance of the currency
 
+
 ***
 
 ### `convertBalancesToETH`
@@ -122,10 +128,19 @@ sufficient free collateral.
 #### Return Values:
 - an array the same length as amounts with each balance denominated in ETH
 
+#### Error Codes:
+- INVALID_CURRENCY: length of the amounts array must match the total number of currencies
+- INVALID_EXCHANGE_RATE: exchange rate returned by the oracle is less than 0
+
+
 ***
 
 ### `depositEth`
 > This is a special function to handle ETH deposits. Value of ETH to be deposited must be specified in `msg.value`
+
+
+#### Error Codes:
+- OVER_MAX_ETH_BALANCE: balance of deposit cannot overflow uint128
 
 ***
 
@@ -134,6 +149,12 @@ sufficient free collateral.
 
 #### Parameters:
 - `amount`: the amount of eth to withdraw from the contract
+
+#### Error Codes:
+- INSUFFICIENT_BALANCE: not enough balance in account
+- INSUFFICIENT_FREE_COLLATERAL: not enough free collateral to withdraw
+- TRANSFER_FAILED: eth transfer did not return success
+
 
 ***
 
@@ -145,6 +166,10 @@ sufficient free collateral.
 
 - `amount`: tokens to transfer
 
+#### Error Codes:
+- INVALID_CURRENCY: token address supplied is not a valid currency
+
+
 ***
 
 ### `withdraw`
@@ -155,6 +180,12 @@ account has sufficient free collateral after the withdraw or else it fails.
 - `token`: collateral type to withdraw
 
 - `amount`: total value to withdraw
+
+#### Error Codes:
+- INSUFFICIENT_BALANCE: not enough balance in account
+- INVALID_CURRENCY: token address supplied is not a valid currency
+- INSUFFICIENT_FREE_COLLATERAL: not enough free collateral to withdraw
+
 
 ***
 
@@ -169,6 +200,21 @@ account has sufficient free collateral after the withdraw or else it fails.
 - `receivers`: the party that has a positive cash balance and will receive collateral from the payer
 
 - `values`: the amount of collateral to transfer
+
+#### Error Codes:
+- INVALID_TRADABLE_CURRENCY: tradable currency supplied is not a valid currency
+- INVALID_DEPOSIT_CURRENCY: deposit currency supplied is not a valid currency
+- COUNTERPARTY_CANNOT_BE_SELF: payer and receiver cannot be the same address
+- INCORRECT_CASH_BALANCE: payer or receiver does not have sufficient cash balance to settle
+- INVALID_EXCHANGE_RATE: exchange rate returned by the oracle is less than 0
+- NO_EXCHANGE_LISTED_FOR_PAIR: cannot settle cash because no exchange is listed for the pair
+- CANNOT_SETTLE_PRICE_DISCREPENCY: cannot settle due to a discrepency or slippage in Uniswap
+- INSUFFICIENT_COLLATERAL_FOR_SETTLEMENT: not enough collateral to settle on the exchange
+- RESERVE_ACCOUNT_HAS_INSUFFICIENT_BALANCE: settling requires the reserve account, but there is insufficient
+balance to do so
+- INSUFFICIENT_COLLATERAL_BALANCE: account does not hold enough collateral to settle, they will have
+additional collateral in a different currency if they are collateralized
+
 
 ***
 
@@ -186,6 +232,22 @@ account has sufficient free collateral after the withdraw or else it fails.
 
 - `value`: the amount of collateral to transfer
 
+#### Error Codes:
+- INVALID_SWAP: portfolio contains an invalid swap, this would be system level error
+- INVALID_TRADABLE_CURRENCY: tradable currency supplied is not a valid currency
+- INVALID_DEPOSIT_CURRENCY: deposit currency supplied is not a valid currency
+- COUNTERPARTY_CANNOT_BE_SELF: payer and receiver cannot be the same address
+- INCORRECT_CASH_BALANCE: payer or receiver does not have sufficient cash balance to settle
+- INVALID_EXCHANGE_RATE: exchange rate returned by the oracle is less than 0
+- NO_EXCHANGE_LISTED_FOR_PAIR: cannot settle cash because no exchange is listed for the pair
+- CANNOT_SETTLE_PRICE_DISCREPENCY: cannot settle due to a discrepency or slippage in Uniswap
+- INSUFFICIENT_COLLATERAL_FOR_SETTLEMENT: not enough collateral to settle on the exchange
+- RESERVE_ACCOUNT_HAS_INSUFFICIENT_BALANCE: settling requires the reserve account, but there is insufficient
+balance to do so
+- INSUFFICIENT_COLLATERAL_BALANCE: account does not hold enough collateral to settle, they will have
+additional collateral in a different currency if they are collateralized
+
+
 ***
 
 ### `liquidateBatch`
@@ -198,6 +260,11 @@ account has sufficient free collateral after the withdraw or else it fails.
 
 - `depositCurrency`: the deposit currency to exchange for `currency`
 
+#### Error Codes:
+*  - INVALID_DEPOSIT_CURRENCY: deposit currency supplied is not a valid currency
+- CANNOT_LIQUIDATE_SUFFICIENT_COLLATERAL: account has positive free collateral and cannot be liquidated
+
+
 ***
 
 ### `liquidate`
@@ -209,6 +276,11 @@ account has sufficient free collateral after the withdraw or else it fails.
 - `currency`: the currency that is undercollateralized
 
 - `depositCurrency`: the deposit currency to exchange for `currency`
+
+#### Error Codes:
+*  - INVALID_DEPOSIT_CURRENCY: deposit currency supplied is not a valid currency
+- CANNOT_LIQUIDATE_SUFFICIENT_COLLATERAL: account has positive free collateral and cannot be liquidated
+
 
 ***
 

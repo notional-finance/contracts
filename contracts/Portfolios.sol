@@ -277,6 +277,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
 
     /**
      * @notice Returns the free collateral balance for an account as a view functon.
+     * @dev - INVALID_EXCHANGE_RATE: exchange rate returned by the oracle is less than 0
      * @param account account in question
      * @return (net free collateral position, an array of the currency requirements)
      */

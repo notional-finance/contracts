@@ -225,14 +225,16 @@ describe("Deposits and Withdraws", () => {
 
     it("does not allow settling with an invalid currency", async () => {
         await expect(escrow.settleCashBalance(3, CURRENCY.ETH, wallet.address, owner.address, WeiPerEther.mul(100)))
-            .to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INVALID_CURRENCY));
+            .to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INVALID_TRADABLE_CURRENCY));
+        await expect(escrow.settleCashBalanceBatch(3, CURRENCY.ETH, [wallet.address], [owner.address], [WeiPerEther.mul(100)]))
+            .to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INVALID_TRADABLE_CURRENCY));
     });
 
     it("does not allow settling with an invalid deposit currency", async () => {
         await expect(escrow.settleCashBalance(CURRENCY.DAI, CURRENCY.DAI, wallet.address, owner.address, WeiPerEther.mul(100)))
-            .to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INVALID_CURRENCY));
+            .to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INVALID_DEPOSIT_CURRENCY));
         await expect(escrow.settleCashBalanceBatch(CURRENCY.DAI, CURRENCY.DAI, [wallet.address], [owner.address], [WeiPerEther.mul(100)]))
-            .to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INVALID_CURRENCY));
+            .to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INVALID_DEPOSIT_CURRENCY));
     });
 
     it("settles cash in batch", async () => {
@@ -254,9 +256,9 @@ describe("Deposits and Withdraws", () => {
 
     it("does not allow liquidating with an invalid deposit currency", async () => {
         await expect(escrow.liquidate(wallet.address, CURRENCY.DAI, CURRENCY.DAI))
-            .to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INVALID_CURRENCY));
+            .to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INVALID_DEPOSIT_CURRENCY));
         await expect(escrow.liquidateBatch([wallet.address], CURRENCY.DAI, CURRENCY.DAI))
-            .to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INVALID_CURRENCY));
+            .to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INVALID_DEPOSIT_CURRENCY));
     });
 
     it("liquidates in batch", async () => {

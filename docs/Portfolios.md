@@ -35,6 +35,7 @@ Manages account portfolios which includes all future cash positions and liquidit
 #### Return Values:
 - an array representing the account's portfolio
 
+
 ***
 
 ### `getTrade`
@@ -48,6 +49,7 @@ Manages account portfolios which includes all future cash positions and liquidit
 #### Return Values:
 - a single trade by index in the portfolio
 
+
 ***
 
 ### `getInstrumentGroup`
@@ -59,6 +61,7 @@ Manages account portfolios which includes all future cash positions and liquidit
 #### Return Values:
 - the given instrument group
 
+
 ***
 
 ### `getInstrumentGroups`
@@ -69,6 +72,7 @@ Manages account portfolios which includes all future cash positions and liquidit
 
 #### Return Values:
 - an array of instrument group objects
+
 
 ***
 
@@ -91,6 +95,7 @@ Manages account portfolios which includes all future cash positions and liquidit
 #### Return Values:
 - index of trade)
 
+
 ***
 
 ### `freeCollateral`
@@ -105,6 +110,7 @@ Call `freeCollateralView` if you require a view function.
 #### Return Values:
 - net free collateral position, an array of the currency requirements)
 
+
 ***
 
 ### `freeCollateralView`
@@ -115,6 +121,10 @@ Call `freeCollateralView` if you require a view function.
 
 #### Return Values:
 - net free collateral position, an array of the currency requirements)
+
+#### Error Codes:
+- INVALID_EXCHANGE_RATE: exchange rate returned by the oracle is less than 0
+
 
 ***
 
@@ -128,6 +138,7 @@ check, cash settlement, and liquidation.
 #### Parameters:
 - `account`: the account referenced
 
+
 ***
 
 ### `settleAccountBatch`
@@ -136,6 +147,7 @@ to call this function.
 
 #### Parameters:
 - `accounts`: an array of accounts to settle
+
 
 ***
 

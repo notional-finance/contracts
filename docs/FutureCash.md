@@ -44,6 +44,13 @@ Marketplace for trading future cash tokens to create fixed rate entitlements or 
 
 - `maxBlock`: after this block the trade will fail
 
+#### Error Codes:
+- TRADE_FAILED_MAX_BLOCK: maturity specified is not yet active
+- MARKET_INACTIVE: maturity is not a valid one
+- OVER_MAX_FUTURE_CASH: depositing collateral would require more future cash than specified
+- INSUFFICIENT_BALANCE: insufficient collateral to deposit into market
+
+
 ***
 
 ### `removeLiquidity`
@@ -59,6 +66,12 @@ must settle their liquidity token via `Portfolios().settleAccount()`.
 
 - `maxBlock`: after this block the trade will fail
 
+#### Error Codes:
+- TRADE_FAILED_MAX_BLOCK: maturity specified is not yet active
+- MARKET_INACTIVE: maturity is not a valid one
+- INSUFFICIENT_BALANCE: account does not have sufficient tokens to remove
+
+
 ***
 
 ### `getFutureCashToCollateral`
@@ -72,6 +85,7 @@ purchase at the current block.
 
 #### Return Values:
 - the amount of collateral this would purchase, returns 0 if the trade will fail
+
 
 ***
 
@@ -88,6 +102,7 @@ purchase at the given block. Future cash exchange rates change as we go towards 
 
 #### Return Values:
 - the amount of collateral this would purchase, returns 0 if the trade will fail
+
 
 ***
 
@@ -108,6 +123,15 @@ at the prevailing exchange rate
 #### Return Values:
 - the amount of collateral purchased
 
+#### Error Codes:
+- TRADE_FAILED_MAX_BLOCK: maturity specified is not yet active
+- MARKET_INACTIVE: maturity is not a valid one
+- TRADE_FAILED_TOO_LARGE: trade is larger than allowed by the governance settings
+- TRADE_FAILED_LACK_OF_LIQUIDITY: there is insufficient liquidity in this maturity to handle the trade
+- TRADE_FAILED_SLIPPAGE: trade is greater than the max implied rate set
+- INSUFFICIENT_FREE_COLLATERAL: insufficient free collateral to take on the debt
+
+
 ***
 
 ### `getCollateralToFutureCash`
@@ -121,6 +145,7 @@ block.
 
 #### Return Values:
 - the amount of collateral this would cost, returns 0 on trade failure
+
 
 ***
 
@@ -136,6 +161,7 @@ block.
 
 #### Return Values:
 - the amount of collateral this would cost, returns 0 on trade failure
+
 
 ***
 
@@ -155,6 +181,15 @@ your collateral at a fixed rate.
 #### Return Values:
 - the amount of collateral deposited to the market
 
+#### Error Codes:
+- TRADE_FAILED_MAX_BLOCK: maturity specified is not yet active
+- MARKET_INACTIVE: maturity is not a valid one
+- TRADE_FAILED_TOO_LARGE: trade is larger than allowed by the governance settings
+- TRADE_FAILED_LACK_OF_LIQUIDITY: there is insufficient liquidity in this maturity to handle the trade
+- TRADE_FAILED_SLIPPAGE: trade is lower than the min implied rate set
+- INSUFFICIENT_BALANCE: not enough collateral to complete this trade
+
+
 ***
 
 ### `getRate`
@@ -167,6 +202,7 @@ your collateral at a fixed rate.
 - a tuple where the first value is the simple discount rate and the second value is a boolean indicating
 whether or not the maturity has passed
 
+
 ***
 
 ### `getMarketRates`
@@ -175,6 +211,7 @@ whether or not the maturity has passed
 #### Return Values:
 - an array of rates starting from the most current maturity to the furthest maturity
 
+
 ***
 
 ### `getActiveMaturities`
@@ -182,6 +219,7 @@ whether or not the maturity has passed
 
 #### Return Values:
 - an array of blocks where the currently active markets will mature at
+
 
 ***
 

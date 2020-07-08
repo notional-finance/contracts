@@ -36,8 +36,12 @@ contract ERC1155Token is Governed, IERC1155, IERC165 {
 
     /**
      * @notice Transfers tokens between from and to addresses.
-     * @dev Caller must be approved to manage the tokens being transferred out of the
-     * `_from` account (see "Approval" section of the standard).
+     * @dev - INVALID_ADDRESS: destination address cannot be 0
+     *  - INTEGER_OVERFLOW: value cannot overflow uint128
+     *  - CANNOT_TRANSFER_PAYER: cannot transfer assets that confer obligations
+     *  - CANNOT_TRANSFER_MATURED_TRADE: cannot transfer trade that has matured
+     *  - INSUFFICIENT_BALANCE: from account does not have sufficient tokens
+     *  - ERC1155_NOT_ACCEPTED: to contract must accept the transfer
      * @param from Source address
      * @param to Target address
      * @param id ID of the token type
@@ -71,8 +75,12 @@ contract ERC1155Token is Governed, IERC1155, IERC165 {
 
     /**
      * @notice Transfers tokens between from and to addresses in batch.
-     * @dev Caller must be approved to manage the tokens being transferred out of the
-     * `_from` account (see "Approval" section of the standard).
+     * @dev - INVALID_ADDRESS: destination address cannot be 0
+     *  - INTEGER_OVERFLOW: value cannot overflow uint128
+     *  - CANNOT_TRANSFER_PAYER: cannot transfer assets that confer obligations
+     *  - CANNOT_TRANSFER_MATURED_TRADE: cannot transfer trade that has matured
+     *  - INSUFFICIENT_BALANCE: from account does not have sufficient tokens
+     *  - ERC1155_NOT_ACCEPTED: to contract must accept the transfer
      * @param from Source address
      * @param to Target address
      * @param ids IDs of each token type (order and length must match _values array)

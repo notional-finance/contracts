@@ -103,13 +103,17 @@ export class TestUtils {
     return escrowEthBalance.eq(totalEthBalance);
   }
 
-  public async checkBalanceIntegrity(accounts: Wallet[]) {
+  public async checkBalanceIntegrity(accounts: Wallet[], additionalMarket?: string) {
     const totalDaiBalance = await this.dai.balanceOf(this.escrow.address);
     let escrowDaiBalance = new BigNumber(0);
     for (let a of accounts) {
       escrowDaiBalance = escrowDaiBalance.add(await this.escrow.currencyBalances(this.dai.address, a.address));
     }
     escrowDaiBalance = escrowDaiBalance.add(await this.escrow.currencyBalances(this.dai.address, this.futureCash.address));
+
+    if (additionalMarket !== undefined) {
+      escrowDaiBalance = escrowDaiBalance.add(await this.escrow.currencyBalances(this.dai.address, additionalMarket));
+    }
 
     return totalDaiBalance.eq(escrowDaiBalance);
   }
@@ -139,9 +143,12 @@ export class TestUtils {
       return false;
     }
 
+    const id = await this.futureCash.INSTRUMENT_GROUP();
+
     const allTrades = (await Promise.all(accounts.map((a) => { 
       return this.portfolios.getTrades(a.address);
-    }))).reduce((acc, val) => acc.concat(val), []);
+    }))).reduce((acc, val) => acc.concat(val), [])
+        .filter((t) => { return t.instrumentGroupId === id; });
 
     for (let i = 0; i < maturities.length; i++) {
       const totalCash = allTrades.reduce((totalCash, trade) => {

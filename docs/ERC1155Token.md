@@ -34,6 +34,15 @@ same id. `CASH_PAYER` tokens are not transferrable because they have negative va
 - `data`: Additional data with no specified format, unused by this contract but forwarded unaltered
 to the ERC1155TokenReceiver.
 
+#### Error Codes:
+- INVALID_ADDRESS: destination address cannot be 0
+- INTEGER_OVERFLOW: value cannot overflow uint128
+- CANNOT_TRANSFER_PAYER: cannot transfer assets that confer obligations
+- CANNOT_TRANSFER_MATURED_TRADE: cannot transfer trade that has matured
+- INSUFFICIENT_BALANCE: from account does not have sufficient tokens
+- ERC1155_NOT_ACCEPTED: to contract must accept the transfer
+
+
 ***
 
 ### `safeBatchTransferFrom`
@@ -51,6 +60,15 @@ to the ERC1155TokenReceiver.
 - `data`: Additional data with no specified format, unused by this contract but forwarded unaltered
 to the ERC1155TokenReceiver.
 
+#### Error Codes:
+- INVALID_ADDRESS: destination address cannot be 0
+- INTEGER_OVERFLOW: value cannot overflow uint128
+- CANNOT_TRANSFER_PAYER: cannot transfer assets that confer obligations
+- CANNOT_TRANSFER_MATURED_TRADE: cannot transfer trade that has matured
+- INSUFFICIENT_BALANCE: from account does not have sufficient tokens
+- ERC1155_NOT_ACCEPTED: to contract must accept the transfer
+
+
 ***
 
 ### `balanceOf`
@@ -64,6 +82,7 @@ portfolio, see the method `Portfolios.getTrades()`
 
 #### Return Values:
 - The account's balance of the token type requested
+
 
 ***
 
@@ -79,6 +98,7 @@ portfolio, see the method `Portfolios.getTrades()`
 #### Return Values:
 - The account's balance of the token types requested (i.e. balance for each (owner, id) pair)
 
+
 ***
 
 ### `encodeTradeId`
@@ -90,6 +110,7 @@ portfolio, see the method `Portfolios.getTrades()`
 #### Return Values:
 - a uint256 id that is representative of a matching fungible token
 
+
 ***
 
 ### `decodeTradeId`
@@ -97,6 +118,7 @@ portfolio, see the method `Portfolios.getTrades()`
 
 #### Parameters:
 - `id`: the trade id to decode
+
 
 
 ***
@@ -108,6 +130,7 @@ portfolio, see the method `Portfolios.getTrades()`
 - `operator`: address of the operator
 
 - `approved`: true for complete appoval, false otherwise
+
 
 ***
 
@@ -121,6 +144,7 @@ portfolio, see the method `Portfolios.getTrades()`
 
 #### Return Values:
 - true for complete appoval, false otherwise
+
 
 ***
 
