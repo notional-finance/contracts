@@ -72,7 +72,7 @@ contract FutureCash is Governed {
     address public G_COLLATERAL_TOKEN;
     // These next parameters are set by the Portfolios contract and are immutable, except for
     // G_NUM_PERIODS
-    uint8 public INSTRUMENT_GROUP;
+    uint8 public FUTURE_CASH_GROUP;
     uint16 public INSTRUMENT;
     uint32 public INSTRUMENT_PRECISION;
     uint32 public G_PERIOD_SIZE;
@@ -95,14 +95,14 @@ contract FutureCash is Governed {
     /**
      * @notice Sets governance parameters on the rate oracle.
      * @dev skip
-     * @param instrumentGroupId this cannot change once set
+     * @param futureCashGroupId this cannot change once set
      * @param instrumentId cannot change once set
      * @param precision will only take effect on a new period
      * @param periodSize will take effect immediately, must be careful
      * @param numPeriods will take effect immediately, makers can create new markets
      */
     function setParameters(
-        uint8 instrumentGroupId,
+        uint8 futureCashGroupId,
         uint16 instrumentId,
         uint32 precision,
         uint32 periodSize,
@@ -112,8 +112,8 @@ contract FutureCash is Governed {
         require(calledByPortfolios(), $$(ErrorCode(UNAUTHORIZED_CALLER)));
 
         // These values cannot be reset once set.
-        if (INSTRUMENT_GROUP == 0) {
-            INSTRUMENT_GROUP = instrumentGroupId;
+        if (FUTURE_CASH_GROUP == 0) {
+            FUTURE_CASH_GROUP = futureCashGroupId;
             INSTRUMENT = instrumentId;
             INSTRUMENT_PRECISION = precision;
             G_PERIOD_SIZE = periodSize;
@@ -288,14 +288,14 @@ contract FutureCash is Governed {
 
         // Move the collateral into the contract's collateral balances account. This must happen before the trade
         // is placed so that the free collateral check is correct.
-        Escrow().depositIntoMarket(msg.sender, G_COLLATERAL_TOKEN, INSTRUMENT_GROUP, minCollateral, 0);
+        Escrow().depositIntoMarket(msg.sender, G_COLLATERAL_TOKEN, FUTURE_CASH_GROUP, minCollateral, 0);
 
         // Providing liquidity results in two tokens generated, a liquidity token and a CASH_PAYER which
         // represents the obligation that offsets the future cash in the market.
-        Common.Trade[] memory trades = new Common.Trade[](2);
+        Common.Asset[] memory assets = new Common.Asset[](2);
         // This is the liquidity token
-        trades[0] = Common.Trade(
-            INSTRUMENT_GROUP,
+        assets[0] = Common.Asset(
+            FUTURE_CASH_GROUP,
             INSTRUMENT,
             maturity - G_PERIOD_SIZE,
             G_PERIOD_SIZE,
@@ -305,8 +305,8 @@ contract FutureCash is Governed {
         );
 
         // This is the CASH_PAYER
-        trades[1] = Common.Trade(
-            INSTRUMENT_GROUP,
+        assets[1] = Common.Asset(
+            FUTURE_CASH_GROUP,
             INSTRUMENT,
             maturity - G_PERIOD_SIZE,
             G_PERIOD_SIZE,
@@ -316,7 +316,7 @@ contract FutureCash is Governed {
         );
 
         // This will do a free collateral check before it adds to the portfolio.
-        Portfolios().upsertAccountTradeBatch(msg.sender, trades);
+        Portfolios().upsertAccountAssetBatch(msg.sender, assets);
 
         emit AddLiquidity(msg.sender, maturity, liquidityTokenAmount, futureCash, minCollateral);
     }
@@ -352,12 +352,12 @@ contract FutureCash is Governed {
 
         // Move the collateral from the contract's collateral balances account back to the sender. This must happen
         // before the free collateral check in the Portfolio call below.
-        Escrow().withdrawFromMarket(msg.sender, G_COLLATERAL_TOKEN, INSTRUMENT_GROUP, collateral, 0);
+        Escrow().withdrawFromMarket(msg.sender, G_COLLATERAL_TOKEN, FUTURE_CASH_GROUP, collateral, 0);
 
-        Common.Trade[] memory trades = new Common.Trade[](2);
+        Common.Asset[] memory assets = new Common.Asset[](2);
         // This will remove the liquidity tokens
-        trades[0] = Common.Trade(
-            INSTRUMENT_GROUP,
+        assets[0] = Common.Asset(
+            FUTURE_CASH_GROUP,
             INSTRUMENT,
             maturity - G_PERIOD_SIZE,
             G_PERIOD_SIZE,
@@ -368,8 +368,8 @@ contract FutureCash is Governed {
         );
 
         // This is the CASH_RECEIVER
-        trades[1] = Common.Trade(
-            INSTRUMENT_GROUP,
+        assets[1] = Common.Asset(
+            FUTURE_CASH_GROUP,
             INSTRUMENT,
             maturity - G_PERIOD_SIZE,
             G_PERIOD_SIZE,
@@ -379,7 +379,7 @@ contract FutureCash is Governed {
         );
 
         // This function call will check if the account in question actually has enough liquidity tokens to remove.
-        Portfolios().upsertAccountTradeBatch(msg.sender, trades);
+        Portfolios().upsertAccountAssetBatch(msg.sender, assets);
 
         emit RemoveLiquidity(msg.sender, maturity, amount, futureCashAmount, collateral);
     }
@@ -398,7 +398,7 @@ contract FutureCash is Governed {
         (uint128 collateral, uint128 futureCash) = _settleLiquidityToken(tokenAmount, maturity);
 
         // Move the collateral from the contract's collateral balances account back to the sender
-        Escrow().withdrawFromMarket(account, G_COLLATERAL_TOKEN, INSTRUMENT_GROUP, collateral, 0);
+        Escrow().withdrawFromMarket(account, G_COLLATERAL_TOKEN, FUTURE_CASH_GROUP, collateral, 0);
 
         // No need to remove the liquidity token from the portfolio, the calling function will take care of this.
 
@@ -502,13 +502,13 @@ contract FutureCash is Governed {
 
         // Move the collateral from the contract's collateral balances account to the sender. This must happen before
         // the call to insert the trade below in order for the free collateral check to work properly.
-        Escrow().withdrawFromMarket(msg.sender, G_COLLATERAL_TOKEN, INSTRUMENT_GROUP, collateral, fee);
+        Escrow().withdrawFromMarket(msg.sender, G_COLLATERAL_TOKEN, FUTURE_CASH_GROUP, collateral, fee);
 
         // The sender now has an obligation to pay cash at maturity.
-        Portfolios().upsertAccountTrade(
+        Portfolios().upsertAccountAsset(
             msg.sender,
-            Common.Trade(
-                INSTRUMENT_GROUP,
+            Common.Asset(
+                FUTURE_CASH_GROUP,
                 INSTRUMENT,
                 maturity - G_PERIOD_SIZE,
                 G_PERIOD_SIZE,
@@ -592,13 +592,13 @@ contract FutureCash is Governed {
 
         // Move the collateral from the sender to the contract address. This must happen before the
         // insert trade call below.
-        Escrow().depositIntoMarket(msg.sender, G_COLLATERAL_TOKEN, INSTRUMENT_GROUP, collateral, fee);
+        Escrow().depositIntoMarket(msg.sender, G_COLLATERAL_TOKEN, FUTURE_CASH_GROUP, collateral, fee);
 
         // The sender is now owed a future cash balance at maturity
-        Portfolios().upsertAccountTrade(
+        Portfolios().upsertAccountAsset(
             msg.sender,
-            Common.Trade(
-                INSTRUMENT_GROUP,
+            Common.Asset(
+                FUTURE_CASH_GROUP,
                 INSTRUMENT,
                 maturity - G_PERIOD_SIZE,
                 G_PERIOD_SIZE,
@@ -692,7 +692,7 @@ contract FutureCash is Governed {
         // Here we've sold collateral in excess of what was required, so we credit the remaining back
         // to the account that was holding the trade.
         if (collateral > collateralRequired) {
-            Escrow().withdrawFromMarket(account, G_COLLATERAL_TOKEN, INSTRUMENT_GROUP, collateral - collateralRequired, 0);
+            Escrow().withdrawFromMarket(account, G_COLLATERAL_TOKEN, FUTURE_CASH_GROUP, collateral - collateralRequired, 0);
 
             collateral = collateralRequired;
         }

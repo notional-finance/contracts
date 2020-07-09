@@ -39,7 +39,7 @@ interface IRateOracle {
     function getRate(uint32 periodId) external view returns (uint32, bool);
 
     /**
-     * Returns the set of forward market rates based on the instrument group's period size.
+     * Returns the set of forward market rates based on the future cash group's period size.
      * @return a set of market rates defined by the number of periods
      */
     function getMarketRates() external view returns (uint32[] memory);
@@ -56,7 +56,7 @@ interface IRateOracle {
     /**
      * Sets governance parameters on the rate oracle.
      *
-     * @param instrumentGroupId this cannot change once set
+     * @param futureCashGroupId this cannot change once set
      * @param instrumentId cannot change once set
      * @param precision will only take effect on a new period
      * @param periodSize will take effect immediately, must be careful
@@ -64,7 +64,7 @@ interface IRateOracle {
      * @param maxRate will take effect immediately
      */
     function setParameters(
-        uint8 instrumentGroupId,
+        uint8 futureCashGroupId,
         uint16 instrumentId,
         uint32 precision,
         uint32 periodSize,

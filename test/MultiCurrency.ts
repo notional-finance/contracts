@@ -139,7 +139,7 @@ describe("Multi Currency", () => {
     }
 
     describe("happy path", async () => {
-      it("allows an account to trade on two different instrument groups in the same currency", async () => {
+      it("allows an account to trade on two different future cash groups in the same currency", async () => {
         await t1.setupLiquidity();
         await tNew.setupLiquidity();
         await t1.borrowAndWithdraw(wallet, parseEther("100"), 1.5, 0, 100_000_000);
@@ -171,7 +171,7 @@ describe("Multi Currency", () => {
         await escrow.connect(wallet2).liquidate(wallet.address, CURRENCY.DAI, wbtc.currencyId);
       });
 
-      it("liquidates accounts and repays borrow across two instrument groups", async () => {
+      it("liquidates accounts and repays borrow across two future cash groups", async () => {
         await escrow.connect(wallet2).deposit(token[0].address, parseEther("1000"));
 
         await t1.setupLiquidity();
@@ -181,7 +181,7 @@ describe("Multi Currency", () => {
 
         await chainlink[0].setAnswer(parseEther("0.015"));
         await escrow.connect(wallet2).liquidate(wallet.address, CURRENCY.DAI, 0);
-        expect(await portfolios.getTrades(wallet.address)).to.have.lengthOf(1);
+        expect(await portfolios.getAssets(wallet.address)).to.have.lengthOf(1);
       });
 
       it("partially settles cash using collateral when there are two deposit currencies via settler", async () => {

@@ -39,23 +39,23 @@ library Common {
     }
 
     /**
-     * Each trade object is a 32 byte word stored in the portfolio.
+     * Each asset object is a 32 byte word stored in the portfolio.
      */
-    struct Trade {
-        // The instrument group id for this trade
-        uint8 instrumentGroupId;
-        // The instrument id for this trade
+    struct Asset {
+        // The future cash group id for this asset
+        uint8 futureCashGroupId;
+        // The instrument id for this asset
         uint16 instrumentId;
-        // The block where this trade will begin to take effect
+        // The block where this asset will begin to take effect
         uint32 startBlock;
-        // The duration of this trade
+        // The duration of this asset
         uint32 duration;
         // A 1 byte bitfield defined above that contains instrument agnostic
-        // information about a trade (i.e. payer or receiver, periodic or nonperiodic)
+        // information about a asset (i.e. payer or receiver, periodic or nonperiodic)
         bytes1 swapType;
-        // The rate for this trade
+        // The rate for this asset
         uint32 rate;
-        // The notional for this trade
+        // The notional for this asset
         uint128 notional;
     }
 
@@ -67,14 +67,14 @@ library Common {
      * Each risk ladder is defined by its maturity cadence which maps to an underlying future cash market,
      * therefore each Instrument Group will map to a future cash market called `futureCashMarket`.
      */
-    struct InstrumentGroup {
-        // The maximum number of future periods that instruments in this group will trade
+    struct FutureCashGroup {
+        // The maximum number of future periods that instruments in this group will asset
         uint32 numPeriods;
         // The size of periods (in blocks) for all instruments in this group
         uint32 periodSize;
         // The precision of the discount rate oracle
         uint32 precision;
-        // The currency group identifier for this instrument group
+        // The currency group identifier for this future cash group
         uint16 currency;
         // The discount rate oracle that applies to all instruments in this group
         address futureCashMarket;
@@ -85,12 +85,12 @@ library Common {
     struct AccountBalance {
         // Balance of currency net of cash
         int256 netBalance;
-        // If the currency can only be used as deposits and cannot be traded
+        // If the currency can only be used as deposits and cannot be assetd
         bool isDepositCurrency;
     }
 
     /**
-     * Checks if a trade is a periodic trade, i.e. it matures on the cadence
+     * Checks if a asset is a periodic asset, i.e. it matures on the cadence
      * defined by its Instrument Group.
      */
     function isPeriodic(bytes1 swapType) internal pure returns (bool) {
@@ -98,23 +98,23 @@ library Common {
     }
 
     /**
-     * Checks if a trade is a payer, meaning that the trade is an obligation
-     * to pay cash when the trade matures.
+     * Checks if a asset is a payer, meaning that the asset is an obligation
+     * to pay cash when the asset matures.
      */
     function isPayer(bytes1 swapType) internal pure returns (bool) {
         return ((swapType & MASK_PAYER) == MASK_PAYER);
     }
 
     /**
-     * Checks if a trade is a receiver, meaning that the trade is an entitlement
-     * to recieve cash when trade matures.
+     * Checks if a asset is a receiver, meaning that the asset is an entitlement
+     * to recieve cash when asset matures.
      */
     function isReceiver(bytes1 swapType) internal pure returns (bool) {
         return ((swapType & MASK_RECEIVER) == MASK_RECEIVER);
     }
 
     /**
-     * Checks if a trade is a liquidity token, which represents a claim on collateral
+     * Checks if a asset is a liquidity token, which represents a claim on collateral
      * and future cash in a future cash market. The liquidity token can only be stored
      * as a receiver in the portfolio, but it can be marked as a payer in memory when
      * the contracts remove liquidity.
@@ -139,7 +139,7 @@ library Common {
     }
 
     /**
-     * Changes a trade into its counterparty trade.
+     * Changes a asset into its counterparty asset.
      */
     function makeCounterparty(bytes1 swapType) internal pure returns (bytes1) {
         if (isPayer(swapType)) {
@@ -150,10 +150,10 @@ library Common {
     }
 
     /**
-     * Calculates the maturity of a trade.
+     * Calculates the maturity of a asset.
      */
-    function getMaturity(Trade memory trade) internal pure returns (uint32) {
-        return trade.startBlock + trade.duration;
+    function getMaturity(Asset memory asset) internal pure returns (uint32) {
+        return asset.startBlock + asset.duration;
     }
 
     /**
@@ -173,35 +173,35 @@ library Common {
     }
 
     /**
-     * Returns the swap type from an encoded trade id.
+     * Returns the swap type from an encoded asset id.
      */
     function getSwapType(uint256 id) internal pure returns (bytes1) {
         return bytes1(bytes32(id) << 248);
     }
 
     /**
-     * Creates a 32 byte trade id from a trade object. This is used to represent the trade in
+     * Creates a 32 byte asset id from a asset object. This is used to represent the asset in
      * the ERC1155 token standard. The actual id is located in the least significant 12 bytes
      * of the id. The ordering of the elements in the id are important because they define how
      * a portfolio will be sorted by `Common._sortPortfolio`.
      */
-    function encodeTradeId(Trade memory trade) internal pure returns (uint256) {
-        bytes12 id = (bytes12(bytes1(trade.instrumentGroupId)) & 0xFF0000000000000000000000) |
-            ((bytes12(bytes2(trade.instrumentId)) >> 8) & 0x00FFFF000000000000000000) |
-            ((bytes12(bytes4(trade.startBlock)) >> 24) & 0x000000FFFFFFFF0000000000) |
-            ((bytes12(bytes4(trade.duration)) >> 56) & 0x00000000000000FFFFFFFF00) |
-            ((bytes12(trade.swapType) >> 88) & 0x0000000000000000000000FF);
+    function encodeAssetId(Asset memory asset) internal pure returns (uint256) {
+        bytes12 id = (bytes12(bytes1(asset.futureCashGroupId)) & 0xFF0000000000000000000000) |
+            ((bytes12(bytes2(asset.instrumentId)) >> 8) & 0x00FFFF000000000000000000) |
+            ((bytes12(bytes4(asset.startBlock)) >> 24) & 0x000000FFFFFFFF0000000000) |
+            ((bytes12(bytes4(asset.duration)) >> 56) & 0x00000000000000FFFFFFFF00) |
+            ((bytes12(asset.swapType) >> 88) & 0x0000000000000000000000FF);
 
         return uint256(bytes32(id) >> 160);
     }
 
     /**
-     * Decodes a uint256 id for a trade
+     * Decodes a uint256 id for a asset
      *
-     * @param _id a uint256 trade id
-     * @return (instrumentGroupId, instrumentId, startBlock, duration)
+     * @param _id a uint256 asset id
+     * @return (futureCashGroupId, instrumentId, startBlock, duration)
      */
-    function decodeTradeId(uint256 _id) internal pure returns (uint8, uint16, uint32, uint32) {
+    function decodeAssetId(uint256 _id) internal pure returns (uint8, uint16, uint32, uint32) {
         bytes12 id = bytes12(bytes32(_id) << 160);
         return (
             // Instrument Group Id
@@ -222,22 +222,22 @@ library Common {
      *
      * @param data the in memory portfolio to sort
      */
-    function _sortPortfolio(Trade[] memory data) internal pure returns (Trade[] memory) {
+    function _sortPortfolio(Asset[] memory data) internal pure returns (Asset[] memory) {
         if (data.length > 0) {
             _quickSort(data, int256(0), int256(data.length - 1));
         }
         return data;
     }
 
-    function _quickSort(Trade[] memory data, int256 left, int256 right) internal pure {
+    function _quickSort(Asset[] memory data, int256 left, int256 right) internal pure {
         if (left == right) return;
         int256 i = left;
         int256 j = right;
 
-        uint256 pivot = encodeTradeId(data[uint256(left + (right - left) / 2)]);
+        uint256 pivot = encodeAssetId(data[uint256(left + (right - left) / 2)]);
         while (i <= j) {
-            while (encodeTradeId(data[uint256(i)]) < pivot) i++;
-            while (pivot < encodeTradeId(data[uint256(j)])) j--;
+            while (encodeAssetId(data[uint256(i)]) < pivot) i++;
+            while (pivot < encodeAssetId(data[uint256(j)])) j--;
             if (i <= j) {
                 // Swap positions
                 (data[uint256(i)], data[uint256(j)]) = (data[uint256(j)], data[uint256(i)]);

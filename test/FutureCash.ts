@@ -120,7 +120,7 @@ describe("Future Cash", () => {
         });
 
         it("should not allow users to add liquidity to invalid periods", async () => {
-            await portfolios.updateInstrumentGroup(1, 0, 20, 1e9, CURRENCY.DAI, futureCash.address, AddressZero);
+            await portfolios.updateFutureCashGroup(1, 0, 20, 1e9, CURRENCY.DAI, futureCash.address, AddressZero);
             await escrow.deposit(dai.address, WeiPerEther.mul(30));
             await expect(futureCash.addLiquidity(maturities[0], WeiPerEther.mul(10), WeiPerEther.mul(10), 1000))
                 .to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.MARKET_INACTIVE));
@@ -228,7 +228,7 @@ describe("Future Cash", () => {
         it.skip("should not allow users to take dai for future cash on an invalid maturity", async () => {
             await t.setupLiquidity();
 
-            await portfolios.updateInstrumentGroup(1, 0, 20, 1e9, 2, futureCash.address, AddressZero);
+            await portfolios.updateFutureCashGroup(1, 0, 20, 1e9, 2, futureCash.address, AddressZero);
 
             await escrow.connect(wallet).depositEth({value: WeiPerEther});
             await expect(futureCash.connect(wallet).takeCollateral(maturities[0], WeiPerEther.mul(25), 1000, 60_000_000))
@@ -267,7 +267,7 @@ describe("Future Cash", () => {
         it.skip("should not allow users to take future cash for dai on an invalid maturity", async () => {
             await t.setupLiquidity();
 
-            await portfolios.updateInstrumentGroup(1, 0, 20, 1e9, 2, futureCash.address, AddressZero);
+            await portfolios.updateFutureCashGroup(1, 0, 20, 1e9, 2, futureCash.address, AddressZero);
 
             await escrow.connect(wallet).deposit(dai.address, WeiPerEther.mul(25));
             await expect(futureCash.connect(wallet).takeFutureCash(maturities[0], WeiPerEther.mul(25), 1000, 40_000_000))
@@ -299,9 +299,9 @@ describe("Future Cash", () => {
         await portfolios.settleAccount(wallet.address);
         await portfolios.settleAccountBatch([wallet2.address, owner.address]);
 
-        expect(await portfolios.getTrades(owner.address)).to.have.lengthOf(0);
-        expect(await portfolios.getTrades(wallet.address)).to.have.lengthOf(0);
-        expect(await portfolios.getTrades(wallet2.address)).to.have.lengthOf(0);
+        expect(await portfolios.getAssets(owner.address)).to.have.lengthOf(0);
+        expect(await portfolios.getAssets(wallet.address)).to.have.lengthOf(0);
+        expect(await portfolios.getAssets(wallet2.address)).to.have.lengthOf(0);
 
         // Liquidity provider has earned some interest on liquidity
         expect(

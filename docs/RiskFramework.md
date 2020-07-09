@@ -4,7 +4,7 @@ Calculates the currency requirements for a portfolio.
 
 
 ## Methods
-- [`getRequirement(struct Common.Trade[] portfolio)`](#getRequirement)
+- [`getRequirement(struct Common.Asset[] portfolio)`](#getRequirement)
 
 
 ## Governance Methods
@@ -12,10 +12,10 @@ Calculates the currency requirements for a portfolio.
 
 # Methods
 ### `getRequirement`
-> Given a portfolio of trades, returns a set of requirements in every currency represented.
+> Given a portfolio of assets, returns a set of requirements in every currency represented.
 
 #### Parameters:
-- `portfolio`: a portfolio of trades
+- `portfolio`: a portfolio of assets
 
 #### Return Values:
 - a set of requirements in every currency represented by the portfolio

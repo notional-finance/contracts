@@ -143,29 +143,29 @@ export class TestUtils {
       return false;
     }
 
-    const id = await this.futureCash.INSTRUMENT_GROUP();
+    const id = await this.futureCash.FUTURE_CASH_GROUP();
 
-    const allTrades = (await Promise.all(accounts.map((a) => { 
-      return this.portfolios.getTrades(a.address);
+    const allAssets = (await Promise.all(accounts.map((a) => { 
+      return this.portfolios.getAssets(a.address);
     }))).reduce((acc, val) => acc.concat(val), [])
-        .filter((t) => { return t.instrumentGroupId === id; });
+        .filter((t) => { return t.futureCashGroupId === id; });
 
     for (let i = 0; i < maturities.length; i++) {
-      const totalCash = allTrades.reduce((totalCash, trade) => {
-        if (trade.startBlock + trade.duration === maturities[i]) {
-          if (trade.swapType === SwapType.CASH_RECEIVER) {
-            totalCash = totalCash.add(trade.notional);
-          } else if (trade.swapType === SwapType.CASH_PAYER) {
-            totalCash = totalCash.sub(trade.notional);
+      const totalCash = allAssets.reduce((totalCash, asset) => {
+        if (asset.startBlock + asset.duration === maturities[i]) {
+          if (asset.swapType === SwapType.CASH_RECEIVER) {
+            totalCash = totalCash.add(asset.notional);
+          } else if (asset.swapType === SwapType.CASH_PAYER) {
+            totalCash = totalCash.sub(asset.notional);
           }
         }
         return totalCash;
       }, new BigNumber(0));
 
-      const totalTokens = allTrades.reduce((totalTokens, trade) => {
-        if (trade.startBlock + trade.duration === maturities[i]) {
-          if (trade.swapType === SwapType.LIQUIDITY_TOKEN) {
-            totalTokens = totalTokens.add(trade.notional);
+      const totalTokens = allAssets.reduce((totalTokens, asset) => {
+        if (asset.startBlock + asset.duration === maturities[i]) {
+          if (asset.swapType === SwapType.LIQUIDITY_TOKEN) {
+            totalTokens = totalTokens.add(asset.notional);
           }
         }
         return totalTokens;
@@ -184,7 +184,7 @@ export class TestUtils {
     return true;
   }
 
-  private async hasTrade(
+  private async hasAsset(
     account: Wallet,
     swapType: string,
     maturity?: number,
@@ -193,7 +193,7 @@ export class TestUtils {
     if (maturity === undefined) {
       maturity = (await this.futureCash.getActiveMaturities())[0];
     }
-    const p = await this.portfolios.getTrades(account.address);
+    const p = await this.portfolios.getAssets(account.address);
 
     for (let t of p) {
       if (t.startBlock + t.duration == maturity
@@ -215,10 +215,10 @@ export class TestUtils {
     payer?: BigNumber
   ) {
     if (payer !== undefined && payer.isZero()) {
-      return this.hasTrade(account, SwapType.LIQUIDITY_TOKEN, maturity, tokens);
+      return this.hasAsset(account, SwapType.LIQUIDITY_TOKEN, maturity, tokens);
     } else {
       return (
-        this.hasTrade(account, SwapType.LIQUIDITY_TOKEN, maturity, tokens) &&
+        this.hasAsset(account, SwapType.LIQUIDITY_TOKEN, maturity, tokens) &&
         this.hasCashPayer(account, maturity, payer === undefined ? tokens : payer)
       );
     }
@@ -229,7 +229,7 @@ export class TestUtils {
     maturity?: number,
     notional?: BigNumber
   ) {
-    return this.hasTrade(account, SwapType.CASH_PAYER, maturity, notional);
+    return this.hasAsset(account, SwapType.CASH_PAYER, maturity, notional);
   }
 
   public async hasCashReceiver(
@@ -237,7 +237,7 @@ export class TestUtils {
     maturity?: number,
     notional?: BigNumber
   ) {
-    return this.hasTrade(account, SwapType.CASH_RECEIVER, maturity, notional);
+    return this.hasAsset(account, SwapType.CASH_RECEIVER, maturity, notional);
   }
 
   public async mineAndSettleAccount(

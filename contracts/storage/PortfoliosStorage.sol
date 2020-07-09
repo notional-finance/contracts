@@ -3,24 +3,24 @@ pragma solidity ^0.6.0;
 import "../utils/Common.sol";
 
 contract PortfoliosStorage {
-    uint8 internal constant MAX_INSTRUMENT_GROUPS = 0xFE;
+    uint8 internal constant MAX_FUTURE_CASH_GROUPS = 0xFE;
 
-    // This is used when referencing a trade that does not exist.
-    Common.Trade internal NULL_TRADE;
+    // This is used when referencing a asset that does not exist.
+    Common.Asset internal NULL_ASSET;
 
-    // Mapping between accounts and their trades
-    mapping(address => Common.Trade[]) internal _accountTrades;
+    // Mapping between accounts and their assets
+    mapping(address => Common.Asset[]) internal _accountAssets;
 
-    // Mapping between instrument group ids and instrument groups
-    mapping(uint8 => Common.InstrumentGroup) public instrumentGroups;
-    // The current instrument group id, 0 is unused
-    uint8 public currentInstrumentGroupId;
+    // Mapping between future cash group ids and future cash groups
+    mapping(uint8 => Common.FutureCashGroup) public futureCashGroups;
+    // The current future cash group id, 0 is unused
+    uint8 public currentFutureCashGroupId;
 
     /****** Governance Parameters ******/
 
-    // This is the max number of trades that can be in a portfolio. This is set so that we don't end up with massive
+    // This is the max number of assets that can be in a portfolio. This is set so that we don't end up with massive
     // portfolios that can't be liquidated due to gas cost restrictions.
-    uint256 public G_MAX_TRADES;
+    uint256 public G_MAX_ASSETS;
     // Number of currency groups, set by the Escrow account.
     uint16 public G_NUM_CURRENCIES;
 

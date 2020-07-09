@@ -13,14 +13,14 @@ interface IEscrowCallable {
     function depositIntoMarket(
         address account,
         address collateralToken,
-        uint8 instrumentGroupId,
+        uint8 futureCashGroupId,
         uint128 value,
         uint128 fee
     ) external;
     function withdrawFromMarket(
         address account,
         address collateralToken,
-        uint8 instrumentGroupId,
+        uint8 futureCashGroupId,
         uint128 value,
         uint128 fee
     ) external;

@@ -10,11 +10,11 @@ import "../utils/Common.sol";
 interface IRiskFramework /* is IERC165 */ {
 
     /**
-     * Calculates the collateral requirements given a list of trades.
+     * Calculates the collateral requirements given a list of assets.
      *
-     * @param trades a list of positions
+     * @param assets a list of positions
      * @return an array of requirements, one per collateral type
      */
-    function getRequirement(Common.Trade[] calldata trades) external view returns (Common.Requirement[] memory);
+    function getRequirement(Common.Asset[] calldata assets) external view returns (Common.Requirement[] memory);
 
 }

@@ -11,8 +11,8 @@ import "./interface/IERC165.sol";
 
 /**
  * @notice Implements the ERC1155 token standard for transferring future cash tokens within Swapnet. ERC1155 ids
- * encode an identifier that represents trades that are fungible with each other. For example, two future cash tokens
- * that trade in the same market and mature on the same block are fungible with each other and therefore will have the
+ * encode an identifier that represents assets that are fungible with each other. For example, two future cash tokens
+ * that asset in the same market and mature on the same block are fungible with each other and therefore will have the
  * same id. `CASH_PAYER` tokens are not transferrable because they have negative value.
  */
 contract ERC1155Token is Governed, IERC1155, IERC165 {
@@ -39,7 +39,7 @@ contract ERC1155Token is Governed, IERC1155, IERC165 {
      * @dev - INVALID_ADDRESS: destination address cannot be 0
      *  - INTEGER_OVERFLOW: value cannot overflow uint128
      *  - CANNOT_TRANSFER_PAYER: cannot transfer assets that confer obligations
-     *  - CANNOT_TRANSFER_MATURED_TRADE: cannot transfer trade that has matured
+     *  - CANNOT_TRANSFER_MATURED_ASSET: cannot transfer asset that has matured
      *  - INSUFFICIENT_BALANCE: from account does not have sufficient tokens
      *  - ERC1155_NOT_ACCEPTED: to contract must accept the transfer
      * @param from Source address
@@ -78,7 +78,7 @@ contract ERC1155Token is Governed, IERC1155, IERC165 {
      * @dev - INVALID_ADDRESS: destination address cannot be 0
      *  - INTEGER_OVERFLOW: value cannot overflow uint128
      *  - CANNOT_TRANSFER_PAYER: cannot transfer assets that confer obligations
-     *  - CANNOT_TRANSFER_MATURED_TRADE: cannot transfer trade that has matured
+     *  - CANNOT_TRANSFER_MATURED_ASSET: cannot transfer asset that has matured
      *  - INSUFFICIENT_BALANCE: from account does not have sufficient tokens
      *  - ERC1155_NOT_ACCEPTED: to contract must accept the transfer
      * @param from Source address
@@ -137,16 +137,16 @@ contract ERC1155Token is Governed, IERC1155, IERC165 {
         // Transfers can only be entitlements to receive which are a net benefit.
         require(Common.isReceiver(swapType), $$(ErrorCode(CANNOT_TRANSFER_PAYER)));
 
-        (uint8 instrumentGroupId, uint16 instrumentId, uint32 startBlock, uint32 duration) = Common.decodeTradeId(
+        (uint8 futureCashGroupId, uint16 instrumentId, uint32 startBlock, uint32 duration) = Common.decodeAssetId(
             id
         );
-        require(startBlock + duration > block.number, $$(ErrorCode(CANNOT_TRANSFER_MATURED_TRADE)));
+        require(startBlock + duration > block.number, $$(ErrorCode(CANNOT_TRANSFER_MATURED_ASSET)));
 
-        Portfolios().transferAccountTrade(
+        Portfolios().transferAccountAsset(
             from,
             to,
             swapType,
-            instrumentGroupId,
+            futureCashGroupId,
             instrumentId,
             startBlock,
             duration,
@@ -156,7 +156,7 @@ contract ERC1155Token is Governed, IERC1155, IERC165 {
 
     /**
      * @notice Get the balance of an account's tokens. For a more complete picture of an account's
-     * portfolio, see the method `Portfolios.getTrades()`
+     * portfolio, see the method `Portfolios.getAssets()`
      * @param account The address of the token holder
      * @param id ID of the token
      * @return The account's balance of the token type requested
@@ -164,24 +164,24 @@ contract ERC1155Token is Governed, IERC1155, IERC165 {
     function balanceOf(address account, uint256 id) external view override returns (uint256) {
         bytes1 swapType = Common.getSwapType(id);
 
-        (uint8 instrumentGroupId, uint16 instrumentId, uint32 startBlock, uint32 duration) = Common.decodeTradeId(
+        (uint8 futureCashGroupId, uint16 instrumentId, uint32 startBlock, uint32 duration) = Common.decodeAssetId(
             id
         );
-        (Common.Trade memory t, ) = Portfolios().searchAccountTrade(
+        (Common.Asset memory asset, ) = Portfolios().searchAccountAsset(
             account,
             swapType,
-            instrumentGroupId,
+            futureCashGroupId,
             instrumentId,
             startBlock,
             duration
         );
 
-        return uint256(t.notional);
+        return uint256(asset.notional);
     }
 
     /**
      * @notice Get the balance of multiple account/token pairs. For a more complete picture of an account's
-     * portfolio, see the method `Portfolios.getTrades()`
+     * portfolio, see the method `Portfolios.getAssets()`
      * @param accounts The addresses of the token holders
      * @param ids ID of the tokens
      * @return The account's balance of the token types requested (i.e. balance for each (owner, id) pair)
@@ -202,29 +202,29 @@ contract ERC1155Token is Governed, IERC1155, IERC165 {
     }
 
     /**
-     * @notice Encodes a trade object into a uint256 id for ERC1155 compatibility
-     * @param trade the trade object to encode
+     * @notice Encodes a asset object into a uint256 id for ERC1155 compatibility
+     * @param asset the asset object to encode
      * @return a uint256 id that is representative of a matching fungible token
      */
-    function encodeTradeId(Common.Trade calldata trade) external pure returns (uint256) {
-        return Common.encodeTradeId(trade);
+    function encodeAssetId(Common.Asset calldata asset) external pure returns (uint256) {
+        return Common.encodeAssetId(asset);
     }
 
     /**
      * @notice Decodes an ERC1155 id into its attributes
-     * @param id the trade id to decode
-     * @return (instrumentGroupId, instrumentId, startBlock, duration, swapType)
+     * @param id the asset id to decode
+     * @return (futureCashGroupId, instrumentId, startBlock, duration, swapType)
      */
-    function decodeTradeId(
+    function decodeAssetId(
         uint256 id
     ) external pure returns (uint8, uint16, uint32, uint32, bytes1) {
         bytes1 swapType = Common.getSwapType(id);
-        (uint8 instrumentGroupId, uint16 instrumentId, uint32 startBlock, uint32 duration) = Common.decodeTradeId(
+        (uint8 futureCashGroupId, uint16 instrumentId, uint32 startBlock, uint32 duration) = Common.decodeAssetId(
             id
         );
 
         return (
-            instrumentGroupId,
+            futureCashGroupId,
             instrumentId,
             startBlock,
             duration,

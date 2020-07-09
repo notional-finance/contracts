@@ -103,7 +103,7 @@ describe("Generic Tests", () => {
     it("does not allow wallets to call protected functions on portfolios", async () => {
         await expect(portfolios.connect(wallet).setNumCurrencies(3))
             .to.be.revertedWith(ErrorDecoder.decodeError(ErrorCodes.UNAUTHORIZED_CALLER));
-        await expect(portfolios.connect(wallet).transferAccountTrade(wallet.address, AddressZero, "0x00", 1, 0, 1000, 40, WeiPerEther))
+        await expect(portfolios.connect(wallet).transferAccountAsset(wallet.address, AddressZero, "0x00", 1, 0, 1000, 40, WeiPerEther))
             .to.be.revertedWith(ErrorDecoder.decodeError(ErrorCodes.UNAUTHORIZED_CALLER));
 
         await expect(portfolios.connect(wallet).raiseCollateralViaCashReceiver(wallet.address, 1, WeiPerEther))
@@ -113,8 +113,8 @@ describe("Generic Tests", () => {
         await expect(portfolios.connect(wallet).repayCashPayer(wallet.address, 1, WeiPerEther))
             .to.be.revertedWith(ErrorDecoder.decodeError(ErrorCodes.UNAUTHORIZED_CALLER));
 
-        await expect(portfolios.connect(wallet).upsertAccountTrade(wallet.address, {
-            instrumentGroupId: 1,
+        await expect(portfolios.connect(wallet).upsertAccountAsset(wallet.address, {
+            futureCashGroupId: 1,
             instrumentId: 0,
             startBlock: 1000,
             duration: 40,
@@ -123,8 +123,8 @@ describe("Generic Tests", () => {
             swapType: "0x98"
         })).to.be.revertedWith(ErrorDecoder.decodeError(ErrorCodes.UNAUTHORIZED_CALLER));
 
-        await expect(portfolios.connect(wallet).upsertAccountTradeBatch(wallet.address, [{
-            instrumentGroupId: 1,
+        await expect(portfolios.connect(wallet).upsertAccountAssetBatch(wallet.address, [{
+            futureCashGroupId: 1,
             instrumentId: 0,
             startBlock: 1000,
             duration: 40,
@@ -133,8 +133,8 @@ describe("Generic Tests", () => {
             swapType: "0x98"
         }])).to.be.revertedWith(ErrorDecoder.decodeError(ErrorCodes.UNAUTHORIZED_CALLER));
 
-        await expect(portfolios.connect(wallet).upsertAccountTradeBatch(wallet.address, [{
-            instrumentGroupId: 1,
+        await expect(portfolios.connect(wallet).upsertAccountAssetBatch(wallet.address, [{
+            futureCashGroupId: 1,
             instrumentId: 0,
             startBlock: 1000,
             duration: 40,
@@ -142,7 +142,7 @@ describe("Generic Tests", () => {
             notional: WeiPerEther,
             swapType: "0x98",
         }, {
-            instrumentGroupId: 2,
+            futureCashGroupId: 2,
             instrumentId: 0,
             startBlock: 1000,
             duration: 40,

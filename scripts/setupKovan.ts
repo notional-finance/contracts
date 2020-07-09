@@ -24,7 +24,7 @@ async function main() {
 
   const swapnet = await SwapnetDeployer.restoreFromFile(path.join(__dirname, "../kovan.json"), account);
   const testToken = new Contract(await swapnet.escrow.currencyIdToAddress(1), ERC20Artifact.abi, account) as ERC20;
-  const ig = await swapnet.portfolios.getInstrumentGroup(1);
+  const fg = await swapnet.portfolios.getFutureCashGroup(1);
   const futureCash = new Contract(ig.futureCashMarket, FutureCashArtifact.abi, account) as FutureCash;
   log("Setup contracts");
 
@@ -52,7 +52,7 @@ async function main() {
   ));
 
   log("This portfolio will have 100 liquidity tokens and 100 cash payer");
-  let portfolio = await swapnet.portfolios.getTrades(account.address);
+  let portfolio = await swapnet.portfolios.getAssets(account.address);
   log("Current Portfolio:")
   log(portfolio);
 
@@ -80,7 +80,7 @@ async function main() {
   log(`Test Token Balances in Escrow: ${await swapnet.escrow.currencyBalances(testToken.address, account.address)}`);
 
   log("This portfolio will have 100 liquidity tokens and 105 cash payer");
-  portfolio = await swapnet.portfolios.getTrades(account.address);
+  portfolio = await swapnet.portfolios.getAssets(account.address);
   log("Current Portfolio:")
   log(portfolio);
 
@@ -98,7 +98,7 @@ async function main() {
   await txMined(futureCash.takeFutureCash(maturity, WeiPerEther.mul(5), blockNum + 100, 0));
 
   log("Token balances have been reduced and we have net out our cash payer exposure (but not totally)");
-  portfolio = await swapnet.portfolios.getTrades(account.address);
+  portfolio = await swapnet.portfolios.getAssets(account.address);
   log("Current Portfolio:")
   log(portfolio);
 

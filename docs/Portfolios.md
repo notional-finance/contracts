@@ -4,11 +4,11 @@ Manages account portfolios which includes all future cash positions and liquidit
 
 
 ## Methods
-- [`getTrades(address account)`](#getTrades)
-- [`getTrade(address account, uint256 index)`](#getTrade)
-- [`getInstrumentGroup(uint8 instrumentGroupId)`](#getInstrumentGroup)
-- [`getInstrumentGroups(uint8[] groupIds)`](#getInstrumentGroups)
-- [`searchAccountTrade(address account, bytes1 swapType, uint8 instrumentGroupId, uint16 instrumentId, uint32 startBlock, uint32 duration)`](#searchAccountTrade)
+- [`getAssets(address account)`](#getAssets)
+- [`getAsset(address account, uint256 index)`](#getAsset)
+- [`getFutureCashGroup(uint8 futureCashGroupId)`](#getFutureCashGroup)
+- [`getFutureCashGroups(uint8[] groupIds)`](#getFutureCashGroups)
+- [`searchAccountAsset(address account, bytes1 swapType, uint8 futureCashGroupId, uint16 instrumentId, uint32 startBlock, uint32 duration)`](#searchAccountAsset)
 - [`freeCollateral(address account)`](#freeCollateral)
 - [`freeCollateralView(address account)`](#freeCollateralView)
 - [`settleAccount(address account)`](#settleAccount)
@@ -17,17 +17,17 @@ Manages account portfolios which includes all future cash positions and liquidit
 ## Events
 - [`SettleAccount(address account)`](#SettleAccount)
 - [`SettleAccountBatch(address[] accounts)`](#SettleAccountBatch)
-- [`NewInstrumentGroup(uint8 instrumentGroupId)`](#NewInstrumentGroup)
-- [`UpdateInstrumentGroup(uint8 instrumentGroupId)`](#UpdateInstrumentGroup)
+- [`NewFutureCashGroup(uint8 futureCashGroupId)`](#NewFutureCashGroup)
+- [`UpdateFutureCashGroup(uint8 futureCashGroupId)`](#UpdateFutureCashGroup)
 
 ## Governance Methods
-- [`setMaxTrades(uint256 maxTrades)`](#setMaxTrades)
-- [`createInstrumentGroup(uint32 numPeriods, uint32 periodSize, uint32 precision, uint16 currency, address futureCashMarket, address riskFormula)`](#createInstrumentGroup)
-- [`updateInstrumentGroup(uint8 instrumentGroupId, uint32 numPeriods, uint32 periodSize, uint32 precision, uint16 currency, address futureCashMarket, address riskFormula)`](#updateInstrumentGroup)
+- [`setMaxAssets(uint256 maxAssets)`](#setMaxAssets)
+- [`createFutureCashGroup(uint32 numPeriods, uint32 periodSize, uint32 precision, uint16 currency, address futureCashMarket, address riskFormula)`](#createFutureCashGroup)
+- [`updateFutureCashGroup(uint8 futureCashGroupId, uint32 numPeriods, uint32 periodSize, uint32 precision, uint16 currency, address futureCashMarket, address riskFormula)`](#updateFutureCashGroup)
 
 # Methods
-### `getTrades`
-> Returns the trades of an account
+### `getAssets`
+> Returns the assets of an account
 
 #### Parameters:
 - `account`: to retrieve
@@ -38,53 +38,53 @@ Manages account portfolios which includes all future cash positions and liquidit
 
 ***
 
-### `getTrade`
-> Returns a particular trade via index
+### `getAsset`
+> Returns a particular asset via index
 
 #### Parameters:
 - `account`: to retrieve
 
-- `index`: of trade
+- `index`: of asset
 
 #### Return Values:
-- a single trade by index in the portfolio
+- a single asset by index in the portfolio
 
 
 ***
 
-### `getInstrumentGroup`
-> Returns a particular instrument group
+### `getFutureCashGroup`
+> Returns a particular future cash group
 
 #### Parameters:
-- `instrumentGroupId`: to retrieve
+- `futureCashGroupId`: to retrieve
 
 #### Return Values:
-- the given instrument group
+- the given future cash group
 
 
 ***
 
-### `getInstrumentGroups`
-> Returns a batch of instrument groups
+### `getFutureCashGroups`
+> Returns a batch of future cash groups
 
 #### Parameters:
-- `groupIds`: array of instrument group ids to retrieve
+- `groupIds`: array of future cash group ids to retrieve
 
 #### Return Values:
-- an array of instrument group objects
+- an array of future cash group objects
 
 
 ***
 
-### `searchAccountTrade`
-> Public method for searching for a trade in an account.
+### `searchAccountAsset`
+> Public method for searching for a asset in an account.
 
 #### Parameters:
 - `account`: account to search
 
 - `swapType`: the type of swap to search for
 
-- `instrumentGroupId`: the instrument group id
+- `futureCashGroupId`: the future cash group id
 
 - `instrumentId`: the instrument id
 
@@ -93,15 +93,15 @@ Manages account portfolios which includes all future cash positions and liquidit
 - `duration`: the duration of the swap
 
 #### Return Values:
-- index of trade)
+- index of asset)
 
 
 ***
 
 ### `freeCollateral`
-> Stateful version of free collateral, first settles all trades in the account before returning
+> Stateful version of free collateral, first settles all assets in the account before returning
 the free collateral parameters. Generally, external developers should not need to call this function. It is used
-internally to both check free collateral and ensure that the portfolio does not have any matured trades.
+internally to both check free collateral and ensure that the portfolio does not have any matured assets.
 Call `freeCollateralView` if you require a view function.
 
 #### Parameters:
@@ -129,8 +129,8 @@ Call `freeCollateralView` if you require a view function.
 ***
 
 ### `settleAccount`
-> Settles all matured cash trades and liquidity tokens in a user's portfolio. This method is
-unauthenticated, anyone may settle the trades in any account. This is required for accounts that
+> Settles all matured cash assets and liquidity tokens in a user's portfolio. This method is
+unauthenticated, anyone may settle the assets in any account. This is required for accounts that
 have negative cash and counterparties need to settle against them. Generally, external developers
 should not need to call this function. We ensure that accounts are settled on every free collateral
 check, cash settlement, and liquidation.
@@ -169,61 +169,61 @@ to call this function.
 
 ***
 
-### `NewInstrumentGroup`
-> Emitted when a new instrument group is listed
+### `NewFutureCashGroup`
+> Emitted when a new future cash group is listed
 
 #### Parameters:
-- `instrumentGroupId`: id of the new instrument group
+- `futureCashGroupId`: id of the new future cash group
 
 ***
 
-### `UpdateInstrumentGroup`
-> Emitted when a new instrument group is updated
+### `UpdateFutureCashGroup`
+> Emitted when a new future cash group is updated
 
 #### Parameters:
-- `instrumentGroupId`: id of the updated instrument group
+- `futureCashGroupId`: id of the updated future cash group
 
 ***
 
 
 # Governance Methods
-### `setMaxTrades`
-> Set the max trades that a portfolio can hold
+### `setMaxAssets`
+> Set the max assets that a portfolio can hold
 
 #### Parameters:
-- `maxTrades`: new max trade number
+- `maxAssets`: new max asset number
 
 ***
-### `createInstrumentGroup`
-> An instrument group defines a collection of similar instruments where the risk ladders can be netted
-against each other. The identifier is only 1 byte so we can only have 255 instrument groups, 0 is unused.
+### `createFutureCashGroup`
+> An future cash group defines a collection of similar future cashs where the risk ladders can be netted
+against each other. The identifier is only 1 byte so we can only have 255 future cash groups, 0 is unused.
 
 #### Parameters:
 - `numPeriods`: the total number of periods
 
-- `periodSize`: the baseline period length (in blocks) for periodic swaps in this instrument.
+- `periodSize`: the baseline period length (in blocks) for periodic swaps in this future cash.
 
 - `precision`: the discount rate precision
 
-- `currency`: the token address of the currenty this instrument settles in
+- `currency`: the token address of the currenty this future cash settles in
 
 - `futureCashMarket`: the rate oracle that defines the discount rate
 
 ***
-### `updateInstrumentGroup`
-> Updates instrument groups. Be very careful when calling this function! When changing periods and
+### `updateFutureCashGroup`
+> Updates future cash groups. Be very careful when calling this function! When changing periods and
 period sizes the markets must be updated as well.
 
 #### Parameters:
-- `instrumentGroupId`: the group id to update
+- `futureCashGroupId`: the group id to update
 
 - `numPeriods`: this is safe to update as long as the discount rate oracle is not shared
 
-- `periodSize`: this is only safe to update when there are no trades left
+- `periodSize`: this is only safe to update when there are no assets left
 
-- `precision`: this is only safe to update when there are no trades left
+- `precision`: this is only safe to update when there are no assets left
 
-- `currency`: this is safe to update if there are no trades or the new currency is equivalent
+- `currency`: this is safe to update if there are no assets or the new currency is equivalent
 
 - `futureCashMarket`: this is safe to update once the oracle is established
 

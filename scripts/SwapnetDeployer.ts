@@ -334,8 +334,8 @@ export class SwapnetDeployer {
             this.proxyAdmin
         ) as FutureCash;
 
-        log("Creating instrument group...");
-        await SwapnetDeployer.txMined(this.portfolios.createInstrumentGroup(
+        log("Creating future cash group...");
+        await SwapnetDeployer.txMined(this.portfolios.createFutureCashGroup(
             numPeriods,
             periodSize,
             precision,

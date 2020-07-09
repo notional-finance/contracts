@@ -1,8 +1,8 @@
 # ERC1155Token
 
 Implements the ERC1155 token standard for transferring future cash tokens within Swapnet. ERC1155 ids
-encode an identifier that represents trades that are fungible with each other. For example, two future cash tokens
-that trade in the same market and mature on the same block are fungible with each other and therefore will have the
+encode an identifier that represents assets that are fungible with each other. For example, two future cash tokens
+that asset in the same market and mature on the same block are fungible with each other and therefore will have the
 same id. `CASH_PAYER` tokens are not transferrable because they have negative value.
 
 
@@ -11,8 +11,8 @@ same id. `CASH_PAYER` tokens are not transferrable because they have negative va
 - [`safeBatchTransferFrom(address from, address to, uint256[] ids, uint256[] values, bytes data)`](#safeBatchTransferFrom)
 - [`balanceOf(address account, uint256 id)`](#balanceOf)
 - [`balanceOfBatch(address[] accounts, uint256[] ids)`](#balanceOfBatch)
-- [`encodeTradeId(struct Common.Trade trade)`](#encodeTradeId)
-- [`decodeTradeId(uint256 id)`](#decodeTradeId)
+- [`encodeAssetId(struct Common.Asset asset)`](#encodeAssetId)
+- [`decodeAssetId(uint256 id)`](#decodeAssetId)
 - [`setApprovalForAll(address operator, bool approved)`](#setApprovalForAll)
 - [`isApprovedForAll(address owner, address operator)`](#isApprovedForAll)
 
@@ -38,7 +38,7 @@ to the ERC1155TokenReceiver.
 - INVALID_ADDRESS: destination address cannot be 0
 - INTEGER_OVERFLOW: value cannot overflow uint128
 - CANNOT_TRANSFER_PAYER: cannot transfer assets that confer obligations
-- CANNOT_TRANSFER_MATURED_TRADE: cannot transfer trade that has matured
+- CANNOT_TRANSFER_MATURED_ASSET: cannot transfer asset that has matured
 - INSUFFICIENT_BALANCE: from account does not have sufficient tokens
 - ERC1155_NOT_ACCEPTED: to contract must accept the transfer
 
@@ -64,7 +64,7 @@ to the ERC1155TokenReceiver.
 - INVALID_ADDRESS: destination address cannot be 0
 - INTEGER_OVERFLOW: value cannot overflow uint128
 - CANNOT_TRANSFER_PAYER: cannot transfer assets that confer obligations
-- CANNOT_TRANSFER_MATURED_TRADE: cannot transfer trade that has matured
+- CANNOT_TRANSFER_MATURED_ASSET: cannot transfer asset that has matured
 - INSUFFICIENT_BALANCE: from account does not have sufficient tokens
 - ERC1155_NOT_ACCEPTED: to contract must accept the transfer
 
@@ -73,7 +73,7 @@ to the ERC1155TokenReceiver.
 
 ### `balanceOf`
 > Get the balance of an account's tokens. For a more complete picture of an account's
-portfolio, see the method `Portfolios.getTrades()`
+portfolio, see the method `Portfolios.getAssets()`
 
 #### Parameters:
 - `account`: The address of the token holder
@@ -88,7 +88,7 @@ portfolio, see the method `Portfolios.getTrades()`
 
 ### `balanceOfBatch`
 > Get the balance of multiple account/token pairs. For a more complete picture of an account's
-portfolio, see the method `Portfolios.getTrades()`
+portfolio, see the method `Portfolios.getAssets()`
 
 #### Parameters:
 - `accounts`: The addresses of the token holders
@@ -101,11 +101,11 @@ portfolio, see the method `Portfolios.getTrades()`
 
 ***
 
-### `encodeTradeId`
-> Encodes a trade object into a uint256 id for ERC1155 compatibility
+### `encodeAssetId`
+> Encodes a asset object into a uint256 id for ERC1155 compatibility
 
 #### Parameters:
-- `trade`: the trade object to encode
+- `asset`: the asset object to encode
 
 #### Return Values:
 - a uint256 id that is representative of a matching fungible token
@@ -113,11 +113,11 @@ portfolio, see the method `Portfolios.getTrades()`
 
 ***
 
-### `decodeTradeId`
+### `decodeAssetId`
 > Decodes an ERC1155 id into its attributes
 
 #### Parameters:
-- `id`: the trade id to decode
+- `id`: the asset id to decode
 
 
 

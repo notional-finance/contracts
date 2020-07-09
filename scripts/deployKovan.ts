@@ -38,7 +38,7 @@ async function main() {
     // set discounts
     const swapnet = await SwapnetDeployer.deploy(owner, prereqs.registry.address);
     // update max trades
-    await (await swapnet.portfolios.setMaxTrades(20)).wait()
+    await (await swapnet.portfolios.setMaxAssets(20)).wait()
     // set reserve account
     await (await swapnet.escrow.setReserveAccount(process.env.RESERVE_ACCOUNT as string)).wait();
     await swapnet.saveAddresses(process.env.CONTRACTS_FILE as string);
@@ -63,7 +63,7 @@ async function main() {
     );
 
     // DEPLOY FUTURE CASH MARKET
-    // new instrument group
+    // new future cash group
     // update max trades
     // update fees
     // update rate factors
@@ -80,7 +80,7 @@ async function main() {
     );
 
     // TODO
-    // update instrument group
+    // update future cash group
 }
 
 main()

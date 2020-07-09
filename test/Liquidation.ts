@@ -250,7 +250,7 @@ describe("Liquidation", () => {
 
             // Here we should have removed all the liquidity tokens to raise 50 dai to pay off half of the debt and sold the equivalent
             // of 50 Dai of ETH to cover the rest.
-            expect(await portfolios.getTrades(wallet.address)).to.have.lengthOf(0);
+            expect(await portfolios.getAssets(wallet.address)).to.have.lengthOf(0);
             expect(await escrow.currencyBalances(AddressZero, wallet.address)).to.equal(WeiPerEther.mul(2).sub(ethToSell));
         });
     });
@@ -272,7 +272,7 @@ describe("Liquidation", () => {
             expect(isSettled).to.be.true;
 
             // Expect future cash to be sold and part of the reserve to be reduced
-            expect(await portfolios.getTrades(wallet.address)).to.have.lengthOf(0);
+            expect(await portfolios.getAssets(wallet.address)).to.have.lengthOf(0);
             const reserveBalance = await escrow.currencyBalances(dai.address, wallet2.address);
             // The difference from what the wallet has and the cash balance will come from the reserve fund
             expect(ownerCashBalance.sub(futureCashPrice).sub(walletDaiBalance)).to.equal(WeiPerEther.mul(1000).sub(reserveBalance));
@@ -306,7 +306,7 @@ describe("Liquidation", () => {
             const [isSettled, ] = await t.settleCashBalance(wallet, owner);
             expect(isSettled).to.be.true;
 
-            expect(await portfolios.getTrades(wallet.address)).to.have.lengthOf(0);
+            expect(await portfolios.getAssets(wallet.address)).to.have.lengthOf(0);
             expect(await escrow.currencyBalances(dai.address, wallet.address)).to.be.above(0);
             // Reserve balance should not have been touched
             expect(await escrow.currencyBalances(dai.address, wallet2.address)).to.equal(WeiPerEther.mul(1000));
@@ -388,7 +388,7 @@ describe("Liquidation", () => {
             const remainingDai = await escrow.currencyBalances(dai.address, wallet.address);
             expect(closeOutCost.add(remainingDai)).to.equal(WeiPerEther.mul(105));
 
-            expect(await portfolios.getTrades(wallet.address)).to.have.lengthOf(0);
+            expect(await portfolios.getAssets(wallet.address)).to.have.lengthOf(0);
             expect(await t.isCollateralized(wallet)).to.be.true;
         });
 
@@ -404,7 +404,7 @@ describe("Liquidation", () => {
             await chainlink.setAnswer(parseEther("0.02"));
             expect(await t.isCollateralized(wallet)).to.be.false;
 
-            let portfolioBefore = await portfolios.getTrades(wallet.address);
+            let portfolioBefore = await portfolios.getAssets(wallet.address);
             const blockNum = await provider.getBlockNumber();
             // This is hardcoded since it's a bit tricky to get this calculation (this is the change
             // in the future cash position of the portfolio before and after)
@@ -412,7 +412,7 @@ describe("Liquidation", () => {
 
             await escrow.liquidate(wallet.address, CURRENCY.DAI, CURRENCY.ETH);
             let ethBalanceAfter = await escrow.currencyBalances(AddressZero, wallet.address);
-            const portfolioAfter = await portfolios.getTrades(wallet.address);
+            const portfolioAfter = await portfolios.getAssets(wallet.address);
 
             // Liquidator Purchased 2.1 ETH for 105 Dai
             const liquidationBonus = await escrow.G_LIQUIDATION_DISCOUNT();

@@ -418,20 +418,20 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
      * @dev skip
      * @param account the account to withdraw collateral from
      * @param collateralToken the address of the token to use as collateral
-     * @param instrumentGroupId the instrument group used to authenticate the future cash market
+     * @param futureCashGroupId the future cash group used to authenticate the future cash market
      * @param value the amount of collateral to deposit
      * @param fee the amount of `value` to pay as a fee
      */
     function depositIntoMarket(
         address account,
         address collateralToken,
-        uint8 instrumentGroupId,
+        uint8 futureCashGroupId,
         uint128 value,
         uint128 fee
     ) public override {
         // Only the future cash market is allowed to call this function.
-        Common.InstrumentGroup memory ig = Portfolios().getInstrumentGroup(instrumentGroupId);
-        require(msg.sender == ig.futureCashMarket, $$(ErrorCode(UNAUTHORIZED_CALLER)));
+        Common.FutureCashGroup memory fg = Portfolios().getFutureCashGroup(futureCashGroupId);
+        require(msg.sender == fg.futureCashMarket, $$(ErrorCode(UNAUTHORIZED_CALLER)));
 
         if (fee > 0) {
             currencyBalances[collateralToken][G_RESERVE_ACCOUNT] = currencyBalances[collateralToken][G_RESERVE_ACCOUNT].add(fee);
@@ -450,20 +450,20 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
      * @dev skip
      * @param account the account to withdraw collateral from
      * @param collateralToken the address of the token to use as collateral
-     * @param instrumentGroupId the instrument group used to authenticate the future cash market
+     * @param futureCashGroupId the future cash group used to authenticate the future cash market
      * @param value the amount of collateral to deposit
      * @param fee the amount of `value` to pay as a fee
      */
     function withdrawFromMarket(
         address account,
         address collateralToken,
-        uint8 instrumentGroupId,
+        uint8 futureCashGroupId,
         uint128 value,
         uint128 fee
     ) public override {
         // Only the future cash market is allowed to call this function.
-        Common.InstrumentGroup memory ig = Portfolios().getInstrumentGroup(instrumentGroupId);
-        require(msg.sender == ig.futureCashMarket, $$(ErrorCode(UNAUTHORIZED_CALLER)));
+        Common.FutureCashGroup memory fg = Portfolios().getFutureCashGroup(futureCashGroupId);
+        require(msg.sender == fg.futureCashMarket, $$(ErrorCode(UNAUTHORIZED_CALLER)));
 
         if (fee > 0) {
             currencyBalances[collateralToken][G_RESERVE_ACCOUNT] = currencyBalances[collateralToken][G_RESERVE_ACCOUNT].add(fee);
@@ -499,8 +499,8 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
     }
 
     /**
-     * @notice Can only be called by Portfolios when trades are settled to cash. There is no free collateral
-     * check for this function call because trade settlement is an equivalent transformation of a trade
+     * @notice Can only be called by Portfolios when assets are settled to cash. There is no free collateral
+     * check for this function call because asset settlement is an equivalent transformation of a asset
      * to a net cash value. An account's free collateral position will remain unchanged after settlement.
      * @dev skip
      * @param account account where the cash is settled
@@ -604,7 +604,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         uint128 value
     ) external {
         // We must always ensure that accounts are settled when we settle cash balances because
-        // matured trades that are not converted to cash may cause the _settleCashBalance function
+        // matured assets that are not converted to cash may cause the _settleCashBalance function
         // to trip into settling with the reserve account.
         address[] memory accounts = new address[](2);
         accounts[0] = payer;
@@ -1060,7 +1060,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
     }
 
     function _hasNoAssets(address account) internal view returns (bool) {
-        Common.Trade[] memory portfolio = Portfolios().getTrades(account);
+        Common.Asset[] memory portfolio = Portfolios().getAssets(account);
         for (uint256 i; i < portfolio.length; i++) {
             // This may be cash receiver or liquidity tokens
             // TODO: does this need to be currency specific?
