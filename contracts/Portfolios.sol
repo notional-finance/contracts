@@ -55,22 +55,16 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
     event UpdateFutureCashGroup(uint8 indexed futureCashGroupId);
 
     /**
-     * @notice Emitted when max assets is set
-     * @param maxAssets the max assets a portfolio can hold
-     */
-    event SetMaxAssets(uint256 maxAssets);
-
-    /**
      * @dev skip
      * @param directory holds contract addresses for dependencies
-     * @param maxAssets max assets that a portfolio can hold
+     * @param numCurrencies initializes the number of currencies listed on the escrow contract
      */
-    function initialize(address directory, uint256 maxAssets) public initializer {
+    function initialize(address directory, uint16 numCurrencies) public initializer {
         Governed.initialize(directory);
-        G_MAX_ASSETS = maxAssets;
 
         // We must initialize this here because it cannot be a constant.
         NULL_ASSET = Common.Asset(0, 0, 0, 0, 0, 0, 0);
+        G_NUM_CURRENCIES = numCurrencies;
     }
 
     /****** Governance Parameters ******/
@@ -82,17 +76,6 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
     function setNumCurrencies(uint16 numCurrencies) public override {
         require(calledByEscrow(), $$(ErrorCode(UNAUTHORIZED_CALLER)));
         G_NUM_CURRENCIES = numCurrencies;
-    }
-
-    /**
-     * @notice Set the max assets that a portfolio can hold
-     * @dev governance
-     * @param maxAssets new max asset number
-     */
-    function setMaxAssets(uint256 maxAssets) public onlyOwner {
-        G_MAX_ASSETS = maxAssets;
-
-        emit SetMaxAssets(maxAssets);
     }
 
     /**
@@ -881,11 +864,6 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
         );
 
         if (matchedAsset.swapType == 0x00) {
-            // This is the NULL_ASSET so we append. This restriction should never work against extracting
-            // cash or liquidation because in those cases we will always be trading offsetting positions
-            // rather than adding new positions.
-            require(portfolio.length < G_MAX_ASSETS, $$(ErrorCode(PORTFOLIO_TOO_LARGE)));
-
             if (Common.isLiquidityToken(asset.swapType) && Common.isPayer(asset.swapType)) {
                 // You cannot have a payer liquidity token without an existing liquidity token entry in
                 // your portfolio since liquidity tokens must always have a positive balance.

@@ -73,15 +73,6 @@ describe("Portfolio", () => {
       expect(fcAfter[1][CURRENCY.DAI]).to.equal(WeiPerEther.mul(100));
     });
 
-    it("prevents assets being added past max assets", async () => {
-      await portfolios.setMaxAssets(2);
-      await escrow.deposit(dai.address, WeiPerEther.mul(200));
-      await futureCash.addLiquidity(maturities[0], WeiPerEther.mul(10), WeiPerEther.mul(10), 1000);
-      await expect(
-          futureCash.addLiquidity(maturities[1], WeiPerEther.mul(10), WeiPerEther.mul(10), 1000)
-      ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.PORTFOLIO_TOO_LARGE));
-    });
-
     it("aggregates matching assets", async () => {
       await t.setupLiquidity();
       await t.borrowAndWithdraw(wallet, WeiPerEther.mul(100));

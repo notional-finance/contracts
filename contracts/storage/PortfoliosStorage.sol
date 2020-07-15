@@ -18,9 +18,6 @@ contract PortfoliosStorage {
 
     /****** Governance Parameters ******/
 
-    // This is the max number of assets that can be in a portfolio. This is set so that we don't end up with massive
-    // portfolios that can't be liquidated due to gas cost restrictions.
-    uint256 public G_MAX_ASSETS;
     // Number of currency groups, set by the Escrow account.
     uint16 public G_NUM_CURRENCIES;
 

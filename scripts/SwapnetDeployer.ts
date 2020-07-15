@@ -172,8 +172,8 @@ export class SwapnetDeployer {
         const portfolios = await SwapnetDeployer.deployProxyContract<Portfolios>(
             owner,
             SwapnetDeployer.loadArtifact("Portfolios"),
-            'address,uint256',
-            [directory.address, 100],
+            'address,uint16',
+            [directory.address, 1],
             proxyAdmin
         );
 
@@ -217,9 +217,6 @@ export class SwapnetDeployer {
 
         log("Setting collateral currencies")
         await SwapnetDeployer.txMined(risk.setHaircut(portfolioHaircut));
-
-        log("Setting max portfolio assets")
-        await SwapnetDeployer.txMined(portfolios.setMaxAssets(10));
 
         return new SwapnetDeployer(owner, escrow, portfolios, risk, owner.provider, proxyAdmin, directory, erc1155, startBlock);
     };
