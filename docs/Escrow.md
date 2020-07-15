@@ -216,6 +216,8 @@ account has sufficient free collateral after the withdraw or else it fails.
 balance to do so
 - INSUFFICIENT_COLLATERAL_BALANCE: account does not hold enough collateral to settle, they will have
 additional collateral in a different currency if they are collateralized
+- INSUFFICIENT_FREE_COLLATERAL_SETTLER: calling account to settle cash does not have sufficient free collateral
+after settling payers and receivers
 
 
 ***
@@ -247,6 +249,8 @@ additional collateral in a different currency if they are collateralized
 - RESERVE_ACCOUNT_HAS_INSUFFICIENT_BALANCE: settling requires the reserve account, but there is insufficient
 balance to do so
 - INSUFFICIENT_COLLATERAL_BALANCE: account does not hold enough collateral to settle, they will have
+- INSUFFICIENT_FREE_COLLATERAL_SETTLER: calling account to settle cash does not have sufficient free collateral
+after settling payers and receivers
 additional collateral in a different currency if they are collateralized
 
 
@@ -265,6 +269,9 @@ additional collateral in a different currency if they are collateralized
 #### Error Codes:
 *  - INVALID_DEPOSIT_CURRENCY: deposit currency supplied is not a valid currency
 - CANNOT_LIQUIDATE_SUFFICIENT_COLLATERAL: account has positive free collateral and cannot be liquidated
+- CANNOT_LIQUIDATE_SELF: liquidator cannot equal the liquidated account
+- INSUFFICIENT_FREE_COLLATERAL_LIQUIDATOR: liquidator does not have sufficient free collateral after liquidating
+accounts
 
 
 ***
@@ -282,6 +289,9 @@ additional collateral in a different currency if they are collateralized
 #### Error Codes:
 *  - INVALID_DEPOSIT_CURRENCY: deposit currency supplied is not a valid currency
 - CANNOT_LIQUIDATE_SUFFICIENT_COLLATERAL: account has positive free collateral and cannot be liquidated
+- CANNOT_LIQUIDATE_SELF: liquidator cannot equal the liquidated account
+- INSUFFICIENT_FREE_COLLATERAL_LIQUIDATOR: liquidator does not have sufficient free collateral after liquidating
+accounts
 
 
 ***

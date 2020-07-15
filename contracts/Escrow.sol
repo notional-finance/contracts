@@ -560,6 +560,8 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
      * balance to do so
      *  - INSUFFICIENT_COLLATERAL_BALANCE: account does not hold enough collateral to settle, they will have
      * additional collateral in a different currency if they are collateralized
+     *  - INSUFFICIENT_FREE_COLLATERAL_SETTLER: calling account to settle cash does not have sufficient free collateral
+     * after settling payers and receivers
      * @param currency the currency group to settle
      * @param payers the party that has a negative cash balance and will transfer collateral to the receiver
      * @param receivers the party that has a positive cash balance and will receive collateral from the payer
@@ -593,6 +595,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
             );
         }
 
+        require(_freeCollateral(msg.sender) >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL_FOR_SETTLER)));
         emit SettleCashBatch(currency, depositCurrency, payers, receivers, settledAmounts);
     }
 
@@ -610,6 +613,8 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
      *  - RESERVE_ACCOUNT_HAS_INSUFFICIENT_BALANCE: settling requires the reserve account, but there is insufficient
      * balance to do so
      *  - INSUFFICIENT_COLLATERAL_BALANCE: account does not hold enough collateral to settle, they will have
+     *  - INSUFFICIENT_FREE_COLLATERAL_SETTLER: calling account to settle cash does not have sufficient free collateral
+     * after settling payers and receivers
      * additional collateral in a different currency if they are collateralized
      * @param currency the currency group to settle
      * @param depositCurrency the deposit currency to sell to cover
@@ -646,6 +651,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
             value
         );
 
+        require(_freeCollateral(msg.sender) >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL_FOR_SETTLER)));
         emit SettleCash(currency, depositCurrency, payer, receiver, settledAmount);
     }
 
@@ -750,7 +756,10 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
     /**
      * @notice Liquidates a batch of accounts in a specific currency.
      * @dev *  - INVALID_DEPOSIT_CURRENCY: deposit currency supplied is not a valid currency
-     * - CANNOT_LIQUIDATE_SUFFICIENT_COLLATERAL: account has positive free collateral and cannot be liquidated
+     *  - CANNOT_LIQUIDATE_SUFFICIENT_COLLATERAL: account has positive free collateral and cannot be liquidated
+     *  - CANNOT_LIQUIDATE_SELF: liquidator cannot equal the liquidated account
+     *  - INSUFFICIENT_FREE_COLLATERAL_LIQUIDATOR: liquidator does not have sufficient free collateral after liquidating
+     * accounts
      * @param accounts the account to liquidate
      * @param currency the currency that is undercollateralized
      * @param depositCurrency the deposit currency to exchange for `currency`
@@ -764,13 +773,17 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
             amountLiquidated[i] = _liquidate(accounts[i], currency, depositToken);
         }
 
+        require(_freeCollateral(msg.sender) >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL_FOR_LIQUIDATOR)));
         emit LiquidateBatch(currency, depositCurrency, accounts, amountLiquidated);
     }
 
     /**
      * @notice Liquidates a single account if it is undercollateralized
      * @dev *  - INVALID_DEPOSIT_CURRENCY: deposit currency supplied is not a valid currency
-     * - CANNOT_LIQUIDATE_SUFFICIENT_COLLATERAL: account has positive free collateral and cannot be liquidated
+     *  - CANNOT_LIQUIDATE_SUFFICIENT_COLLATERAL: account has positive free collateral and cannot be liquidated
+     *  - CANNOT_LIQUIDATE_SELF: liquidator cannot equal the liquidated account
+     *  - INSUFFICIENT_FREE_COLLATERAL_LIQUIDATOR: liquidator does not have sufficient free collateral after liquidating
+     * accounts
      * @param account the account to liquidate
      * @param currency the currency that is undercollateralized
      * @param depositCurrency the deposit currency to exchange for `currency`
@@ -781,12 +794,14 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
 
         uint128 amountLiquidated = _liquidate(account, currency, depositToken);
 
+        require(_freeCollateral(msg.sender) >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL_FOR_LIQUIDATOR)));
         emit Liquidate(currency, depositCurrency, account, amountLiquidated);
     }
 
     function _liquidate(address account, uint16 currency, address depositToken) internal returns (uint128) {
         int256 fc;
         uint128[] memory currencyRequirement;
+        require(account != msg.sender, $$(ErrorCode(CANNOT_LIQUIDATE_SELF)));
 
         (fc, currencyRequirement) = Portfolios().freeCollateralNoEmit(account);
 

@@ -254,6 +254,55 @@ describe("Deposits and Withdraws", () => {
         )).to.not.be.reverted;
     });
 
+    it("does not allow an undercollateralized account to settle", async () => {
+        await t.setupLiquidity();
+        await t.borrowAndWithdraw(wallet, parseEther("1"));
+        await t.borrowAndWithdraw(wallet2, parseEther("250"));
+        await escrow.connect(wallet2).deposit(dai.address, parseEther("5"));
+
+        await mineBlocks(provider, 20);
+        await chainlink.setAnswer(parseEther("0.02"));
+
+        expect(await t.isCollateralized(wallet2)).to.be.false;
+        await expect(escrow.connect(wallet2).settleCashBalance(
+            CURRENCY.DAI,
+            CURRENCY.ETH,
+            wallet.address,
+            owner.address,
+            parseEther("1")
+        )).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INSUFFICIENT_FREE_COLLATERAL_FOR_SETTLER));
+        await expect(escrow.connect(wallet2).settleCashBalanceBatch(
+            CURRENCY.DAI,
+            CURRENCY.ETH,
+            [wallet.address],
+            [owner.address],
+            [parseEther("1")]
+        )).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INSUFFICIENT_FREE_COLLATERAL_FOR_SETTLER));
+
+    });
+
+    it("should not allow someone to liquidate themselves", async () => {
+        await expect(escrow.liquidate(owner.address, CURRENCY.DAI, CURRENCY.ETH))
+            .to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.CANNOT_LIQUIDATE_SELF));
+        await expect(escrow.liquidateBatch([owner.address], CURRENCY.DAI, CURRENCY.ETH))
+            .to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.CANNOT_LIQUIDATE_SELF));
+    });
+
+    it("does not allow an undercollateralized account to liquidate", async () => {
+        await t.setupLiquidity();
+        await t.borrowAndWithdraw(wallet, parseEther("1"));
+        await t.borrowAndWithdraw(wallet2, parseEther("250"));
+        await escrow.connect(wallet2).deposit(dai.address, parseEther("5"));
+
+        await chainlink.setAnswer(parseEther("0.02"));
+
+        expect(await t.isCollateralized(wallet2)).to.be.false;
+        await expect(escrow.connect(wallet2).liquidate(wallet.address, CURRENCY.DAI, CURRENCY.ETH))
+            .to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INSUFFICIENT_FREE_COLLATERAL_FOR_LIQUIDATOR));
+        await expect(escrow.connect(wallet2).liquidateBatch([wallet.address], CURRENCY.DAI, CURRENCY.ETH))
+            .to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INSUFFICIENT_FREE_COLLATERAL_FOR_LIQUIDATOR));
+    });
+
     it("does not allow liquidating with an invalid deposit currency", async () => {
         await expect(escrow.liquidate(wallet.address, CURRENCY.DAI, CURRENCY.DAI))
             .to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INVALID_DEPOSIT_CURRENCY));

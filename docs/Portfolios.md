@@ -19,10 +19,8 @@ Manages account portfolios which includes all future cash positions and liquidit
 - [`SettleAccountBatch(address[] accounts)`](#SettleAccountBatch)
 - [`NewFutureCashGroup(uint8 futureCashGroupId)`](#NewFutureCashGroup)
 - [`UpdateFutureCashGroup(uint8 futureCashGroupId)`](#UpdateFutureCashGroup)
-- [`SetMaxAssets(uint256 maxAssets)`](#SetMaxAssets)
 
 ## Governance Methods
-- [`setMaxAssets(uint256 maxAssets)`](#setMaxAssets)
 - [`createFutureCashGroup(uint32 numPeriods, uint32 periodSize, uint32 precision, uint16 currency, address futureCashMarket, address riskFormula)`](#createFutureCashGroup)
 - [`updateFutureCashGroup(uint8 futureCashGroupId, uint32 numPeriods, uint32 periodSize, uint32 precision, uint16 currency, address futureCashMarket, address riskFormula)`](#updateFutureCashGroup)
 
@@ -186,23 +184,8 @@ to call this function.
 
 ***
 
-### `SetMaxAssets`
-> Emitted when max assets is set
-
-#### Parameters:
-- `maxAssets`: the max assets a portfolio can hold
-
-***
-
 
 # Governance Methods
-### `setMaxAssets`
-> Set the max assets that a portfolio can hold
-
-#### Parameters:
-- `maxAssets`: new max asset number
-
-***
 ### `createFutureCashGroup`
 > An future cash group defines a collection of similar future cashs where the risk ladders can be netted
 against each other. The identifier is only 1 byte so we can only have 255 future cash groups, 0 is unused.
