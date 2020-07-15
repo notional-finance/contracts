@@ -27,10 +27,12 @@ cash balances, collateral lockup for trading, cash transfers (settlement), and l
 - [`UpdateExchangeRate(address baseToken, address quoteToken)`](#UpdateExchangeRate)
 - [`Deposit(uint16 currency, address account, uint256 value)`](#Deposit)
 - [`Withdraw(uint16 currency, address account, uint256 value)`](#Withdraw)
-- [`Liquidate(uint16 currency, address account)`](#Liquidate)
-- [`LiquidateBatch(uint16 currency, address[] accounts)`](#LiquidateBatch)
-- [`SettleCash(uint16 currency, address payer, address receiver, uint128 settledAmount)`](#SettleCash)
-- [`SettleCashBatch(uint16 currency, address[] payers, address[] receivers, uint128[] settledAmounts)`](#SettleCashBatch)
+- [`Liquidate(uint16 localCurrency, uint16 depositCurrency, address account, uint128 amountLiquidated)`](#Liquidate)
+- [`LiquidateBatch(uint16 localCurrency, uint16 depositCurrency, address[] accounts, uint128[] amountLiquidated)`](#LiquidateBatch)
+- [`SettleCash(uint16 localCurrency, uint16 depositCurrency, address payer, address receiver, uint128 settledAmount)`](#SettleCash)
+- [`SettleCashBatch(uint16 localCurrency, uint16 depositCurrency, address[] payers, address[] receivers, uint128[] settledAmounts)`](#SettleCashBatch)
+- [`SetDiscounts(uint128 liquidationDiscount, uint128 settlementDiscount)`](#SetDiscounts)
+- [`SetReserve(address reserveAccount)`](#SetReserve)
 
 ## Governance Methods
 - [`setDiscounts(uint128 liquidation, uint128 settlement)`](#setDiscounts)
@@ -340,7 +342,9 @@ additional collateral in a different currency if they are collateralized
 > Notice of a successful liquidation. `msg.sender` will be the liquidator.
 
 #### Parameters:
-- `currency`: currency id that was liquidated
+- `localCurrency`: currency that was liquidated
+
+- `depositCurrency`: currency that was exchanged for the local currency
 
 - `account`: the account that was liquidated
 
@@ -350,7 +354,9 @@ additional collateral in a different currency if they are collateralized
 > Notice of a successful batch liquidation. `msg.sender` will be the liquidator.
 
 #### Parameters:
-- `currency`: currency id that was liquidated
+- `localCurrency`: currency that was liquidated
+
+- `depositCurrency`: currency that was exchanged for the local currency
 
 - `accounts`: the accounts that were liquidated
 
@@ -360,7 +366,9 @@ additional collateral in a different currency if they are collateralized
 > Notice of a successful cash settlement. `msg.sender` will be the settler.
 
 #### Parameters:
-- `currency`: currency id that was settled
+- `localCurrency`: currency that was settled
+
+- `depositCurrency`: currency that was exchanged for the local currency
 
 - `payer`: the account that paid in the settlement
 
@@ -374,13 +382,33 @@ additional collateral in a different currency if they are collateralized
 > Notice of a successful batch cash settlement. `msg.sender` will be the settler.
 
 #### Parameters:
-- `currency`: currency id that was settled
+- `localCurrency`: currency that was settled
+
+- `depositCurrency`: currency that was exchanged for the local currency
 
 - `payers`: the accounts that paid in the settlement
 
 - `receivers`: the accounts that received in the settlement
 
 - `settledAmounts`: the amounts settled between the parties
+
+***
+
+### `SetDiscounts`
+> Emitted when liquidation and settlement discounts are set
+
+#### Parameters:
+- `liquidationDiscount`: discount given to liquidators when purchasing collateral
+
+- `settlementDiscount`: discount given to settlers when purchasing collateral
+
+***
+
+### `SetReserve`
+> Emitted when reserve account is set
+
+#### Parameters:
+- `reserveAccount`: account that holds balances in reserve
 
 ***
 

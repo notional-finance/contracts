@@ -6,6 +6,8 @@ Calculates the currency requirements for a portfolio.
 ## Methods
 - [`getRequirement(struct Common.Asset[] portfolio)`](#getRequirement)
 
+## Events
+- [`SetPortfolioHaircut(uint128 portfolioHaircut)`](#SetPortfolioHaircut)
 
 ## Governance Methods
 - [`setHaircut(uint128 haircut)`](#setHaircut)
@@ -23,6 +25,15 @@ Calculates the currency requirements for a portfolio.
 
 ***
 
+
+# Events
+### `SetPortfolioHaircut`
+> Notice for setting haircut amount for the portfolio
+
+#### Parameters:
+- `portfolioHaircut`: amount of negative haircut applied to debt
+
+***
 
 
 # Governance Methods

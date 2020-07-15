@@ -12,6 +12,7 @@ same id. `CASH_PAYER` tokens are not transferrable because they have negative va
 - [`balanceOf(address account, uint256 id)`](#balanceOf)
 - [`balanceOfBatch(address[] accounts, uint256[] ids)`](#balanceOfBatch)
 - [`encodeAssetId(struct Common.Asset asset)`](#encodeAssetId)
+- [`encodeAssetId(uint8 futureCashGroupId, uint16 instrumentId, uint32 startBlock, uint32 duration, bytes1 swapType)`](#encodeAssetId)
 - [`decodeAssetId(uint256 id)`](#decodeAssetId)
 - [`setApprovalForAll(address operator, bool approved)`](#setApprovalForAll)
 - [`isApprovedForAll(address owner, address operator)`](#isApprovedForAll)
@@ -106,6 +107,26 @@ portfolio, see the method `Portfolios.getAssets()`
 
 #### Parameters:
 - `asset`: the asset object to encode
+
+#### Return Values:
+- a uint256 id that is representative of a matching fungible token
+
+
+***
+
+### `encodeAssetId`
+> Encodes a asset object into a uint256 id for ERC1155 compatibility
+
+#### Parameters:
+- `futureCashGroupId`: future cash group id
+
+- `instrumentId`: instrument id
+
+- `startBlock`: start block
+
+- `duration`: duration in blocks
+
+- `swapType`: swap type identifier
 
 #### Return Values:
 - a uint256 id that is representative of a matching fungible token

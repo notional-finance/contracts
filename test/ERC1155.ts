@@ -72,7 +72,7 @@ describe("ERC1155 Token", () => {
     });
 
     it("cannot send tokens to the zero address", async () => {
-        const id = await erc1155.encodeAssetId(await portfolios.getAsset(owner.address, 0));
+        const id = await erc1155['encodeAssetId((uint8,uint16,uint32,uint32,bytes1,uint32,uint128))'](await portfolios.getAsset(owner.address, 0));
 
         await expect(erc1155.connect(owner).safeTransferFrom(
             owner.address,
@@ -85,7 +85,7 @@ describe("ERC1155 Token", () => {
 
     it("cannot transfer matured assets", async () => {
         await futureCash.connect(wallet).takeFutureCash(maturities[0], WeiPerEther.mul(100), 1000, 0);
-        const id = await erc1155.encodeAssetId(await portfolios.getAsset(wallet.address, 0));
+        const id = await erc1155['encodeAssetId((uint8,uint16,uint32,uint32,bytes1,uint32,uint128))'](await portfolios.getAsset(wallet.address, 0));
 
         await mineBlocks(provider, 20);
         await expect(erc1155.connect(wallet).safeTransferFrom(
@@ -98,7 +98,7 @@ describe("ERC1155 Token", () => {
     });
 
     it("cannot overflow uint128 in value", async () => {
-        const id = await erc1155.encodeAssetId(await portfolios.getAsset(owner.address, 0));
+        const id = await erc1155['encodeAssetId((uint8,uint16,uint32,uint32,bytes1,uint32,uint128))'](await portfolios.getAsset(owner.address, 0));
 
         await expect(erc1155.connect(owner).safeTransferFrom(
             owner.address,
@@ -111,7 +111,7 @@ describe("ERC1155 Token", () => {
 
     it("only the sender can call transfer", async () => {
         await futureCash.connect(wallet).takeFutureCash(maturities[0], WeiPerEther.mul(100), 1000, 40_000_000);
-        const id = await erc1155.encodeAssetId(await portfolios.getAsset(wallet.address, 0));
+        const id = await erc1155['encodeAssetId((uint8,uint16,uint32,uint32,bytes1,uint32,uint128))'](await portfolios.getAsset(wallet.address, 0));
 
         await expect(erc1155.connect(owner).safeTransferFrom(
             wallet.address,
@@ -124,7 +124,7 @@ describe("ERC1155 Token", () => {
 
     it("cannot call transfer with too much balance", async () => {
         await futureCash.connect(wallet).takeFutureCash(maturities[0], WeiPerEther.mul(100), 1000, 40_000_000);
-        const id = await erc1155.encodeAssetId(await portfolios.getAsset(wallet.address, 0));
+        const id = await erc1155['encodeAssetId((uint8,uint16,uint32,uint32,bytes1,uint32,uint128))'](await portfolios.getAsset(wallet.address, 0));
 
         await expect(erc1155.connect(wallet).safeTransferFrom(
             wallet.address,
@@ -137,7 +137,7 @@ describe("ERC1155 Token", () => {
 
     it("can transfer cash receiver", async () => {
         await futureCash.connect(wallet).takeFutureCash(maturities[0], WeiPerEther.mul(100), 1000, 40_000_000);
-        const id = await erc1155.encodeAssetId(await portfolios.getAsset(wallet.address, 0));
+        const id = await erc1155['encodeAssetId((uint8,uint16,uint32,uint32,bytes1,uint32,uint128))'](await portfolios.getAsset(wallet.address, 0));
 
         await expect(erc1155.connect(wallet).safeTransferFrom(
             wallet.address,
@@ -153,7 +153,7 @@ describe("ERC1155 Token", () => {
     });
 
     it("can transfer liquidity tokens between accounts", async () => {
-        const id = await erc1155.encodeAssetId(await portfolios.getAsset(owner.address, 0));
+        const id = await erc1155['encodeAssetId((uint8,uint16,uint32,uint32,bytes1,uint32,uint128))'](await portfolios.getAsset(owner.address, 0));
 
         await expect(erc1155.connect(owner).safeTransferFrom(
             owner.address,
@@ -169,7 +169,7 @@ describe("ERC1155 Token", () => {
 
     it("cannot transfer future cash payer between accounts", async () => {
         await futureCash.connect(wallet).takeCollateral(maturities[0], WeiPerEther.mul(100), 1000, 60_000_000);
-        const id = await erc1155.encodeAssetId(await portfolios.getAsset(wallet.address, 0));
+        const id = await erc1155['encodeAssetId((uint8,uint16,uint32,uint32,bytes1,uint32,uint128))'](await portfolios.getAsset(wallet.address, 0));
 
         await expect(erc1155.connect(wallet).safeTransferFrom(
             wallet.address,
@@ -185,8 +185,8 @@ describe("ERC1155 Token", () => {
         await futureCash.connect(wallet).takeFutureCash(maturities[0], WeiPerEther.mul(100), 1000, 40_000_000);
         await futureCash.connect(wallet).takeFutureCash(maturities[1], WeiPerEther.mul(100), 1000, 20_000_000);
 
-        const id1 = await erc1155.encodeAssetId(await portfolios.getAsset(wallet.address, 0));
-        const id2 = await erc1155.encodeAssetId(await portfolios.getAsset(wallet.address, 1));
+        const id1 = await erc1155['encodeAssetId((uint8,uint16,uint32,uint32,bytes1,uint32,uint128))'](await portfolios.getAsset(wallet.address, 0));
+        const id2 = await erc1155['encodeAssetId((uint8,uint16,uint32,uint32,bytes1,uint32,uint128))'](await portfolios.getAsset(wallet.address, 1));
 
         await expect(erc1155.connect(wallet).safeBatchTransferFrom(
             wallet.address,
@@ -205,7 +205,7 @@ describe("ERC1155 Token", () => {
 
     it("can decode asset ids", async() => {
         const asset = await portfolios.getAsset(owner.address, 0);
-        const id = await erc1155.encodeAssetId(asset);
+        const id = await erc1155['encodeAssetId((uint8,uint16,uint32,uint32,bytes1,uint32,uint128))'](asset);
         const vals = await erc1155.decodeAssetId(id);
 
         expect(vals[0]).to.equal(asset.futureCashGroupId);
@@ -218,7 +218,7 @@ describe("ERC1155 Token", () => {
     it("can approve and use operators", async () => {
         await erc1155.connect(owner).setApprovalForAll(wallet2.address, true);
         expect(await erc1155.isApprovedForAll(owner.address, wallet2.address));
-        const id = await erc1155.encodeAssetId(await portfolios.getAsset(owner.address, 0));
+        const id = await erc1155['encodeAssetId((uint8,uint16,uint32,uint32,bytes1,uint32,uint128))'](await portfolios.getAsset(owner.address, 0));
 
         await expect(erc1155.connect(wallet2).safeTransferFrom(
             owner.address,
@@ -231,7 +231,7 @@ describe("ERC1155 Token", () => {
 
     it("supports erc1155 token receivers on success", async () => {
         await erc1155Receiver.setShouldReject(false);
-        const id = await erc1155.encodeAssetId(await portfolios.getAsset(owner.address, 0));
+        const id = await erc1155['encodeAssetId((uint8,uint16,uint32,uint32,bytes1,uint32,uint128))'](await portfolios.getAsset(owner.address, 0));
 
         await expect(erc1155.connect(owner).safeTransferFrom(
             owner.address,
@@ -244,7 +244,7 @@ describe("ERC1155 Token", () => {
 
     it("supports erc1155 token receivers on failure", async () => {
         await erc1155Receiver.setShouldReject(true);
-        const id = await erc1155.encodeAssetId(await portfolios.getAsset(owner.address, 0));
+        const id = await erc1155['encodeAssetId((uint8,uint16,uint32,uint32,bytes1,uint32,uint128))'](await portfolios.getAsset(owner.address, 0));
 
         await expect(erc1155.connect(owner).safeTransferFrom(
             owner.address,
@@ -261,8 +261,8 @@ describe("ERC1155 Token", () => {
         await futureCash.connect(wallet).takeFutureCash(maturities[0], WeiPerEther.mul(100), 1000, 40_000_000);
         await futureCash.connect(wallet).takeFutureCash(maturities[1], WeiPerEther.mul(100), 1000, 20_000_000);
 
-        const id1 = await erc1155.encodeAssetId(await portfolios.getAsset(wallet.address, 0));
-        const id2 = await erc1155.encodeAssetId(await portfolios.getAsset(wallet.address, 1));
+        const id1 = await erc1155['encodeAssetId((uint8,uint16,uint32,uint32,bytes1,uint32,uint128))'](await portfolios.getAsset(wallet.address, 0));
+        const id2 = await erc1155['encodeAssetId((uint8,uint16,uint32,uint32,bytes1,uint32,uint128))'](await portfolios.getAsset(wallet.address, 1));
 
         await expect(erc1155.connect(wallet).safeBatchTransferFrom(
             wallet.address,
@@ -279,8 +279,8 @@ describe("ERC1155 Token", () => {
         await futureCash.connect(wallet).takeFutureCash(maturities[0], WeiPerEther.mul(100), 1000, 40_000_000);
         await futureCash.connect(wallet).takeFutureCash(maturities[1], WeiPerEther.mul(100), 1000, 20_000_000);
 
-        const id1 = await erc1155.encodeAssetId(await portfolios.getAsset(wallet.address, 0));
-        const id2 = await erc1155.encodeAssetId(await portfolios.getAsset(wallet.address, 1));
+        const id1 = await erc1155['encodeAssetId((uint8,uint16,uint32,uint32,bytes1,uint32,uint128))'](await portfolios.getAsset(wallet.address, 0));
+        const id2 = await erc1155['encodeAssetId((uint8,uint16,uint32,uint32,bytes1,uint32,uint128))'](await portfolios.getAsset(wallet.address, 1));
 
         await expect(erc1155.connect(wallet).safeBatchTransferFrom(
             wallet.address,

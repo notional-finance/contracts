@@ -12,6 +12,7 @@ import "../upgradeable/Initializable.sol";
  */
 contract Directory is OpenZeppelinUpgradesOwnable, Initializable {
     mapping(uint256 => address) public contracts;
+    event SetContract(Governed.CoreContracts name, address contractAddress);
 
     function initialize() public initializer {
         _owner = msg.sender;
@@ -59,5 +60,7 @@ contract Directory is OpenZeppelinUpgradesOwnable, Initializable {
      */
     function setContract(Governed.CoreContracts name, address _address) public onlyOwner {
         contracts[uint256(name)] = _address;
+
+        emit SetContract(name, _address);
     }
 }

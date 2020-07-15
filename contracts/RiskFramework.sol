@@ -23,12 +23,20 @@ contract RiskFramework is IRiskFramework, Governed {
     uint128 public G_PORTFOLIO_HAIRCUT;
 
     /**
+     * @notice Notice for setting haircut amount for the portfolio
+     * @param portfolioHaircut amount of negative haircut applied to debt
+     */
+    event SetPortfolioHaircut(uint128 portfolioHaircut);
+
+    /**
      * @notice Sets the haircut amount for the portfolio
      * @dev governance
      * @param haircut amount of negative haircut applied to debt
      */
     function setHaircut(uint128 haircut) public onlyOwner {
         G_PORTFOLIO_HAIRCUT = haircut;
+
+        emit SetPortfolioHaircut(haircut);
     }
 
     /** The cash ladder for a single instrument or future cash group */

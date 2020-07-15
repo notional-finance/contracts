@@ -78,7 +78,7 @@ module.exports = {
     },
     typechain: {
         outDir: "typechain",
-        target: "ethers"
+        target: "ethers-v4"
     },
     gasReporter: {
         url: "http://localhost:9545",

@@ -105,6 +105,8 @@ describe("Generic Tests", () => {
             .to.be.revertedWith(ErrorDecoder.decodeError(ErrorCodes.UNAUTHORIZED_CALLER));
         await expect(portfolios.connect(wallet).transferAccountAsset(wallet.address, AddressZero, "0x00", 1, 0, 1000, 40, WeiPerEther))
             .to.be.revertedWith(ErrorDecoder.decodeError(ErrorCodes.UNAUTHORIZED_CALLER));
+        await expect(portfolios.connect(wallet).freeCollateralNoEmit(wallet.address))
+            .to.be.revertedWith(ErrorDecoder.decodeError(ErrorCodes.UNAUTHORIZED_CALLER));
 
         await expect(portfolios.connect(wallet).raiseCollateralViaCashReceiver(wallet.address, 1, WeiPerEther))
             .to.be.revertedWith(ErrorDecoder.decodeError(ErrorCodes.UNAUTHORIZED_CALLER));

@@ -81,35 +81,52 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
 
     /**
      * @notice Notice of a successful liquidation. `msg.sender` will be the liquidator.
-     * @param currency currency id that was liquidated
+     * @param localCurrency currency that was liquidated
+     * @param depositCurrency currency that was exchanged for the local currency
      * @param account the account that was liquidated
      */
-    event Liquidate(uint16 indexed currency, address account);
+    event Liquidate(uint16 indexed localCurrency, uint16 depositCurrency, address account, uint128 amountLiquidated);
 
     /**
      * @notice Notice of a successful batch liquidation. `msg.sender` will be the liquidator.
-     * @param currency currency id that was liquidated
+     * @param localCurrency currency that was liquidated
+     * @param depositCurrency currency that was exchanged for the local currency
      * @param accounts the accounts that were liquidated
      */
-    event LiquidateBatch(uint16 indexed currency, address[] accounts);
+    event LiquidateBatch(uint16 indexed localCurrency, uint16 depositCurrency, address[] accounts, uint128[] amountLiquidated);
 
     /**
      * @notice Notice of a successful cash settlement. `msg.sender` will be the settler.
-     * @param currency currency id that was settled
+     * @param localCurrency currency that was settled
+     * @param depositCurrency currency that was exchanged for the local currency
      * @param payer the account that paid in the settlement
      * @param receiver the account that received in the settlement
      * @param settledAmount the amount settled between the parties
      */
-    event SettleCash(uint16 currency, address indexed payer, address indexed receiver, uint128 settledAmount);
+    event SettleCash(uint16 localCurrency, uint16 depositCurrency, address indexed payer, address indexed receiver, uint128 settledAmount);
 
     /**
      * @notice Notice of a successful batch cash settlement. `msg.sender` will be the settler.
-     * @param currency currency id that was settled
+     * @param localCurrency currency that was settled
+     * @param depositCurrency currency that was exchanged for the local currency
      * @param payers the accounts that paid in the settlement
      * @param receivers the accounts that received in the settlement
      * @param settledAmounts the amounts settled between the parties
      */
-    event SettleCashBatch(uint16 currency, address[] payers, address[] receivers, uint128[] settledAmounts);
+    event SettleCashBatch(uint16 localCurrency, uint16 depositCurrency, address[] payers, address[] receivers, uint128[] settledAmounts);
+
+    /**
+     * @notice Emitted when liquidation and settlement discounts are set
+     * @param liquidationDiscount discount given to liquidators when purchasing collateral
+     * @param settlementDiscount discount given to settlers when purchasing collateral
+     */
+    event SetDiscounts(uint128 liquidationDiscount, uint128 settlementDiscount);
+
+    /**
+     * @notice Emitted when reserve account is set
+     * @param reserveAccount account that holds balances in reserve
+     */
+    event SetReserve(address reserveAccount);
     /********** Events *******************************/
 
     /********** Governance Settings ******************/
@@ -123,6 +140,8 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
     function setDiscounts(uint128 liquidation, uint128 settlement) external onlyOwner {
         G_LIQUIDATION_DISCOUNT = liquidation;
         G_SETTLEMENT_DISCOUNT = settlement;
+
+        emit SetDiscounts(liquidation, settlement);
     }
 
     /**
@@ -132,6 +151,8 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
      */
     function setReserveAccount(address account) external onlyOwner {
         G_RESERVE_ACCOUNT = account;
+
+        emit SetReserve(account);
     }
 
     /**
@@ -572,7 +593,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
             );
         }
 
-        emit SettleCashBatch(currency, payers, receivers, settledAmounts);
+        emit SettleCashBatch(currency, depositCurrency, payers, receivers, settledAmounts);
     }
 
     /**
@@ -625,7 +646,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
             value
         );
 
-        emit SettleCash(currency, payer, receiver, settledAmount);
+        emit SettleCash(currency, depositCurrency, payer, receiver, settledAmount);
     }
 
     /**
@@ -687,9 +708,8 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
             if (localCurrencyRequired > 0) {
                 // When we calculate free collateral here we need to add back in the value that we've extracted to ensure that the
                 // free collateral calculation returns the appropriate value.
-                int256 freeCollateral = _freeCollateral(payer).add(
-                    int256(_convertToETHWithHaircut(localCurrencyToken, settledAmount))
-                );
+                (int256 freeCollateral, /* int256[] memory */) = Portfolios().freeCollateralView(payer);
+                freeCollateral = freeCollateral.add(int256(_convertToETHWithHaircut(localCurrencyToken, settledAmount)));
 
                 if (freeCollateral >= 0) {
                     // Returns the amount of shortfall that the function was unable to cover
@@ -738,12 +758,13 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
     function liquidateBatch(address[] calldata accounts, uint16 currency, uint16 depositCurrency) external {
         require(isDepositCurrency(depositCurrency), $$(ErrorCode(INVALID_DEPOSIT_CURRENCY)));
         address depositToken = currencyIdToAddress[depositCurrency];
+        uint128[] memory amountLiquidated = new uint128[](accounts.length);
 
         for (uint256 i; i < accounts.length; i++) {
-            _liquidate(accounts[i], currency, depositToken);
+            amountLiquidated[i] = _liquidate(accounts[i], currency, depositToken);
         }
 
-        emit LiquidateBatch(currency, accounts);
+        emit LiquidateBatch(currency, depositCurrency, accounts, amountLiquidated);
     }
 
     /**
@@ -758,16 +779,16 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         require(isDepositCurrency(depositCurrency), $$(ErrorCode(INVALID_DEPOSIT_CURRENCY)));
         address depositToken = currencyIdToAddress[depositCurrency];
 
-        _liquidate(account, currency, depositToken);
+        uint128 amountLiquidated = _liquidate(account, currency, depositToken);
 
-        emit Liquidate(currency, account);
+        emit Liquidate(currency, depositCurrency, account, amountLiquidated);
     }
 
-    function _liquidate(address account, uint16 currency, address depositToken) internal {
+    function _liquidate(address account, uint16 currency, address depositToken) internal returns (uint128) {
         int256 fc;
         uint128[] memory currencyRequirement;
 
-        (fc, currencyRequirement) = Portfolios().freeCollateral(account);
+        (fc, currencyRequirement) = Portfolios().freeCollateralNoEmit(account);
 
         // We must be undercollateralized overall and there must be a requirement for collaterlizing obligations in this currency.
         require(fc < 0 && currencyRequirement[currency] > 0, $$(ErrorCode(CANNOT_LIQUIDATE_SUFFICIENT_COLLATERAL)));
@@ -803,6 +824,9 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         );
 
         currencyBalances[localCurrencyToken][account] = currencyBalances[localCurrencyToken][account].add(unspentShortfall);
+
+        // We return the amount of localCurrency we raised in liquidation.
+        return currencyRequirement[currency] - localCurrencyRequired;
     }
 
     /********** Settle Cash / Liquidation *************/

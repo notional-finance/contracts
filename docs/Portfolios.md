@@ -19,6 +19,7 @@ Manages account portfolios which includes all future cash positions and liquidit
 - [`SettleAccountBatch(address[] accounts)`](#SettleAccountBatch)
 - [`NewFutureCashGroup(uint8 futureCashGroupId)`](#NewFutureCashGroup)
 - [`UpdateFutureCashGroup(uint8 futureCashGroupId)`](#UpdateFutureCashGroup)
+- [`SetMaxAssets(uint256 maxAssets)`](#SetMaxAssets)
 
 ## Governance Methods
 - [`setMaxAssets(uint256 maxAssets)`](#setMaxAssets)
@@ -182,6 +183,14 @@ to call this function.
 
 #### Parameters:
 - `futureCashGroupId`: id of the updated future cash group
+
+***
+
+### `SetMaxAssets`
+> Emitted when max assets is set
+
+#### Parameters:
+- `maxAssets`: the max assets a portfolio can hold
 
 ***
 

@@ -12,6 +12,8 @@ interface IPortfoliosCallable {
     function upsertAccountAsset(address account, Common.Asset calldata assets) external;
     function upsertAccountAssetBatch(address account, Common.Asset[] calldata assets) external;
     function freeCollateral(address account) external returns (int256, uint128[] memory);
+    function freeCollateralNoEmit(address account) external returns (int256, uint128[] memory);
+    function freeCollateralView(address account) external view returns (int256, uint128[] memory);
     function setNumCurrencies(uint16 numCurrencies) external;
 
     function transferAccountAsset(

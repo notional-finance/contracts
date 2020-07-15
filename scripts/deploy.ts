@@ -2,7 +2,7 @@ import {Wallet, Contract} from "ethers";
 import {JsonRpcProvider} from "ethers/providers";
 import {SwapnetDeployer} from "./SwapnetDeployer";
 import { WeiPerEther } from 'ethers/constants';
-import { BigNumber } from 'ethers/utils';
+import { BigNumber, parseEther } from 'ethers/utils';
 import {config} from "dotenv";
 import Debug from "debug";
 
@@ -72,8 +72,8 @@ async function main() {
     if (process.env.DEPLOY_MOCK === "true") {
         let obj = await swapnet.deployMockCurrency(
             prereqs.uniswapFactory,
-            WeiPerEther.div(100),               // ETH/MOCK exchange rate
-            WeiPerEther.div(100).mul(30),       // Haircut
+            parseEther("0.01"),       // ETH/MOCK exchange rate
+            parseEther("1.30"),       // Haircut
             true
         );
         currencyId = obj.currencyId;

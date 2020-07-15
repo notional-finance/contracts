@@ -55,6 +55,12 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
     event UpdateFutureCashGroup(uint8 indexed futureCashGroupId);
 
     /**
+     * @notice Emitted when max assets is set
+     * @param maxAssets the max assets a portfolio can hold
+     */
+    event SetMaxAssets(uint256 maxAssets);
+
+    /**
      * @dev skip
      * @param directory holds contract addresses for dependencies
      * @param maxAssets max assets that a portfolio can hold
@@ -85,6 +91,8 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
      */
     function setMaxAssets(uint256 maxAssets) public onlyOwner {
         G_MAX_ASSETS = maxAssets;
+
+        emit SetMaxAssets(maxAssets);
     }
 
     /**
@@ -276,12 +284,28 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
     }
 
     /**
+     * @notice Stateful version of free collateral that does not emit a SettleAccount event, used during
+     * liquidation to ensure that off chain syncing with the graph protocol does not have race conditions
+     * due to two events proclaiming changes to an account.
+     * @dev skip
+     * @param account address of account to get free collateral for
+     * @return (net free collateral position, an array of the currency requirements)
+     */
+    function freeCollateralNoEmit(address account) public override returns (int256, uint128[] memory) {
+        require(calledByEscrow(), $$(ErrorCode(UNAUTHORIZED_CALLER)));
+        // This will emit an event, which is the correct action here.
+        _settleAccount(account);
+
+        return freeCollateralView(account);
+    }
+
+    /**
      * @notice Returns the free collateral balance for an account as a view functon.
      * @dev - INVALID_EXCHANGE_RATE: exchange rate returned by the oracle is less than 0
      * @param account account in question
      * @return (net free collateral position, an array of the currency requirements)
      */
-    function freeCollateralView(address account) public view returns (int256, uint128[] memory) {
+    function freeCollateralView(address account) public override view returns (int256, uint128[] memory) {
         Common.Asset[] memory portfolio = _accountAssets[account];
         // This is the net balance after cash of each currency
         Common.AccountBalance[] memory balances = Escrow().getNetBalances(account);
@@ -463,7 +487,10 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
             _settleAccount(accounts[i]);
         }
 
-        emit SettleAccountBatch(accounts);
+        // We do not want to emit when this is called by escrow during settle cash.
+        if (!calledByEscrow()) {
+            emit SettleAccountBatch(accounts);
+        }
     }
 
     /**

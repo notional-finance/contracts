@@ -211,6 +211,34 @@ contract ERC1155Token is Governed, IERC1155, IERC165 {
     }
 
     /**
+     * @notice Encodes a asset object into a uint256 id for ERC1155 compatibility
+     * @param futureCashGroupId future cash group id
+     * @param instrumentId instrument id
+     * @param startBlock start block
+     * @param duration duration in blocks
+     * @param swapType swap type identifier
+     * @return a uint256 id that is representative of a matching fungible token
+     */
+    function encodeAssetId(
+        uint8 futureCashGroupId,
+        uint16 instrumentId,
+        uint32 startBlock,
+        uint32 duration,
+        bytes1 swapType
+    ) external pure returns (uint256) {
+        Common.Asset memory asset = Common.Asset(
+            futureCashGroupId,
+            instrumentId,
+            startBlock,
+            duration,
+            swapType,
+            0, 0
+        );
+
+        return Common.encodeAssetId(asset);
+    }
+
+    /**
      * @notice Decodes an ERC1155 id into its attributes
      * @param id the asset id to decode
      * @return (futureCashGroupId, instrumentId, startBlock, duration, swapType)
