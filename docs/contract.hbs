@@ -32,23 +32,23 @@
 {{#ownFunctions}}
 {{#if (isUserMethod visibility natspec) }}
 ### `{{name}}`
-> {{#if natspec.userdoc}}{{natspec.userdoc}}{{else}}No description{{/if}}
+> {{#if natspec.userdoc}}{{trim natspec.userdoc}}{{else}}No description{{/if}}
 {{#if natspec.params}}
 #### Parameters:
 {{#natspec.params}}
-- `{{param}}`: {{description}}
+- `{{param}}`: {{trim description}}
 {{/natspec.params}}
 {{/if}}
 {{#if natspec.returns}}
 #### Return Values:
 {{#natspec.returns}}
-- {{param}} {{description}}
+- {{param}} {{trim description}}
 {{/natspec.returns}}
 {{/if}}
 
 {{#if natspec.devdoc}}
 #### Error Codes:
-{{ natspec.devdoc }}
+{{ trim natspec.devdoc }}
 {{/if}}
 
 ***
@@ -60,11 +60,11 @@
 # Events
 {{#ownEvents}}
 ### `{{name}}`
-> {{#if natspec.userdoc}}{{natspec.userdoc}}{{else}}No description{{/if}}
+> {{#if natspec.userdoc}}{{trim natspec.userdoc}}{{else}}No description{{/if}}
 {{#if natspec.params}}
 #### Parameters:
 {{#natspec.params}}
-- `{{param}}`: {{description}}
+- `{{param}}`: {{trim description}}
 {{/natspec.params}}
 {{/if}}
 
@@ -78,17 +78,17 @@
 {{#ownFunctions}}
 {{#if (isGovernance visibility natspec) }}
 ### `{{name}}`
-> {{#if natspec.userdoc}}{{natspec.userdoc}}{{else}}No description{{/if}}
+> {{#if natspec.userdoc}}{{trim natspec.userdoc}}{{else}}No description{{/if}}
 {{#if natspec.params}}
 #### Parameters:
 {{#natspec.params}}
-- `{{param}}`: {{description}}
+- `{{param}}`: {{trim description}}
 {{/natspec.params}}
 {{/if}}
 {{#if natspec.returns}}
 #### Return Values:
 {{#natspec.returns}}
-- {{param}} {{description}}
+- {{param}} {{trim description}}
 {{/natspec.returns}}
 {{/if}}
 

@@ -1,18 +1,18 @@
 import chai from "chai";
-import {solidity} from "ethereum-waffle";
-import {fixture, wallets, fixtureLoader, provider, mineBlocks, CURRENCY} from "./fixtures";
-import {Wallet} from "ethers";
-import {WeiPerEther, AddressZero} from "ethers/constants";
+import { solidity } from "ethereum-waffle";
+import { fixture, wallets, fixtureLoader, provider, CURRENCY, fastForwardToMaturity } from "./fixtures";
+import { Wallet } from "ethers";
+import { WeiPerEther, AddressZero } from "ethers/constants";
 
-import {ERC20} from "../typechain/ERC20";
-import {FutureCash} from "../typechain/FutureCash";
-import { ErrorDecoder, ErrorCodes } from '../scripts/errorCodes';
-import { Escrow } from '../typechain/Escrow';
-import { Portfolios } from '../typechain/Portfolios';
-import { TestUtils } from './testUtils';
+import { Erc20 as ERC20 } from "../typechain/Erc20";
+import { FutureCash } from "../typechain/FutureCash";
+import { ErrorDecoder, ErrorCodes } from "../scripts/errorCodes";
+import { Escrow } from "../typechain/Escrow";
+import { Portfolios } from "../typechain/Portfolios";
+import { TestUtils } from "./testUtils";
 
 chai.use(solidity);
-const {expect} = chai;
+const { expect } = chai;
 
 describe("Portfolio", () => {
     let dai: ERC20;
@@ -48,8 +48,8 @@ describe("Portfolio", () => {
         await futureCash.setRateFactors(rateAnchor, 100);
 
         // Set the blockheight to the beginning of the next period
-        let block = await provider.getBlockNumber();
-        await mineBlocks(provider, 20 - (block % 20));
+        maturities = await futureCash.getActiveMaturities();
+        await fastForwardToMaturity(provider, maturities[1]);
         t = new TestUtils(escrow, futureCash, portfolios, dai, owner, objs.chainlink, objs.uniswap);
         maturities = await futureCash.getActiveMaturities();
     });
@@ -62,32 +62,38 @@ describe("Portfolio", () => {
     });
 
     it("returns the proper free collateral amount pre and post maturity", async () => {
-      await t.setupLiquidity();
-      await t.borrowAndWithdraw(wallet, WeiPerEther.mul(100));
-      const fcBefore = await portfolios.freeCollateralView(wallet.address);
-      expect(fcBefore[1][CURRENCY.DAI]).to.equal(WeiPerEther.mul(105));
+        await t.setupLiquidity();
+        await t.borrowAndWithdraw(wallet, WeiPerEther.mul(100));
+        const fcBefore = await portfolios.freeCollateralView(wallet.address);
+        expect(fcBefore[1][CURRENCY.DAI]).to.equal(WeiPerEther.mul(105));
 
-
-      await mineBlocks(provider, 20);
-      const fcAfter = await portfolios.freeCollateralView(wallet.address);
-      expect(fcAfter[1][CURRENCY.DAI]).to.equal(WeiPerEther.mul(100));
+        await fastForwardToMaturity(provider, maturities[1]);
+        const fcAfter = await portfolios.freeCollateralView(wallet.address);
+        expect(fcAfter[1][CURRENCY.DAI]).to.equal(WeiPerEther.mul(100));
     });
 
     it("aggregates matching assets", async () => {
-      await t.setupLiquidity();
-      await t.borrowAndWithdraw(wallet, WeiPerEther.mul(100));
-      await t.borrowAndWithdraw(wallet, WeiPerEther.mul(100));
-      expect(await t.hasCashPayer(wallet, maturities[0], WeiPerEther.mul(200)));
+        await t.setupLiquidity();
+        await t.borrowAndWithdraw(wallet, WeiPerEther.mul(100));
+        await t.borrowAndWithdraw(wallet, WeiPerEther.mul(100));
+        expect(await t.hasCashPayer(wallet, maturities[0], WeiPerEther.mul(200)));
     });
 
     it("does not allow future cash groups with invalid currencies", async () => {
-      await expect(
-        portfolios.createFutureCashGroup(2, 40, 1e9, 3, futureCash.address, AddressZero)
-      ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INVALID_CURRENCY));
+        await expect(
+            portfolios.createFutureCashGroup(2, 40, 1e9, 3, futureCash.address, AddressZero)
+        ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INVALID_CURRENCY));
     });
 
-    it("allows future cash groups to be updated", async () =>{
-      await portfolios.updateFutureCashGroup(1, 0, 1000, 1e8, CURRENCY.DAI, futureCash.address, owner.address);
-      expect(await portfolios.getFutureCashGroup(1)).to.eql([0, 1000, 1e8, CURRENCY.DAI, futureCash.address, owner.address]);
+    it("allows future cash groups to be updated", async () => {
+        await portfolios.updateFutureCashGroup(1, 0, 1000, 1e8, CURRENCY.DAI, futureCash.address, owner.address);
+        expect(await portfolios.getFutureCashGroup(1)).to.eql([
+            0,
+            1000,
+            1e8,
+            CURRENCY.DAI,
+            futureCash.address,
+            owner.address
+        ]);
     });
 });

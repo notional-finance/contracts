@@ -8,15 +8,13 @@ import "./interface/IERC1155.sol";
 import "./interface/IERC1155TokenReceiver.sol";
 import "./interface/IERC165.sol";
 
-
 /**
  * @notice Implements the ERC1155 token standard for transferring future cash tokens within Swapnet. ERC1155 ids
  * encode an identifier that represents assets that are fungible with each other. For example, two future cash tokens
- * that asset in the same market and mature on the same block are fungible with each other and therefore will have the
+ * that asset in the same market and mature at the same time are fungible with each other and therefore will have the
  * same id. `CASH_PAYER` tokens are not transferrable because they have negative value.
  */
 contract ERC1155Token is Governed, IERC1155, IERC165 {
-
     // bytes4(keccak256("onERC1155Received(address,address,uint256,uint256,bytes)"))
     bytes4 internal constant ERC1155_ACCEPTED = 0xf23a6e61;
     // bytes4(keccak256("onERC1155BatchReceived(address,address,uint256[],uint256[],bytes)"))
@@ -127,7 +125,12 @@ contract ERC1155Token is Governed, IERC1155, IERC165 {
      * @param id the token id
      * @param _value the notional amount to transfer
      */
-    function _transfer(address from, address to, uint256 id, uint256 _value) internal {
+    function _transfer(
+        address from,
+        address to,
+        uint256 id,
+        uint256 _value
+    ) internal {
         require(to != address(0), $$(ErrorCode(INVALID_ADDRESS)));
         uint128 value = uint128(_value);
         require(uint256(value) == _value, $$(ErrorCode(INTEGER_OVERFLOW)));
@@ -137,10 +140,8 @@ contract ERC1155Token is Governed, IERC1155, IERC165 {
         // Transfers can only be entitlements to receive which are a net benefit.
         require(Common.isReceiver(swapType), $$(ErrorCode(CANNOT_TRANSFER_PAYER)));
 
-        (uint8 futureCashGroupId, uint16 instrumentId, uint32 startBlock, uint32 duration) = Common.decodeAssetId(
-            id
-        );
-        require(startBlock + duration > block.number, $$(ErrorCode(CANNOT_TRANSFER_MATURED_ASSET)));
+        (uint8 futureCashGroupId, uint16 instrumentId, uint32 startTime, uint32 duration) = Common.decodeAssetId(id);
+        require(startTime + duration > block.timestamp, $$(ErrorCode(CANNOT_TRANSFER_MATURED_ASSET)));
 
         Portfolios().transferAccountAsset(
             from,
@@ -148,7 +149,7 @@ contract ERC1155Token is Governed, IERC1155, IERC165 {
             swapType,
             futureCashGroupId,
             instrumentId,
-            startBlock,
+            startTime,
             duration,
             value
         );
@@ -161,18 +162,16 @@ contract ERC1155Token is Governed, IERC1155, IERC165 {
      * @param id ID of the token
      * @return The account's balance of the token type requested
      */
-    function balanceOf(address account, uint256 id) external view override returns (uint256) {
+    function balanceOf(address account, uint256 id) external override view returns (uint256) {
         bytes1 swapType = Common.getSwapType(id);
 
-        (uint8 futureCashGroupId, uint16 instrumentId, uint32 startBlock, uint32 duration) = Common.decodeAssetId(
-            id
-        );
+        (uint8 futureCashGroupId, uint16 instrumentId, uint32 startTime, uint32 duration) = Common.decodeAssetId(id);
         (Common.Asset memory asset, ) = Portfolios().searchAccountAsset(
             account,
             swapType,
             futureCashGroupId,
             instrumentId,
-            startBlock,
+            startTime,
             duration
         );
 
@@ -188,8 +187,8 @@ contract ERC1155Token is Governed, IERC1155, IERC165 {
      */
     function balanceOfBatch(address[] calldata accounts, uint256[] calldata ids)
         external
-        view
         override
+        view
         returns (uint256[] memory)
     {
         uint256[] memory results = new uint256[](accounts.length);
@@ -214,26 +213,19 @@ contract ERC1155Token is Governed, IERC1155, IERC165 {
      * @notice Encodes a asset object into a uint256 id for ERC1155 compatibility
      * @param futureCashGroupId future cash group id
      * @param instrumentId instrument id
-     * @param startBlock start block
-     * @param duration duration in blocks
+     * @param startTime start time
+     * @param duration duration in seconds
      * @param swapType swap type identifier
      * @return a uint256 id that is representative of a matching fungible token
      */
     function encodeAssetId(
         uint8 futureCashGroupId,
         uint16 instrumentId,
-        uint32 startBlock,
+        uint32 startTime,
         uint32 duration,
         bytes1 swapType
     ) external pure returns (uint256) {
-        Common.Asset memory asset = Common.Asset(
-            futureCashGroupId,
-            instrumentId,
-            startBlock,
-            duration,
-            swapType,
-            0, 0
-        );
+        Common.Asset memory asset = Common.Asset(futureCashGroupId, instrumentId, startTime, duration, swapType, 0, 0);
 
         return Common.encodeAssetId(asset);
     }
@@ -241,23 +233,23 @@ contract ERC1155Token is Governed, IERC1155, IERC165 {
     /**
      * @notice Decodes an ERC1155 id into its attributes
      * @param id the asset id to decode
-     * @return (futureCashGroupId, instrumentId, startBlock, duration, swapType)
+     * @return (futureCashGroupId, instrumentId, startTime, duration, swapType)
      */
-    function decodeAssetId(
-        uint256 id
-    ) external pure returns (uint8, uint16, uint32, uint32, bytes1) {
+    function decodeAssetId(uint256 id)
+        external
+        pure
+        returns (
+            uint8,
+            uint16,
+            uint32,
+            uint32,
+            bytes1
+        )
+    {
         bytes1 swapType = Common.getSwapType(id);
-        (uint8 futureCashGroupId, uint16 instrumentId, uint32 startBlock, uint32 duration) = Common.decodeAssetId(
-            id
-        );
+        (uint8 futureCashGroupId, uint16 instrumentId, uint32 startTime, uint32 duration) = Common.decodeAssetId(id);
 
-        return (
-            futureCashGroupId,
-            instrumentId,
-            startBlock,
-            duration,
-            swapType
-        );
+        return (futureCashGroupId, instrumentId, startTime, duration, swapType);
     }
 
     /**

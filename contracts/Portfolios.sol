@@ -83,7 +83,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
      * against each other. The identifier is only 1 byte so we can only have 255 future cash groups, 0 is unused.
      * @dev governance
      * @param numPeriods the total number of periods
-     * @param periodSize the baseline period length (in blocks) for periodic swaps in this future cash.
+     * @param periodSize the baseline period length (in seconds) for periodic swaps in this future cash.
      * @param precision the discount rate precision
      * @param currency the token address of the currenty this future cash settles in
      * @param futureCashMarket the rate oracle that defines the discount rate
@@ -110,14 +110,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
         );
 
         // The future cash is set to 0 for discount rate oracles and there is no max rate as well.
-        IRateOracle(futureCashMarket).setParameters(
-            currentFutureCashGroupId,
-            0,
-            precision,
-            periodSize,
-            numPeriods,
-            0
-        );
+        IRateOracle(futureCashMarket).setParameters(currentFutureCashGroupId, 0, precision, periodSize, numPeriods, 0);
 
         emit NewFutureCashGroup(currentFutureCashGroupId);
     }
@@ -157,17 +150,11 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
         if (i.riskFormula != riskFormula) i.riskFormula = riskFormula;
 
         // The future cash is set to 0 for discount rate oracles and there is no max rate as well.
-        IRateOracle(futureCashMarket).setParameters(
-            futureCashGroupId,
-            0,
-            precision,
-            periodSize,
-            numPeriods,
-            0
-        );
+        IRateOracle(futureCashMarket).setParameters(futureCashGroupId, 0, precision, periodSize, numPeriods, 0);
 
         emit UpdateFutureCashGroup(futureCashGroupId);
     }
+
     /****** Governance Parameters ******/
 
     /***** Public View Methods *****/
@@ -196,9 +183,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
      * @param futureCashGroupId to retrieve
      * @return the given future cash group
      */
-    function getFutureCashGroup(
-        uint8 futureCashGroupId
-    ) public view override returns (Common.FutureCashGroup memory) {
+    function getFutureCashGroup(uint8 futureCashGroupId) public override view returns (Common.FutureCashGroup memory) {
         return futureCashGroups[futureCashGroupId];
     }
 
@@ -207,9 +192,12 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
      * @param groupIds array of future cash group ids to retrieve
      * @return an array of future cash group objects
      */
-    function getFutureCashGroups(
-        uint8[] memory groupIds
-    ) public view override returns (Common.FutureCashGroup[] memory) {
+    function getFutureCashGroups(uint8[] memory groupIds)
+        public
+        override
+        view
+        returns (Common.FutureCashGroup[] memory)
+    {
         Common.FutureCashGroup[] memory results = new Common.FutureCashGroup[](groupIds.length);
 
         for (uint256 i; i < groupIds.length; i++) {
@@ -225,7 +213,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
      * @param swapType the type of swap to search for
      * @param futureCashGroupId the future cash group id
      * @param instrumentId the instrument id
-     * @param startBlock the starting block
+     * @param startTime the starting timestamp of the period in seconds
      * @param duration the duration of the swap
      * @return (asset, index of asset)
      */
@@ -234,19 +222,15 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
         bytes1 swapType,
         uint8 futureCashGroupId,
         uint16 instrumentId,
-        uint32 startBlock,
+        uint32 startTime,
         uint32 duration
     ) public override view returns (Common.Asset memory, uint256) {
         Common.Asset[] storage portfolio = _accountAssets[account];
-        (Common.Asset memory asset, uint256 index, /* bool */) = _searchAsset(
-            portfolio,
-            swapType,
-            futureCashGroupId,
-            instrumentId,
-            startBlock,
-            duration,
-            false
-        );
+        (
+            Common.Asset memory asset,
+            uint256 index, /* bool */
+
+        ) = _searchAsset(portfolio, swapType, futureCashGroupId, instrumentId, startTime, duration, false);
 
         return (asset, index);
     }
@@ -302,9 +286,9 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
                 uint256 currency = uint256(requirements[i].currency);
                 // This new cash balance represents any net collateral position after taking the portfolio
                 // into account.
-                balances[currency].netBalance = balances[currency].netBalance
-                    .add(requirements[i].npv)
-                    .sub(requirements[i].requirement);
+                balances[currency].netBalance = balances[currency].netBalance.add(requirements[i].npv).sub(
+                    requirements[i].requirement
+                );
             }
         }
 
@@ -353,7 +337,10 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
 
         Common.Asset[] storage portfolio = _accountAssets[account];
         _upsertAsset(portfolio, asset);
-        (int256 fc, /* uint128[] memory */) = freeCollateral(account);
+        (
+            int256 fc, /* uint128[] memory */
+
+        ) = freeCollateral(account);
         require(fc >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL)));
     }
 
@@ -364,10 +351,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
      * @param account to insert the assets into
      * @param assets array of assets to insert into the account
      */
-    function upsertAccountAssetBatch(
-        address account,
-        Common.Asset[] memory assets
-    ) public override {
+    function upsertAccountAssetBatch(address account, Common.Asset[] memory assets) public override {
         if (assets.length == 0) {
             return;
         }
@@ -389,7 +373,10 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
             _upsertAsset(portfolio, assets[i]);
         }
 
-        (int256 fc, /* uint128[] memory */) = freeCollateral(account);
+        (
+            int256 fc, /* uint128[] memory */
+
+        ) = freeCollateral(account);
         require(fc >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL)));
     }
 
@@ -401,7 +388,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
      * @param swapType the type of swap to search for
      * @param futureCashGroupId the future cash group id
      * @param instrumentId the instrument id
-     * @param startBlock the starting block
+     * @param startTime the starting timestamp of the trade in seconds
      * @param duration the duration of the swap
      * @param value the amount of notional transfer between accounts
      */
@@ -411,7 +398,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
         bytes1 swapType,
         uint8 futureCashGroupId,
         uint16 instrumentId,
-        uint32 startBlock,
+        uint32 startTime,
         uint32 duration,
         uint128 value
     ) public override {
@@ -419,28 +406,30 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
         require(calledByERC1155(), $$(ErrorCode(UNAUTHORIZED_CALLER)));
 
         Common.Asset[] storage fromPortfolio = _accountAssets[from];
-        (Common.Asset storage asset, uint256 index, /* bool */) = _searchAsset(
-            fromPortfolio,
-            swapType,
-            futureCashGroupId,
-            instrumentId,
-            startBlock,
-            duration,
-            false
-        );
+        (
+            Common.Asset storage asset,
+            uint256 index, /* bool */
+
+        ) = _searchAsset(fromPortfolio, swapType, futureCashGroupId, instrumentId, startTime, duration, false);
         _reduceAsset(fromPortfolio, asset, index, value);
 
         Common.Asset[] storage toPortfolio = _accountAssets[to];
         _upsertAsset(
             toPortfolio,
-            Common.Asset(futureCashGroupId, instrumentId, startBlock, duration, swapType, asset.rate, value)
+            Common.Asset(futureCashGroupId, instrumentId, startTime, duration, swapType, asset.rate, value)
         );
 
         // All transfers of assets must pass a free collateral check.
-        (int256 fc, /* uint128[] memory */) = freeCollateral(from);
+        (
+            int256 fc, /* uint128[] memory */
+
+        ) = freeCollateral(from);
         require(fc >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL)));
 
-        (fc, /* uint128[] memory */) = freeCollateral(to);
+        (
+            fc, /* uint128[] memory */
+
+        ) = freeCollateral(to);
         require(fc >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL)));
     }
 
@@ -487,7 +476,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
     function _settleAccount(address account) internal returns (bool) {
         bool didSettle = false;
         Common.Asset[] storage portfolio = _accountAssets[account];
-        uint32 blockNum = uint32(block.number);
+        uint32 blockTime = uint32(block.timestamp);
 
         // This is only used when merging the account's portfolio for updating cash balances in escrow. We
         // keep this here so that we can do a single function call to settle all the cash in Escrow.
@@ -495,7 +484,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
 
         // Loop through the portfolio and find the assets that have matured.
         for (uint256 i; i < portfolio.length; i++) {
-            if ((portfolio[i].startBlock + portfolio[i].duration) <= blockNum) {
+            if ((portfolio[i].startTime + portfolio[i].duration) <= blockTime) {
                 // Here we are dealing with a matured asset. We get the appropriate currency for
                 // the instrument. We may want to cache this somehow, but in all likelihood there
                 // will not be multiple matured assets in the same future cash group.
@@ -516,7 +505,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
                     uint128 futureCashAmount = FutureCash(futureCashMarket).settleLiquidityToken(
                         account,
                         portfolio[i].notional,
-                        portfolio[i].startBlock + portfolio[i].duration
+                        portfolio[i].startTime + portfolio[i].duration
                     );
                     settledCash[currency] = settledCash[currency].add(futureCashAmount);
                 } else {
@@ -684,13 +673,12 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
         Common.Asset memory asset,
         address futureCashMarket,
         TradePortfolioState memory state
-    ) internal  {
-        (uint128 collateral, uint128 futureCash, uint128 tokens) = FutureCash(futureCashMarket)
-            .tradeLiquidityToken(
-                state.amountRemaining,
-                asset.notional,
-                asset.startBlock + asset.duration
-            );
+    ) internal {
+        (uint128 collateral, uint128 futureCash, uint128 tokens) = FutureCash(futureCashMarket).tradeLiquidityToken(
+            state.amountRemaining,
+            asset.notional,
+            asset.startTime + asset.duration
+        );
         state.amountRemaining = state.amountRemaining.sub(collateral);
 
         // This amount of collateral has been removed from the market
@@ -700,7 +688,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
         state.portfolioChanges[state.indexCount] = Common.Asset(
             asset.futureCashGroupId,
             asset.instrumentId,
-            asset.startBlock,
+            asset.startTime,
             asset.duration,
             Common.getCashReceiver(),
             asset.rate,
@@ -712,7 +700,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
         state.portfolioChanges[state.indexCount] = Common.Asset(
             asset.futureCashGroupId,
             asset.instrumentId,
-            asset.startBlock,
+            asset.startTime,
             asset.duration,
             Common.makeCounterparty(Common.getLiquidityToken()),
             asset.rate,
@@ -739,7 +727,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
             account,
             state.amountRemaining,
             asset.notional,
-            asset.startBlock + asset.duration
+            asset.startTime + asset.duration
         );
 
         // Trade failed, do not update any state variables
@@ -754,7 +742,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
         state.portfolioChanges[state.indexCount] = Common.Asset(
             asset.futureCashGroupId,
             asset.instrumentId,
-            asset.startBlock,
+            asset.startTime,
             asset.duration,
             Common.getCashPayer(),
             asset.rate,
@@ -773,12 +761,19 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
         Common.Asset memory asset,
         address futureCashMarket,
         TradePortfolioState memory state
-    ) internal returns (uint256, uint128, int256) {
+    )
+        internal
+        returns (
+            uint256,
+            uint128,
+            int256
+        )
+    {
         // This will purchase future cash in order to close out the obligations
         (uint128 repayCost, uint128 futureCash) = FutureCash(futureCashMarket).tradeCashPayer(
             state.amountRemaining,
             asset.notional,
-            asset.startBlock + asset.duration
+            asset.startTime + asset.duration
         );
 
         // This amount of collateral has to be deposited in the market
@@ -789,7 +784,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
         state.portfolioChanges[state.indexCount] = Common.Asset(
             asset.futureCashGroupId,
             asset.instrumentId,
-            asset.startBlock,
+            asset.startTime,
             asset.duration,
             Common.getCashReceiver(),
             asset.rate,
@@ -810,7 +805,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
      * @param swapType the type of swap to search for
      * @param futureCashGroupId the future cash group id
      * @param instrumentId the instrument id
-     * @param startBlock the starting block
+     * @param startTime the starting time of the period in seconds
      * @param duration the duration of the swap
      * @param findCounterparty find the counterparty of the asset
      *
@@ -821,10 +816,18 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
         bytes1 swapType,
         uint8 futureCashGroupId,
         uint16 instrumentId,
-        uint32 startBlock,
+        uint32 startTime,
         uint32 duration,
         bool findCounterparty
-    ) internal view returns (Common.Asset storage, uint256, bool) {
+    )
+        internal
+        view
+        returns (
+            Common.Asset storage,
+            uint256,
+            bool
+        )
+    {
         if (portfolio.length == 0) {
             return (NULL_ASSET, portfolio.length, false);
         }
@@ -833,7 +836,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
             Common.Asset storage t = portfolio[i];
             if (t.futureCashGroupId != futureCashGroupId) continue;
             if (t.instrumentId != instrumentId) continue;
-            if (t.startBlock != startBlock) continue;
+            if (t.startTime != startTime) continue;
             if (t.duration != duration) continue;
 
             if (t.swapType == swapType) {
@@ -858,7 +861,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
             asset.swapType,
             asset.futureCashGroupId,
             asset.instrumentId,
-            asset.startBlock,
+            asset.startTime,
             asset.duration,
             true
         );
@@ -899,9 +902,12 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
      * @param index of the asset in the portfolio
      * @param value the amount of notional to reduce
      */
-    function _reduceAsset(Common.Asset[] storage portfolio, Common.Asset storage asset, uint256 index, uint128 value)
-        internal
-    {
+    function _reduceAsset(
+        Common.Asset[] storage portfolio,
+        Common.Asset storage asset,
+        uint256 index,
+        uint128 value
+    ) internal {
         require(asset.swapType != 0x00, $$(ErrorCode(INVALID_SWAP)));
         require(asset.notional >= value, $$(ErrorCode(INSUFFICIENT_BALANCE)));
 

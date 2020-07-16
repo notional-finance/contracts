@@ -1,9 +1,9 @@
-import {waffle, ethers} from "@nomiclabs/buidler";
-import { createFixtureLoader} from "ethereum-waffle";
-import {Wallet, providers} from "ethers";
+import { waffle, ethers } from "@nomiclabs/buidler";
+import { createFixtureLoader } from "ethereum-waffle";
+import { Wallet, providers } from "ethers";
 import { SwapnetDeployer } from "../scripts/SwapnetDeployer";
 import defaultAccounts from "./defaultAccounts.json";
-import { parseEther, BigNumber } from 'ethers/utils';
+import { parseEther, BigNumber } from "ethers/utils";
 
 // Silences multiple initialize signature errors
 ethers.errors.setLogLevel("error");
@@ -15,7 +15,7 @@ export const fixtureLoader = createFixtureLoader(provider, [wallets[0]]);
 export const CURRENCY = {
     ETH: 0,
     DAI: 1
-}
+};
 
 /**
  * Deploys and configures a base set of contracts for unit testing.
@@ -32,17 +32,19 @@ export async function fixture(provider: providers.Provider, [owner]: Wallet[]) {
         parseEther("1.05")
     );
 
-    const {currencyId, erc20, chainlink, uniswapExchange} = await swapnet.deployMockCurrency(
+    const { currencyId, erc20, chainlink, uniswapExchange } = await swapnet.deployMockCurrency(
         prereqs.uniswapFactory,
-        parseEther("0.01"), 
+        parseEther("0.01"),
         parseEther("1.30"),
         true,
         parseEther("10000")
     );
 
-    const futureCash = await swapnet.deployFutureCashMarket(currencyId,
+    // We will do 60 second blocks for testing
+    const futureCash = await swapnet.deployFutureCashMarket(
+        currencyId,
         4,
-        20,
+        60,
         parseEther("10000"),
         new BigNumber(0),
         new BigNumber(0),
@@ -66,8 +68,15 @@ export async function fixture(provider: providers.Provider, [owner]: Wallet[]) {
     };
 }
 
-export async function mineBlocks(provider: providers.Web3Provider, numBlocks: number) {
-    for (let i = 0; i < numBlocks; i++) {
-        await provider.send("evm_mine", []);
+export async function fastForwardToMaturity(provider: providers.Web3Provider, maturity: number) {
+    await provider.send("evm_mine", [maturity]);
+}
+
+export async function fastForwardToTime(provider: providers.Web3Provider, timestamp?: number) {
+    if (timestamp == undefined) {
+        timestamp = (await provider.getBlock("latest")).timestamp + 1;
     }
+    await provider.send("evm_setNextBlockTimestamp", [timestamp]);
+
+    return timestamp;
 }

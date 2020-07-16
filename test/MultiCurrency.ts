@@ -1,23 +1,23 @@
 import chai from "chai";
-import {solidity} from "ethereum-waffle";
-import {fixture, wallets, fixtureLoader, provider, mineBlocks, CURRENCY} from "./fixtures";
-import {Wallet} from "ethers";
+import { solidity } from "ethereum-waffle";
+import { fixture, wallets, fixtureLoader, provider, CURRENCY, fastForwardToMaturity } from "./fixtures";
+import { Wallet } from "ethers";
 
-import {ERC20} from "../typechain/ERC20";
-import {FutureCash} from "../typechain/FutureCash";
-import { Escrow } from '../typechain/Escrow';
-import { Portfolios } from '../typechain/Portfolios';
-import { TestUtils } from './testUtils';
-import { UniswapExchangeInterface } from '../typechain/UniswapExchangeInterface';
-import { MockAggregator } from '../typechain/MockAggregator';
-import { SwapnetDeployer } from '../scripts/SwapnetDeployer';
-import { parseEther, BigNumber } from 'ethers/utils';
-import { UniswapFactoryInterface } from '../typechain/UniswapFactoryInterface';
-import { ErrorDecoder, ErrorCodes } from '../scripts/errorCodes';
-import { AddressZero } from 'ethers/constants';
+import { Erc20 as ERC20 } from "../typechain/Erc20";
+import { FutureCash } from "../typechain/FutureCash";
+import { Escrow } from "../typechain/Escrow";
+import { Portfolios } from "../typechain/Portfolios";
+import { TestUtils, BLOCK_TIME_LIMIT } from "./testUtils";
+import { UniswapExchangeInterface } from "../typechain/UniswapExchangeInterface";
+import { MockAggregator } from "../typechain/MockAggregator";
+import { SwapnetDeployer } from "../scripts/SwapnetDeployer";
+import { parseEther, BigNumber } from "ethers/utils";
+import { UniswapFactoryInterface } from "../typechain/UniswapFactoryInterface";
+import { ErrorDecoder, ErrorCodes } from "../scripts/errorCodes";
+import { AddressZero } from "ethers/constants";
 
 chai.use(solidity);
-const {expect} = chai;
+const { expect } = chai;
 
 describe("Multi Currency", () => {
     let owner: Wallet;
@@ -34,12 +34,12 @@ describe("Multi Currency", () => {
     let chainlink: MockAggregator[] = [];
     let futureCash: FutureCash[] = [];
     let wbtc: {
-      currencyId: number;
-      erc20: ERC20;
-      chainlink: MockAggregator;
-      uniswapExchange: UniswapExchangeInterface;
+        currencyId: number;
+        erc20: ERC20;
+        chainlink: MockAggregator;
+        uniswapExchange: UniswapExchangeInterface;
     };
-  
+
     let t1: TestUtils;
     let t2: TestUtils;
     let tNew: TestUtils;
@@ -61,10 +61,22 @@ describe("Multi Currency", () => {
         chainlink[0] = objs.chainlink;
         uniswap[0] = objs.uniswap;
 
-        const newCurrency = await swapnet.deployMockCurrency(objs.uniswapFactory, parseEther("0.01"), parseEther("1.20"), true);
+        const newCurrency = await swapnet.deployMockCurrency(
+            objs.uniswapFactory,
+            parseEther("0.01"),
+            parseEther("1.20"),
+            true
+        );
         const newFutureCash = await swapnet.deployFutureCashMarket(
-          newCurrency.currencyId,
-          2, 60, parseEther("10000"), new BigNumber(0), new BigNumber(0), 1e9, 1_020_000_000, 100
+            newCurrency.currencyId,
+            2,
+            90,
+            parseEther("10000"),
+            new BigNumber(0),
+            new BigNumber(0),
+            1e9,
+            1_020_000_000,
+            100
         );
 
         token[1] = newCurrency.erc20;
@@ -74,16 +86,16 @@ describe("Multi Currency", () => {
 
         await escrow.setReserveAccount(reserve.address);
         for (let c of token) {
-          await c.transfer(wallet.address, parseEther("10000"));
-          await c.transfer(wallet2.address, parseEther("10000"));
-          await c.transfer(reserve.address, parseEther("10000"));
+            await c.transfer(wallet.address, parseEther("10000"));
+            await c.transfer(wallet2.address, parseEther("10000"));
+            await c.transfer(reserve.address, parseEther("10000"));
 
-          await c.connect(owner).approve(escrow.address, parseEther("100000000"));
-          await c.connect(wallet).approve(escrow.address, parseEther("100000000"));
-          await c.connect(wallet2).approve(escrow.address, parseEther("100000000"));
-          await c.connect(reserve).approve(escrow.address, parseEther("100000000"));
+            await c.connect(owner).approve(escrow.address, parseEther("100000000"));
+            await c.connect(wallet).approve(escrow.address, parseEther("100000000"));
+            await c.connect(wallet2).approve(escrow.address, parseEther("100000000"));
+            await c.connect(reserve).approve(escrow.address, parseEther("100000000"));
 
-          await escrow.connect(reserve).deposit(c.address, parseEther("1000"));
+            await escrow.connect(reserve).deposit(c.address, parseEther("1000"));
         }
 
         t1 = new TestUtils(escrow, futureCash[0], portfolios, token[0], owner, chainlink[0], uniswap[0]);
@@ -92,14 +104,21 @@ describe("Multi Currency", () => {
         await wbtc.erc20.transfer(wallet.address, parseEther("100000"));
 
         const futureCashNew = await swapnet.deployFutureCashMarket(
-          CURRENCY.DAI,
-          2, 60, parseEther("10000"), new BigNumber(0), new BigNumber(0), 1e9, 1_020_000_000, 100
+            CURRENCY.DAI,
+            2,
+            60,
+            parseEther("10000"),
+            new BigNumber(0),
+            new BigNumber(0),
+            1e9,
+            1_020_000_000,
+            100
         );
         tNew = new TestUtils(escrow, futureCashNew, portfolios, token[0], owner, chainlink[0], uniswap[0]);
 
         // Set the blockheight to the beginning of the next period
-        let block = await provider.getBlockNumber();
-        await mineBlocks(provider, 20 - (block % 20));
+        const maturities = await futureCash[0].getActiveMaturities();
+        await fastForwardToMaturity(provider, maturities[1]);
     });
 
     afterEach(async () => {
@@ -117,206 +136,193 @@ describe("Multi Currency", () => {
     });
 
     const setupTest = async () => {
-      // This is equivalent to 25 ETH or 2500 Dai
-      await wbtc.erc20.connect(wallet).approve(escrow.address, parseEther("100000"));
-      await escrow.connect(wallet).deposit(wbtc.erc20.address, parseEther("0.5"));
-      await escrow.connect(wallet2).deposit(t1.dai.address, parseEther("1000"));
+        // This is equivalent to 25 ETH or 2500 Dai
+        await wbtc.erc20.connect(wallet).approve(escrow.address, parseEther("100000"));
+        await escrow.connect(wallet).deposit(wbtc.erc20.address, parseEther("0.5"));
+        await escrow.connect(wallet2).deposit(t1.dai.address, parseEther("1000"));
 
-      await t1.setupLiquidity();
-      const maturities = await t1.futureCash.getActiveMaturities();
-      await t1.futureCash.connect(wallet).takeCollateral(
-        maturities[0],
-        parseEther("100"),
-        1000,
-        80_000_000
-      );
+        await t1.setupLiquidity();
+        const maturities = await t1.futureCash.getActiveMaturities();
+        await t1.futureCash
+            .connect(wallet)
+            .takeCollateral(maturities[0], parseEther("100"), BLOCK_TIME_LIMIT, 80_000_000);
 
-      await escrow.connect(wallet).withdraw(t1.dai.address,
-        await escrow.currencyBalances(t1.dai.address, wallet.address)
-      );
+        await escrow
+            .connect(wallet)
+            .withdraw(t1.dai.address, await escrow.currencyBalances(t1.dai.address, wallet.address));
 
-      await mineBlocks(provider, 20);
-    }
+        await fastForwardToMaturity(provider, maturities[1]);
+    };
 
     describe("happy path", async () => {
-      it("allows an account to trade on two different future cash groups in the same currency", async () => {
-        await t1.setupLiquidity();
-        await tNew.setupLiquidity();
-        await t1.borrowAndWithdraw(wallet, parseEther("100"), 1.5, 0, 100_000_000);
-        await tNew.borrowAndWithdraw(wallet, parseEther("100"), 1.5, 0, 100_000_000);
-      });
+        it("allows an account to trade on two different future cash groups in the same currency", async () => {
+            await t1.setupLiquidity();
+            await tNew.setupLiquidity();
+            await t1.borrowAndWithdraw(wallet, parseEther("100"), 1.5, 0, 100_000_000);
+            await tNew.borrowAndWithdraw(wallet, parseEther("100"), 1.5, 0, 100_000_000);
+        });
 
-      it("allows an account to trade on two currencies", async () => {
-        await t1.setupLiquidity();
-        await t2.setupLiquidity();
-        await t1.borrowAndWithdraw(wallet, parseEther("100"), 1.05, 0, 100_000_000);
-        await t2.borrowAndWithdraw(wallet, parseEther("100"), 1.05, 0, 100_000_000);
-      });
+        it("allows an account to trade on two currencies", async () => {
+            await t1.setupLiquidity();
+            await t2.setupLiquidity();
+            await t1.borrowAndWithdraw(wallet, parseEther("100"), 1.05, 0, 100_000_000);
+            await t2.borrowAndWithdraw(wallet, parseEther("100"), 1.05, 0, 100_000_000);
+        });
 
-      it("converts deposit currencies to ETH", async () => {
-        expect(wbtc.currencyId).to.equal(3);
-        const converted = await escrow.convertBalancesToETH([
-            new BigNumber(0), new BigNumber(0), new BigNumber(0), parseEther("0.3")
-        ]);
+        it("converts deposit currencies to ETH", async () => {
+            expect(wbtc.currencyId).to.equal(3);
+            const converted = await escrow.convertBalancesToETH([
+                new BigNumber(0),
+                new BigNumber(0),
+                new BigNumber(0),
+                parseEther("0.3")
+            ]);
 
-        expect(converted[0]).to.equal(new BigNumber(0));
-        expect(converted[1]).to.equal(new BigNumber(0));
-        expect(converted[2]).to.equal(new BigNumber(0));
-        expect(converted[3]).to.equal(new BigNumber(parseEther("2.1")));
-      });
+            expect(converted[0]).to.equal(new BigNumber(0));
+            expect(converted[1]).to.equal(new BigNumber(0));
+            expect(converted[2]).to.equal(new BigNumber(0));
+            expect(converted[3]).to.equal(new BigNumber(parseEther("2.1")));
+        });
 
-      it("liquidates accounts in a currency with designated collateral", async () => {
-        await setupTest();
-        await wbtc.chainlink.setAnswer(parseEther("1"));
-        await escrow.connect(wallet2).liquidate(wallet.address, CURRENCY.DAI, wbtc.currencyId);
-      });
+        it("liquidates accounts in a currency with designated collateral", async () => {
+            await setupTest();
+            await wbtc.chainlink.setAnswer(parseEther("1"));
+            await escrow.connect(wallet2).liquidate(wallet.address, CURRENCY.DAI, wbtc.currencyId);
+        });
 
-      it("liquidates accounts and repays borrow across two future cash groups", async () => {
-        await escrow.connect(wallet2).deposit(token[0].address, parseEther("1000"));
+        it("liquidates accounts and repays borrow across two future cash groups", async () => {
+            await escrow.connect(wallet2).deposit(token[0].address, parseEther("1000"));
 
-        await t1.setupLiquidity();
-        await tNew.setupLiquidity();
-        await t1.borrowAndWithdraw(wallet, parseEther("5"), 1.05, 0, 100_000_000);
-        await tNew.borrowAndWithdraw(wallet, parseEther("50"), 1.05, 0, 100_000_000);
+            await t1.setupLiquidity();
+            await tNew.setupLiquidity();
+            await t1.borrowAndWithdraw(wallet, parseEther("5"), 1.05, 0, 100_000_000);
+            await tNew.borrowAndWithdraw(wallet, parseEther("50"), 1.05, 0, 100_000_000);
 
-        await chainlink[0].setAnswer(parseEther("0.015"));
-        await escrow.connect(wallet2).liquidate(wallet.address, CURRENCY.DAI, 0);
-        expect(await portfolios.getAssets(wallet.address)).to.have.lengthOf(1);
-      });
+            await chainlink[0].setAnswer(parseEther("0.015"));
+            await escrow.connect(wallet2).liquidate(wallet.address, CURRENCY.DAI, 0);
+            expect(await portfolios.getAssets(wallet.address)).to.have.lengthOf(1);
+        });
 
-      it("partially settles cash using collateral when there are two deposit currencies via settler", async () => {
-        await t1.setupLiquidity();
-        await t1.borrowAndWithdraw(wallet, parseEther("100"), 1.05, 0, 100_000_000);
-        await escrow.connect(wallet2).deposit(t1.dai.address, parseEther("1000"));
-        await wbtc.erc20.connect(wallet).approve(escrow.address, parseEther("100000"));
-        await escrow.connect(wallet).deposit(wbtc.erc20.address, parseEther("0.5"));
-        await escrow.connect(wallet).withdrawEth(parseEther("1"));
-        
-        await mineBlocks(provider, 20);
+        it("partially settles cash using collateral when there are two deposit currencies via settler", async () => {
+            await t1.setupLiquidity();
+            await t1.borrowAndWithdraw(wallet, parseEther("100"), 1.05, 0, 100_000_000);
+            await escrow.connect(wallet2).deposit(t1.dai.address, parseEther("1000"));
+            await wbtc.erc20.connect(wallet).approve(escrow.address, parseEther("100000"));
+            await escrow.connect(wallet).deposit(wbtc.erc20.address, parseEther("0.5"));
+            await escrow.connect(wallet).withdrawEth(parseEther("1"));
 
-        await escrow.connect(wallet2).settleCashBalance(
-          CURRENCY.DAI,
-          CURRENCY.ETH,
-          wallet.address,
-          owner.address,
-          parseEther("100")
-        );
+            const maturities = await futureCash[0].getActiveMaturities();
+            await fastForwardToMaturity(provider, maturities[1]);
 
-        // Expect ETH to be cleaned out
-        expect(await escrow.currencyBalances(AddressZero, wallet.address)).to.equal(0);
-        // This was a partial settlement
-        expect(await escrow.cashBalances(CURRENCY.DAI, owner.address)).to.be.above(0);
-      });
+            await escrow
+                .connect(wallet2)
+                .settleCashBalance(CURRENCY.DAI, CURRENCY.ETH, wallet.address, owner.address, parseEther("100"));
 
-      it("partially settles cash using collateral when there are two deposit currencies via uniswap", async () => {
-        await t1.setupLiquidity();
-        await t1.borrowAndWithdraw(wallet, parseEther("100"), 1.05, 0, 100_000_000);
-        await wbtc.erc20.connect(wallet).approve(escrow.address, parseEther("100000"));
-        await escrow.connect(wallet).deposit(wbtc.erc20.address, parseEther("0.5"));
-        await escrow.connect(wallet).withdrawEth(parseEther("1"));
-        
-        await mineBlocks(provider, 20);
+            // Expect ETH to be cleaned out
+            expect(await escrow.currencyBalances(AddressZero, wallet.address)).to.equal(0);
+            // This was a partial settlement
+            expect(await escrow.cashBalances(CURRENCY.DAI, owner.address)).to.be.above(0);
+        });
 
-        await escrow.settleCashBalance(
-          CURRENCY.DAI,
-          CURRENCY.ETH,
-          wallet.address,
-          owner.address,
-          parseEther("100")
-        );
+        it("partially settles cash using collateral when there are two deposit currencies via uniswap", async () => {
+            await t1.setupLiquidity();
+            await t1.borrowAndWithdraw(wallet, parseEther("100"), 1.05, 0, 100_000_000);
+            await wbtc.erc20.connect(wallet).approve(escrow.address, parseEther("100000"));
+            await escrow.connect(wallet).deposit(wbtc.erc20.address, parseEther("0.5"));
+            await escrow.connect(wallet).withdrawEth(parseEther("1"));
 
-        // Expect ETH to be cleaned out
-        expect(await escrow.currencyBalances(AddressZero, wallet.address)).to.equal(0);
-        // This was a partial settlement
-        expect(await escrow.cashBalances(CURRENCY.DAI, owner.address)).to.be.above(0);
-      });
+            const maturities = await futureCash[0].getActiveMaturities();
+            await fastForwardToMaturity(provider, maturities[1]);
+
+            await escrow.settleCashBalance(
+                CURRENCY.DAI,
+                CURRENCY.ETH,
+                wallet.address,
+                owner.address,
+                parseEther("100")
+            );
+
+            // Expect ETH to be cleaned out
+            expect(await escrow.currencyBalances(AddressZero, wallet.address)).to.equal(0);
+            // This was a partial settlement
+            expect(await escrow.cashBalances(CURRENCY.DAI, owner.address)).to.be.above(0);
+        });
     });
 
     // See flow chart at ../docs/SettleCash.png
     describe("settle cash situations [4-8]", async () => {
+        it("[4] does not settle cash with the reserve account if the account has collateral", async () => {
+            await setupTest();
+            await wbtc.chainlink.setAnswer(parseEther("1"));
+            await escrow
+                .connect(wallet2)
+                .settleCashBalance(CURRENCY.DAI, wbtc.currencyId, wallet.address, owner.address, parseEther("100"));
+            expect(await escrow.cashBalances(CURRENCY.DAI, wallet.address)).to.equal(parseEther("-100"));
+        });
 
-      it("[4] does not settle cash with the reserve account if the account has collateral", async () => {
-        await setupTest();
-        await wbtc.chainlink.setAnswer(parseEther("1"));
-        await escrow.connect(wallet2).settleCashBalance(
-          CURRENCY.DAI,
-          wbtc.currencyId,
-          wallet.address,
-          owner.address,
-          parseEther("100")
-        );
-        expect(await escrow.cashBalances(CURRENCY.DAI, wallet.address)).to.equal(parseEther("-100"));
-      });
-      
-      it("[5] reverts if there is no exchange for a deposit currency", async () => {
-        await setupTest();
-        // We will probably not list exchanges for secondary deposit currencies since there will be a
-        // lack of liquidity.
-        await expect(escrow.settleCashBalance(
-          CURRENCY.DAI,
-          wbtc.currencyId,
-          wallet.address,
-          owner.address,
-          parseEther("100")
-        )).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.NO_EXCHANGE_LISTED_FOR_PAIR));
-      });
+        it("[5] reverts if there is no exchange for a deposit currency", async () => {
+            await setupTest();
+            // We will probably not list exchanges for secondary deposit currencies since there will be a
+            // lack of liquidity.
+            await expect(
+                escrow.settleCashBalance(
+                    CURRENCY.DAI,
+                    wbtc.currencyId,
+                    wallet.address,
+                    owner.address,
+                    parseEther("100")
+                )
+            ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.NO_EXCHANGE_LISTED_FOR_PAIR));
+        });
 
-      it("[6] settles cash with a secondary deposit currency", async () => {
-        await setupTest();
-        await escrow.connect(wallet2).settleCashBalance(
-          CURRENCY.DAI,
-          wbtc.currencyId,
-          wallet.address,
-          owner.address,
-          parseEther("100")
-        );
-      });
+        it("[6] settles cash with a secondary deposit currency", async () => {
+            await setupTest();
+            await escrow
+                .connect(wallet2)
+                .settleCashBalance(CURRENCY.DAI, wbtc.currencyId, wallet.address, owner.address, parseEther("100"));
+        });
 
-      it("[7] settles cash with the reserve account when the account is insolvent", async () => {
-        await setupTest();
-        await wbtc.chainlink.setAnswer(parseEther("1"));
-        // liquidate to clear out the BTC
-        await escrow.connect(wallet2).liquidate(wallet.address, CURRENCY.DAI, wbtc.currencyId);
+        it("[7] settles cash with the reserve account when the account is insolvent", async () => {
+            await setupTest();
+            await wbtc.chainlink.setAnswer(parseEther("1"));
+            // liquidate to clear out the BTC
+            await escrow.connect(wallet2).liquidate(wallet.address, CURRENCY.DAI, wbtc.currencyId);
 
-        // deposit eth
-        expect(await escrow.currencyBalances(wbtc.erc20.address, wallet.address)).to.equal(0);
-        const shortfall = parseEther("100").sub(await escrow.currencyBalances(t1.dai.address, wallet.address));
-        const reserveBalance = await escrow.currencyBalances(t1.dai.address, reserve.address);
+            // deposit eth
+            expect(await escrow.currencyBalances(wbtc.erc20.address, wallet.address)).to.equal(0);
+            const shortfall = parseEther("100").sub(await escrow.currencyBalances(t1.dai.address, wallet.address));
+            const reserveBalance = await escrow.currencyBalances(t1.dai.address, reserve.address);
 
-        // This will settle via the reserve account
-        await escrow.connect(wallet2).settleCashBalance(
-          CURRENCY.DAI,
-          wbtc.currencyId,
-          wallet.address,
-          owner.address,
-          parseEther("100")
-        );
+            // This will settle via the reserve account
+            await escrow
+                .connect(wallet2)
+                .settleCashBalance(CURRENCY.DAI, wbtc.currencyId, wallet.address, owner.address, parseEther("100"));
 
-        expect(await escrow.currencyBalances(t1.dai.address, reserve.address)).to.equal(reserveBalance.sub(shortfall));
-      });
+            expect(await escrow.currencyBalances(t1.dai.address, reserve.address)).to.equal(
+                reserveBalance.sub(shortfall)
+            );
+        });
 
-      it("[8] does not settle cash with the reserve account if the account has future cash", async () => {
-        await setupTest();
+        it("[8] does not settle cash with the reserve account if the account has future cash", async () => {
+            await setupTest();
 
-        await t2.setupLiquidity(owner, 0.5, parseEther("10000"), [1]);
-        await escrow.connect(wallet).deposit(t2.dai.address, parseEther("100"));
-        const maturities = await t2.futureCash.getActiveMaturities();
-        await t2.futureCash.connect(wallet).takeFutureCash(maturities[1], parseEther("100"), 1000, 0);
+            await t2.setupLiquidity(owner, 0.5, parseEther("10000"), [1]);
+            await escrow.connect(wallet).deposit(t2.dai.address, parseEther("100"));
+            const maturities = await t2.futureCash.getActiveMaturities();
+            await t2.futureCash.connect(wallet).takeFutureCash(maturities[1], parseEther("100"), BLOCK_TIME_LIMIT, 0);
 
-        await wbtc.chainlink.setAnswer(parseEther("1.5"));
+            await wbtc.chainlink.setAnswer(parseEther("1.5"));
 
-        // liquidate to clear out the BTC
-        await escrow.connect(wallet2).liquidate(wallet.address, CURRENCY.DAI, wbtc.currencyId);
+            // liquidate to clear out the BTC
+            await escrow.connect(wallet2).liquidate(wallet.address, CURRENCY.DAI, wbtc.currencyId);
 
-        const currencyBalance = await escrow.currencyBalances(t1.dai.address, wallet.address);
-        await escrow.connect(wallet2).settleCashBalance(
-          CURRENCY.DAI,
-          wbtc.currencyId,
-          wallet.address,
-          owner.address,
-          parseEther("100")
-        );
-        expect(await escrow.cashBalances(CURRENCY.DAI, wallet.address)).to.equal(parseEther("-100").add(currencyBalance));
-      });
+            const currencyBalance = await escrow.currencyBalances(t1.dai.address, wallet.address);
+            await escrow
+                .connect(wallet2)
+                .settleCashBalance(CURRENCY.DAI, wbtc.currencyId, wallet.address, owner.address, parseEther("100"));
+            expect(await escrow.cashBalances(CURRENCY.DAI, wallet.address)).to.equal(
+                parseEther("-100").add(currencyBalance)
+            );
+        });
     });
-  });
+});

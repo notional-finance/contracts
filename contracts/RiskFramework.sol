@@ -54,7 +54,12 @@ contract RiskFramework is IRiskFramework, Governed {
      * @param portfolio a portfolio of assets
      * @return a set of requirements in every currency represented by the portfolio
      */
-    function getRequirement(Common.Asset[] memory portfolio) public override view returns (Common.Requirement[] memory) {
+    function getRequirement(Common.Asset[] memory portfolio)
+        public
+        override
+        view
+        returns (Common.Requirement[] memory)
+    {
         (CashLadder[] memory ladders, int256[] memory npv) = _getCashLadders(portfolio);
 
         // We now take the per future cash group cash ladder and summarize it into per currency requirements. In the
@@ -73,10 +78,7 @@ contract RiskFramework is IRiskFramework, Governed {
                 if (ladders[i].cashLadder[j] < 0) {
                     // We do a negative haircut on cash ladder balances.
                     uint128 postHaircut = uint128(
-                        ladders[i].cashLadder[j]
-                            .neg()
-                            .mul(G_PORTFOLIO_HAIRCUT)
-                            .div(Common.DECIMALS)
+                        ladders[i].cashLadder[j].neg().mul(G_PORTFOLIO_HAIRCUT).div(Common.DECIMALS)
                     );
                     requirements[i].requirement = requirements[i].requirement.add(postHaircut);
                 }
@@ -86,22 +88,24 @@ contract RiskFramework is IRiskFramework, Governed {
         return requirements;
     }
 
-
     /**
      * @notice Calculates the cash ladders for every future cash group in a portfolio.
      *
      * @param portfolio a portfolio of assets
      * @return an array of cash ladders and an npv figure for every future cash group
      */
-    function _getCashLadders(Common.Asset[] memory portfolio) internal view returns (CashLadder[] memory, int256[] memory) {
+    function _getCashLadders(Common.Asset[] memory portfolio)
+        internal
+        view
+        returns (CashLadder[] memory, int256[] memory)
+    {
         Common._sortPortfolio(portfolio);
-        uint32 blockNum = uint32(block.number);
+        uint32 blockTime = uint32(block.timestamp);
 
         // Each position in this array will hold the value of the portfolio in each maturity.
-        (
-            Common.FutureCashGroup[] memory futureCashGroups,
-            CashLadder[] memory ladders
-        ) = _fetchFutureCashGroups(portfolio);
+        (Common.FutureCashGroup[] memory futureCashGroups, CashLadder[] memory ladders) = _fetchFutureCashGroups(
+            portfolio
+        );
 
         // This will hold the current collateral balance.
         int256[] memory npv = new int256[](ladders.length);
@@ -116,7 +120,7 @@ contract RiskFramework is IRiskFramework, Governed {
                 groupIndex++;
             }
 
-            uint32 maturity = portfolio[i].startBlock + portfolio[i].duration;
+            uint32 maturity = portfolio[i].startTime + portfolio[i].duration;
 
             (int256 cashAmount, int256 npvAmount) = _updateCashLadder(
                 portfolio[i],
@@ -125,11 +129,11 @@ contract RiskFramework is IRiskFramework, Governed {
             );
 
             npv[groupIndex] = npv[groupIndex].add(npvAmount);
-            if (maturity <= blockNum) {
+            if (maturity <= blockTime) {
                 // If asset has matured then all the future cash is considered NPV
                 npv[groupIndex] = npv[groupIndex].add(cashAmount);
             } else {
-                uint256 offset = (maturity - blockNum) / futureCashGroups[groupIndex].periodSize;
+                uint256 offset = (maturity - blockTime) / futureCashGroups[groupIndex].periodSize;
                 ladders[groupIndex].cashLadder[offset] = ladders[groupIndex].cashLadder[offset].add(cashAmount);
             }
         }
@@ -163,28 +167,28 @@ contract RiskFramework is IRiskFramework, Governed {
         (
             uint128 totalFutureCash,
             uint128 totalLiquidity,
-            uint128 totalCollateral,
-            /* */, /* */, /* */
-        ) = FutureCash(futureCashMarket).markets(maturity);
+            uint128 totalCollateral, /* */ /* */
+            ,
+            ,
+
+        ) = /* */
+        FutureCash(futureCashMarket).markets(maturity);
 
         // These are the claims on the collateral and future cash in the markets. The collateral claim
         // goes to npv. This is important to note since we will use this collateralClaim to settle negative
         // cash balances if required.
-        uint128 collateralClaim = uint128(
-            uint256(totalCollateral).mul(asset.notional).div(totalLiquidity)
-        );
+        uint128 collateralClaim = uint128(uint256(totalCollateral).mul(asset.notional).div(totalLiquidity));
         uint128 futureCashClaim = uint128(uint256(totalFutureCash).mul(asset.notional).div(totalLiquidity));
 
         return (collateralClaim, futureCashClaim);
     }
 
     // TODO: can we remove this code by using delegatecall?
-    function _fetchFutureCashGroups(
-        Common.Asset[] memory portfolio
-    ) internal view returns (
-        Common.FutureCashGroup[] memory,
-        CashLadder[] memory
-    ) {
+    function _fetchFutureCashGroups(Common.Asset[] memory portfolio)
+        internal
+        view
+        returns (Common.FutureCashGroup[] memory, CashLadder[] memory)
+    {
         uint8[] memory groupIds = new uint8[](portfolio.length);
         uint256 numGroups;
 

@@ -1,8 +1,8 @@
-import {JsonRpcProvider, Provider} from "ethers/providers";
-import {readFileSync, writeFileSync} from "fs";
-import { BigNumber } from 'ethers/utils';
-import { WeiPerEther, AddressZero } from 'ethers/constants';
-import {Wallet, ContractFactory, Contract, ethers} from "ethers";
+import { JsonRpcProvider, Provider } from "ethers/providers";
+import { readFileSync, writeFileSync } from "fs";
+import { BigNumber } from "ethers/utils";
+import { WeiPerEther, AddressZero } from "ethers/constants";
+import { Wallet, ContractFactory, Contract, ethers } from "ethers";
 
 import ERC20Artifact from "../build/ERC20.json";
 import DirectoryArtifact from "../build/Directory.json";
@@ -18,21 +18,21 @@ import MockAggregatorArtifact from "../build/MockAggregator.json";
 import ProxyAdminArtifact from "../build/ProxyAdmin.json";
 import AdminUpgradeabilityProxyArtifact from "../build/AdminUpgradeabilityProxy.json";
 
-import {Portfolios} from '../typechain/Portfolios';
-import {Escrow} from '../typechain/Escrow';
-import {ProxyAdmin} from '../typechain/ProxyAdmin';
-import {Directory} from '../typechain/Directory';
-import {RiskFramework} from '../typechain/RiskFramework';
-import {IERC1820Registry} from "../typechain/IERC1820Registry";
-import {MockAggregator} from '../typechain/MockAggregator';
-import {UniswapExchangeInterface} from "../typechain/UniswapExchangeInterface";
-import {UniswapFactoryInterface} from "../typechain/UniswapFactoryInterface";
-import {ERC20} from "../typechain/ERC20";
-import {FutureCash} from "../typechain/FutureCash";
-import {ERC1155Token} from '../typechain/ERC1155Token';
+import { Portfolios } from "../typechain/Portfolios";
+import { Escrow } from "../typechain/Escrow";
+import { ProxyAdmin } from "../typechain/ProxyAdmin";
+import { Directory } from "../typechain/Directory";
+import { RiskFramework } from "../typechain/RiskFramework";
+import { Ierc1820Registry as IERC1820Registry } from "../typechain/Ierc1820Registry";
+import { MockAggregator } from "../typechain/MockAggregator";
+import { UniswapExchangeInterface } from "../typechain/UniswapExchangeInterface";
+import { UniswapFactoryInterface } from "../typechain/UniswapFactoryInterface";
+import { Erc20 as ERC20 } from "../typechain/Erc20";
+import { FutureCash } from "../typechain/FutureCash";
+import { Erc1155Token as ERC1155Token } from "../typechain/Erc1155Token";
 
 import Debug from "debug";
-import path from 'path';
+import path from "path";
 const log = Debug("swapnet:deploy");
 
 // This is a mirror of the enum in Governed
@@ -57,7 +57,7 @@ export class SwapnetDeployer {
     ) {}
 
     public coreContractToContract = (contract: CoreContracts) => {
-        switch(contract) {
+        switch (contract) {
             case CoreContracts.ERC1155Token:
                 return this.erc1155;
             case CoreContracts.Escrow:
@@ -69,7 +69,7 @@ export class SwapnetDeployer {
             default:
                 throw new Error(`Unknown core contract ${contract}`);
         }
-    }
+    };
 
     private static deployContract = async (owner: Wallet, artifact: any, args: any[]) => {
         let gasLimit;
@@ -96,19 +96,19 @@ export class SwapnetDeployer {
         params: any[],
         proxyAdmin: ProxyAdmin
     ) => {
-        const logic = (await SwapnetDeployer.deployContract(owner, artifact, []));
+        const logic = await SwapnetDeployer.deployContract(owner, artifact, []);
 
         const abi = new ethers.utils.Interface(artifact.abi);
         log(`Initializing ${artifact.contractName} with sig ${initializeSig} and params ${params}`);
         const data = abi.functions[`initialize(${initializeSig})`].encode(params);
-        const proxy = await SwapnetDeployer.deployContract(
-            owner,
-            AdminUpgradeabilityProxyArtifact,
-            [logic.address, proxyAdmin.address, data]
-        );
+        const proxy = await SwapnetDeployer.deployContract(owner, AdminUpgradeabilityProxyArtifact, [
+            logic.address,
+            proxyAdmin.address,
+            data
+        ]);
         log(`Deployed proxy for ${artifact.contractName}`);
 
-        return new ethers.Contract(proxy.address, artifact.abi, owner) as unknown as T;
+        return (new ethers.Contract(proxy.address, artifact.abi, owner) as unknown) as T;
     };
 
     public static deployPrerequisites = async (owner: Wallet) => {
@@ -120,14 +120,14 @@ export class SwapnetDeployer {
         )) as UniswapFactoryInterface;
         await uniswapFactory.initializeFactory(uniswapTemplate.address);
 
-        const registry = await SwapnetDeployer.deployContract(owner, ERC1820RegistryArtifact, []) as IERC1820Registry;
+        const registry = (await SwapnetDeployer.deployContract(owner, ERC1820RegistryArtifact, [])) as IERC1820Registry;
 
         return { uniswapFactory, registry };
-    }
+    };
 
     private static txMined = async (tx: Promise<ethers.ContractTransaction>) => {
         return await (await tx).wait();
-    }
+    };
 
     private static loadArtifact = (contract: string): any => {
         let buildDir;
@@ -137,7 +137,7 @@ export class SwapnetDeployer {
             buildDir = path.join(__dirname, "../build");
         }
         return JSON.parse(readFileSync(path.join(buildDir, `${contract}.json`), "utf8"));
-    }
+    };
 
     public static deploy = async (
         owner: Wallet,
@@ -147,16 +147,16 @@ export class SwapnetDeployer {
         portfolioHaircut = WeiPerEther
     ) => {
         const startBlock = await owner.provider.getBlockNumber();
-        const proxyAdmin = await SwapnetDeployer.deployContract(
+        const proxyAdmin = (await SwapnetDeployer.deployContract(
             owner,
             SwapnetDeployer.loadArtifact("ProxyAdmin"),
             []
-        ) as ProxyAdmin;
+        )) as ProxyAdmin;
 
         const directory = await SwapnetDeployer.deployProxyContract<Directory>(
             owner,
             SwapnetDeployer.loadArtifact("Directory"),
-            '',
+            "",
             [],
             proxyAdmin
         );
@@ -164,7 +164,7 @@ export class SwapnetDeployer {
         const escrow = await SwapnetDeployer.deployProxyContract<Escrow>(
             owner,
             SwapnetDeployer.loadArtifact("Escrow"),
-            'address,address',
+            "address,address",
             [directory.address, registryAddress],
             proxyAdmin
         );
@@ -172,7 +172,7 @@ export class SwapnetDeployer {
         const portfolios = await SwapnetDeployer.deployProxyContract<Portfolios>(
             owner,
             SwapnetDeployer.loadArtifact("Portfolios"),
-            'address,uint16',
+            "address,uint16",
             [directory.address, 1],
             proxyAdmin
         );
@@ -180,7 +180,7 @@ export class SwapnetDeployer {
         const risk = await SwapnetDeployer.deployProxyContract<RiskFramework>(
             owner,
             SwapnetDeployer.loadArtifact("RiskFramework"),
-            'address',
+            "address",
             [directory.address],
             proxyAdmin
         );
@@ -188,37 +188,57 @@ export class SwapnetDeployer {
         const erc1155 = await SwapnetDeployer.deployProxyContract<ERC1155Token>(
             owner,
             SwapnetDeployer.loadArtifact("ERC1155Token"),
-            'address',
+            "address",
             [directory.address],
             proxyAdmin
         );
 
         // Set dependencies
-        log("Setting Swapnet Contract: Escrow")
+        log("Setting Swapnet Contract: Escrow");
         await SwapnetDeployer.txMined(directory.setContract(CoreContracts.Escrow, escrow.address));
-        log("Setting Swapnet Contract: Portfolios")
+        log("Setting Swapnet Contract: Portfolios");
         await SwapnetDeployer.txMined(directory.setContract(CoreContracts.Portfolios, portfolios.address));
-        log("Setting Swapnet Contract: RiskFramework")
+        log("Setting Swapnet Contract: RiskFramework");
         await SwapnetDeployer.txMined(directory.setContract(CoreContracts.RiskFramework, risk.address));
-        log("Setting Swapnet Contract: ERC1155")
+        log("Setting Swapnet Contract: ERC1155");
         await SwapnetDeployer.txMined(directory.setContract(CoreContracts.ERC1155Token, erc1155.address));
-        log("Setting Swapnet Dependencies: Escrow Dependency")
+        log("Setting Swapnet Dependencies: Escrow Dependency");
         await SwapnetDeployer.txMined(directory.setDependencies(CoreContracts.Escrow, [CoreContracts.Portfolios]));
-        log("Setting Swapnet Dependencies: RiskFramework Dependency")
-        await SwapnetDeployer.txMined(directory.setDependencies(CoreContracts.RiskFramework, [CoreContracts.Portfolios]))
-        log("Setting Swapnet Dependencies: ERC1155 Dependency")
-        await SwapnetDeployer.txMined(directory.setDependencies(CoreContracts.ERC1155Token, [CoreContracts.Portfolios]));
-        log("Setting Swapnet Dependencies: Portfolio Dependency")
-        await SwapnetDeployer.txMined(directory.setDependencies(CoreContracts.Portfolios, [CoreContracts.Escrow, CoreContracts.RiskFramework, CoreContracts.ERC1155Token]));
+        log("Setting Swapnet Dependencies: RiskFramework Dependency");
+        await SwapnetDeployer.txMined(
+            directory.setDependencies(CoreContracts.RiskFramework, [CoreContracts.Portfolios])
+        );
+        log("Setting Swapnet Dependencies: ERC1155 Dependency");
+        await SwapnetDeployer.txMined(
+            directory.setDependencies(CoreContracts.ERC1155Token, [CoreContracts.Portfolios])
+        );
+        log("Setting Swapnet Dependencies: Portfolio Dependency");
+        await SwapnetDeployer.txMined(
+            directory.setDependencies(CoreContracts.Portfolios, [
+                CoreContracts.Escrow,
+                CoreContracts.RiskFramework,
+                CoreContracts.ERC1155Token
+            ])
+        );
 
         // Setup some contract defaults
-        log("Setting liquidation discounts")
+        log("Setting liquidation discounts");
         await SwapnetDeployer.txMined(escrow.setDiscounts(liquidationDiscount, settlementDiscount));
 
-        log("Setting collateral currencies")
+        log("Setting collateral currencies");
         await SwapnetDeployer.txMined(risk.setHaircut(portfolioHaircut));
 
-        return new SwapnetDeployer(owner, escrow, portfolios, risk, owner.provider, proxyAdmin, directory, erc1155, startBlock);
+        return new SwapnetDeployer(
+            owner,
+            escrow,
+            portfolios,
+            risk,
+            owner.provider,
+            proxyAdmin,
+            directory,
+            erc1155,
+            startBlock
+        );
     };
 
     public deployMockCurrency = async (
@@ -229,23 +249,19 @@ export class SwapnetDeployer {
         seedEthBalance = WeiPerEther
     ) => {
         // A mock currency has an ERC20 token, chainlink, and uniswap exchange.
-        log("Deploying mock currency")
-        const erc20 = (await SwapnetDeployer.deployContract(
-            this.owner,
-            ERC20Artifact,
-            []
-        )) as ERC20;
+        log("Deploying mock currency");
+        const erc20 = (await SwapnetDeployer.deployContract(this.owner, ERC20Artifact, [])) as ERC20;
 
-        log("Listing currency on Escrow")
+        log("Listing currency on Escrow");
         if (isTradable) {
             await SwapnetDeployer.txMined(this.escrow.listTradableCurrency(erc20.address));
         } else {
             await SwapnetDeployer.txMined(this.escrow.listDepositCurrency(erc20.address));
         }
-        const currencyId = await this.escrow.addressToCurrencyId(erc20.address) as number;
+        const currencyId = (await this.escrow.addressToCurrencyId(erc20.address)) as number;
 
-        log("Registering new exchange rate")
-        const {chainlink, uniswapExchange} = await this.deployExchangeRate(
+        log("Registering new exchange rate");
+        const { chainlink, uniswapExchange } = await this.deployExchangeRate(
             currencyId,
             0,
             initialExchangeRate,
@@ -254,24 +270,30 @@ export class SwapnetDeployer {
             { erc20, uniswapFactory }
         );
 
-        return {currencyId, erc20, chainlink, uniswapExchange}
+        return { currencyId, erc20, chainlink, uniswapExchange };
     };
 
-    public async deployExchangeRate(base: number, quote: number, initialExchangeRate: BigNumber,
-        seedEthBalance: BigNumber, haircut: BigNumber, uniswap?: {erc20: ERC20, uniswapFactory: UniswapFactoryInterface}) {
-        log("Deploying mock chainlink")
+    public async deployExchangeRate(
+        base: number,
+        quote: number,
+        initialExchangeRate: BigNumber,
+        seedEthBalance: BigNumber,
+        haircut: BigNumber,
+        uniswap?: { erc20: ERC20; uniswapFactory: UniswapFactoryInterface }
+    ) {
+        log("Deploying mock chainlink");
         const chainlink = (await SwapnetDeployer.deployContract(
             this.owner,
             MockAggregatorArtifact,
-            [])
-        ) as MockAggregator;
+            []
+        )) as MockAggregator;
         await SwapnetDeployer.txMined(chainlink.setAnswer(initialExchangeRate));
 
         let uniswapExchange: any = { address: AddressZero };
         if (uniswap !== undefined) {
-            log("Deploying mock uniswap")
+            log("Deploying mock uniswap");
             await SwapnetDeployer.txMined(
-                uniswap.uniswapFactory.createExchange(uniswap.erc20.address, {gasLimit: 5_000_000})
+                uniswap.uniswapFactory.createExchange(uniswap.erc20.address, { gasLimit: 5_000_000 })
             );
             uniswapExchange = new ethers.Contract(
                 await uniswap.uniswapFactory.getExchange(uniswap.erc20.address),
@@ -285,33 +307,25 @@ export class SwapnetDeployer {
             const chainId = (await this.provider.getNetwork()).chainId;
             if (chainId === 1337) {
                 // This is required in ganache to get the block timestamp correct.
-                log("Resetting network timestamp")
-                await (this.provider as JsonRpcProvider).send(
-                    "evm_mine",
-                    [Math.floor(new Date().getTime() / 1000)]
-                );
+                log("Resetting network timestamp");
+                await (this.provider as JsonRpcProvider).send("evm_mine", [Math.floor(new Date().getTime() / 1000)]);
             }
             const currentBlock = await this.provider.getBlock(await this.provider.getBlockNumber());
 
             // Setup the liquidity pool
             log(`Seeding mock uniswap pool at ${uniswapExchange.address}`);
-            await SwapnetDeployer.txMined(uniswapExchange.addLiquidity(
-                seedEthBalance,
-                tokenBalance,
-                currentBlock.timestamp + 10000,
-                { value: seedEthBalance }
-            ));
+            await SwapnetDeployer.txMined(
+                uniswapExchange.addLiquidity(seedEthBalance, tokenBalance, currentBlock.timestamp + 10000, {
+                    value: seedEthBalance
+                })
+            );
         }
 
-        await SwapnetDeployer.txMined(this.escrow.addExchangeRate(
-            base,
-            quote,
-            chainlink.address,
-            uniswapExchange.address,
-            haircut
-        ));
+        await SwapnetDeployer.txMined(
+            this.escrow.addExchangeRate(base, quote, chainlink.address, uniswapExchange.address, haircut)
+        );
 
-        return {chainlink, uniswapExchange};
+        return { chainlink, uniswapExchange };
     }
 
     public deployFutureCashMarket = async (
@@ -326,34 +340,36 @@ export class SwapnetDeployer {
         rateScalar: number = 100
     ) => {
         const tokenAddress = await this.escrow.currencyIdToAddress(currencyId);
-        const futureCash = await SwapnetDeployer.deployProxyContract(
+        const futureCash = (await SwapnetDeployer.deployProxyContract(
             this.owner,
             SwapnetDeployer.loadArtifact("FutureCash"),
-            'address,address',
+            "address,address",
             [this.directory.address, tokenAddress],
             this.proxyAdmin
-        ) as FutureCash;
+        )) as FutureCash;
 
         log("Creating future cash group...");
-        await SwapnetDeployer.txMined(this.portfolios.createFutureCashGroup(
-            numPeriods,
-            periodSize,
-            precision,
-            currencyId,
-            futureCash.address,
-            AddressZero
-        ));
+        await SwapnetDeployer.txMined(
+            this.portfolios.createFutureCashGroup(
+                numPeriods,
+                periodSize,
+                precision,
+                currencyId,
+                futureCash.address,
+                AddressZero
+            )
+        );
 
         log("Setting future cash parameters...");
         await SwapnetDeployer.txMined(futureCash.setMaxTradeSize(maxTradeSize));
         await SwapnetDeployer.txMined(futureCash.setFee(liquidityFee, transactionFee));
-        await SwapnetDeployer.txMined(futureCash.setRateFactors(rateAnchor, rateScalar))
+        await SwapnetDeployer.txMined(futureCash.setRateFactors(rateAnchor, rateScalar));
 
         return futureCash;
-    }
+    };
 
     public upgradeContract = async (name: CoreContracts, artifact: any) => {
-        const contract = this.coreContractToContract(name)
+        const contract = this.coreContractToContract(name);
         const proxy = new ethers.Contract(contract.address, AdminUpgradeabilityProxyArtifact.abi, this.owner);
 
         // Deploy the upgraded logic contract
@@ -362,7 +378,7 @@ export class SwapnetDeployer {
         log(`Deployed new logic contract at ${upgrade.address}`);
         await SwapnetDeployer.txMined(this.proxyAdmin.upgrade(proxy.address, upgrade.address));
         log(`Proxy Admin upgraded ${name.toString()}`);
-    }
+    };
 
     public static restoreFromFile = async (path: string, owner: Wallet) => {
         const addresses = JSON.parse(readFileSync(path, "utf8"));
@@ -399,7 +415,7 @@ export class SwapnetDeployer {
             directory: this.directory.address,
             erc1155: this.erc1155.address,
             startBlock: this.startBlock
-        }
+        };
         writeFileSync(path, JSON.stringify(addresses, null, 2));
     }
 }

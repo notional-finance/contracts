@@ -3,25 +3,24 @@ pragma experimental ABIEncoderV2;
 
 import "../lib/SafeMath.sol";
 
-
 /**
  * @notice Contains all the structs and convenience methods for Swapnet contracts.
  */
 library Common {
     using SafeMath for uint256;
 
-    bytes1 internal constant MASK_POOL = 0x01;      // 0000 0001
-    bytes1 internal constant MASK_NET = 0x02;       // 0000 0010
-    bytes1 internal constant MASK_ORDER = 0x04;     // 0000 0100
-    bytes1 internal constant MASK_CASH = 0x08;      // 0000 1000
+    bytes1 internal constant MASK_POOL = 0x01; // 0000 0001
+    bytes1 internal constant MASK_NET = 0x02; // 0000 0010
+    bytes1 internal constant MASK_ORDER = 0x04; // 0000 0100
+    bytes1 internal constant MASK_CASH = 0x08; // 0000 1000
 
-    bytes1 internal constant MASK_PAYER = 0x10;     // 0001 0000
-    bytes1 internal constant MASK_RECEIVER = 0x20;  // 0010 0000
-    bytes1 internal constant MASK_PERIODIC = 0x80;  // 1000 0000
+    bytes1 internal constant MASK_PAYER = 0x10; // 0001 0000
+    bytes1 internal constant MASK_RECEIVER = 0x20; // 0010 0000
+    bytes1 internal constant MASK_PERIODIC = 0x80; // 1000 0000
 
     int256 internal constant RATE_DECIMALS = 1e9;
     uint128 internal constant DECIMALS = 1e18;
-    uint128 internal constant MAX_UINT_128 = (2**128)-1;
+    uint128 internal constant MAX_UINT_128 = (2**128) - 1;
 
     /**
      * The collateral requirement per currency in the portfolio. Only used as an
@@ -46,9 +45,9 @@ library Common {
         uint8 futureCashGroupId;
         // The instrument id for this asset
         uint16 instrumentId;
-        // The block where this asset will begin to take effect
-        uint32 startBlock;
-        // The duration of this asset
+        // The beginning of the period of this asset in seconds
+        uint32 startTime;
+        // The duration of this asset in seconds
         uint32 duration;
         // A 1 byte bitfield defined above that contains instrument agnostic
         // information about a asset (i.e. payer or receiver, periodic or nonperiodic)
@@ -70,7 +69,7 @@ library Common {
     struct FutureCashGroup {
         // The maximum number of future periods that instruments in this group will asset
         uint32 numPeriods;
-        // The size of periods (in blocks) for all instruments in this group
+        // The size of periods (in seconds) for all instruments in this group
         uint32 periodSize;
         // The precision of the discount rate oracle
         uint32 precision;
@@ -153,7 +152,7 @@ library Common {
      * Calculates the maturity of a asset.
      */
     function getMaturity(Asset memory asset) internal pure returns (uint32) {
-        return asset.startBlock + asset.duration;
+        return asset.startTime + asset.duration;
     }
 
     /**
@@ -188,7 +187,7 @@ library Common {
     function encodeAssetId(Asset memory asset) internal pure returns (uint256) {
         bytes12 id = (bytes12(bytes1(asset.futureCashGroupId)) & 0xFF0000000000000000000000) |
             ((bytes12(bytes2(asset.instrumentId)) >> 8) & 0x00FFFF000000000000000000) |
-            ((bytes12(bytes4(asset.startBlock)) >> 24) & 0x000000FFFFFFFF0000000000) |
+            ((bytes12(bytes4(asset.startTime)) >> 24) & 0x000000FFFFFFFF0000000000) |
             ((bytes12(bytes4(asset.duration)) >> 56) & 0x00000000000000FFFFFFFF00) |
             ((bytes12(asset.swapType) >> 88) & 0x0000000000000000000000FF);
 
@@ -199,16 +198,25 @@ library Common {
      * Decodes a uint256 id for a asset
      *
      * @param _id a uint256 asset id
-     * @return (futureCashGroupId, instrumentId, startBlock, duration)
+     * @return (futureCashGroupId, instrumentId, startTime, duration)
      */
-    function decodeAssetId(uint256 _id) internal pure returns (uint8, uint16, uint32, uint32) {
+    function decodeAssetId(uint256 _id)
+        internal
+        pure
+        returns (
+            uint8,
+            uint16,
+            uint32,
+            uint32
+        )
+    {
         bytes12 id = bytes12(bytes32(_id) << 160);
         return (
             // Instrument Group Id
             uint8(bytes1((id & 0xFF0000000000000000000000))),
             // Instrument Id
             uint16(bytes2((id & 0x00FFFF000000000000000000) << 8)),
-            // Start Block
+            // Start Time
             uint32(bytes4((id & 0x000000FFFFFFFF0000000000) << 24)),
             // Duration
             uint32(bytes4((id & 0x00000000000000FFFFFFFF00) << 56))
@@ -229,7 +237,11 @@ library Common {
         return data;
     }
 
-    function _quickSort(Asset[] memory data, int256 left, int256 right) internal pure {
+    function _quickSort(
+        Asset[] memory data,
+        int256 left,
+        int256 right
+    ) internal pure {
         if (left == right) return;
         int256 i = left;
         int256 j = right;
