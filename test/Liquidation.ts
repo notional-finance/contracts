@@ -1,5 +1,4 @@
 import chai from "chai";
-import { ethers } from "@nomiclabs/buidler";
 import { solidity } from "ethereum-waffle";
 import {
     fixture,
@@ -10,10 +9,9 @@ import {
     fastForwardToMaturity,
     fastForwardToTime
 } from "./fixtures";
-import { Wallet } from "ethers";
-import { WeiPerEther, AddressZero } from "ethers/constants";
+import { Wallet, Contract } from "ethers";
+import { WeiPerEther } from "ethers/constants";
 
-import { UniswapExchangeInterface } from "../typechain/UniswapExchangeInterface";
 import { Erc20 as ERC20 } from "../typechain/Erc20";
 import { FutureCash } from "../typechain/FutureCash";
 import { ErrorDecoder, ErrorCodes } from "../scripts/errorCodes";
@@ -22,6 +20,10 @@ import { Portfolios } from "../typechain/Portfolios";
 import { MockAggregator } from "../typechain/MockAggregator";
 import { TestUtils, BLOCK_TIME_LIMIT } from "./testUtils";
 import { BigNumber, parseEther } from "ethers/utils";
+import { Iweth } from '../typechain/Iweth';
+import { IUniswapV2Router02 } from '../typechain/IUniswapV2Router02';
+import { IUniswapV2Pair } from '../typechain/IUniswapV2Pair';
+import IUniswapV2PairArtifact from "@uniswap/v2-core/build/IUniswapV2Pair.json";
 
 chai.use(solidity);
 const { expect } = chai;
@@ -35,10 +37,12 @@ describe("Liquidation", () => {
     let owner: Wallet;
     let wallet: Wallet;
     let wallet2: Wallet;
-    let uniswap: UniswapExchangeInterface;
+    let uniswapRouter: IUniswapV2Router02;
     let maturities: number[];
     let rateAnchor: number;
     let t: TestUtils;
+    let weth: Iweth;
+    let uniswapPair: IUniswapV2Pair;
 
     beforeEach(async () => {
         owner = wallets[0];
@@ -48,10 +52,12 @@ describe("Liquidation", () => {
 
         dai = objs.erc20;
         futureCash = objs.futureCash;
-        uniswap = objs.uniswap;
+        uniswapRouter = objs.uniswapRouter;
         escrow = objs.escrow;
         portfolios = objs.portfolios;
         chainlink = objs.chainlink;
+        weth = objs.weth;
+        uniswapPair = new Contract(objs.uniswap, IUniswapV2PairArtifact.abi, owner) as IUniswapV2Pair;
 
         await dai.transfer(wallet.address, WeiPerEther.mul(10_000));
         await dai.transfer(wallet2.address, WeiPerEther.mul(10_000));
@@ -70,7 +76,7 @@ describe("Liquidation", () => {
         // Set the blockheight to the beginning of the next period
         maturities = await futureCash.getActiveMaturities();
         await fastForwardToMaturity(provider, maturities[1]);
-        t = new TestUtils(escrow, futureCash, portfolios, dai, owner, objs.chainlink, objs.uniswap);
+        t = new TestUtils(escrow, futureCash, portfolios, dai, owner, objs.chainlink, objs.weth);
 
         maturities = await futureCash.getActiveMaturities();
         await escrow.deposit(dai.address, WeiPerEther.mul(30_000));
@@ -241,7 +247,7 @@ describe("Liquidation", () => {
 
             // The account will remain undercollateralized and the ETH has not moved
             expect(await t.isCollateralized(wallet)).to.be.false;
-            expect(await escrow.currencyBalances(AddressZero, wallet.address)).to.equal(ethAmount);
+            expect(await escrow.currencyBalances(weth.address, wallet.address)).to.equal(ethAmount);
         });
 
         it("[5] should settle cash between accounts when eth must be sold via uniswap", async () => {
@@ -251,7 +257,7 @@ describe("Liquidation", () => {
             const [isSettled] = await t.settleCashBalance(wallet, owner);
             expect(isSettled).to.be.true;
 
-            expect(await escrow.currencyBalances(AddressZero, wallet.address)).to.be.below(ethAmount);
+            expect(await escrow.currencyBalances(weth.address, wallet.address)).to.be.below(ethAmount);
         });
 
         it("[5] should revert when eth must be sold via uniswap and the price is out of line", async () => {
@@ -277,11 +283,16 @@ describe("Liquidation", () => {
             await t.mineAndSettleAccount([owner, wallet, wallet2]);
             // Withdraw all the liquidity from the uniswap market so the slippage is huge.
             const currentBlock = await provider.getBlock(await provider.getBlockNumber());
-            await uniswap.removeLiquidity(
-                WeiPerEther.mul(9_990),
+            await uniswapPair.approve(uniswapRouter.address, parseEther("1000000000"));
+            const liquidity = await uniswapPair.balanceOf(owner.address);
+            await uniswapRouter.removeLiquidity(
+                dai.address,
+                weth.address,
+                liquidity.sub(parseEther("10")),
                 WeiPerEther,
                 WeiPerEther,
-                currentBlock.timestamp + 300
+                owner.address,
+                currentBlock.timestamp + 30000
             );
 
             await expect(
@@ -290,7 +301,7 @@ describe("Liquidation", () => {
                     CURRENCY.ETH,
                     wallet.address,
                     owner.address,
-                    WeiPerEther.mul(100)
+                    parseEther("100")
                 )
             ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.CANNOT_SETTLE_PRICE_DISCREPENCY));
         });
@@ -305,57 +316,15 @@ describe("Liquidation", () => {
             expect(isSettled).to.be.true;
 
             // Purchased 100 Dai at a price of 1.05 ETH
-            expect(await escrow.currencyBalances(AddressZero, wallet.address)).to.equal(
+            expect(await escrow.currencyBalances(weth.address, wallet.address)).to.equal(
                 ethAmount.sub(parseEther("1.05"))
             );
-            expect(await escrow.currencyBalances(AddressZero, wallet2.address)).to.equal(parseEther("1.05"));
+            expect(await escrow.currencyBalances(weth.address, wallet2.address)).to.equal(parseEther("1.05"));
 
             // 100 Dai has been transfered to the owner wallet in exchange for ETH.
             expect(await escrow.currencyBalances(dai.address, wallet2.address)).to.equal(WeiPerEther.mul(900));
         });
 
-        it("[3,5] should settle cash between accounts when eth and liquidty tokens must be sold", async () => {
-            await escrow.addExchangeRate(
-                CURRENCY.DAI,
-                CURRENCY.ETH,
-                chainlink.address,
-                uniswap.address,
-                WeiPerEther.div(100).mul(90)
-            );
-
-            await escrow.connect(wallet).depositEth({ value: WeiPerEther.mul(2) });
-            await escrow.connect(wallet).deposit(dai.address, WeiPerEther.mul(100));
-            await futureCash
-                .connect(wallet)
-                .addLiquidity(maturities[1], WeiPerEther.mul(50), WeiPerEther.mul(50), BLOCK_TIME_LIMIT);
-            await futureCash
-                .connect(wallet)
-                .takeCollateral(maturities[0], WeiPerEther.mul(100), BLOCK_TIME_LIMIT, 60_000_000);
-            // Withdraw all the dai so that there is only ETH in the account.
-            await escrow
-                .connect(wallet)
-                .withdraw(dai.address, await escrow.currencyBalances(dai.address, wallet.address));
-
-            await t.mineAndSettleAccount([owner, wallet, wallet2]);
-
-            await uniswap.ethToTokenSwapInput(WeiPerEther, ethers.constants.MaxUint256, {
-                value: WeiPerEther.mul(4500)
-            });
-            const ethToSell = await uniswap.getEthToTokenOutputPrice(WeiPerEther.mul(50));
-            const rate = WeiPerEther.mul(WeiPerEther).div(await uniswap.getEthToTokenInputPrice(WeiPerEther));
-            await chainlink.setAnswer(rate);
-            expect((await portfolios.freeCollateralView(wallet.address))[0]).to.be.above(0);
-
-            const [isSettled] = await t.settleCashBalance(wallet, owner);
-            expect(isSettled).to.be.true;
-
-            // Here we should have removed all the liquidity tokens to raise 50 dai to pay off half of the debt and sold the equivalent
-            // of 50 Dai of ETH to cover the rest.
-            expect(await portfolios.getAssets(wallet.address)).to.have.lengthOf(0);
-            expect(await escrow.currencyBalances(AddressZero, wallet.address)).to.equal(
-                WeiPerEther.mul(2).sub(ethToSell)
-            );
-        });
     });
 
     describe("settle cash w/ future cash scenarios [7-8]", async () => {
@@ -473,7 +442,7 @@ describe("Liquidation", () => {
             await escrow.liquidate(wallet.address, CURRENCY.DAI, CURRENCY.ETH);
 
             expect(await t.hasLiquidityToken(wallet, maturities[1])).to.be.false;
-            expect(await escrow.currencyBalances(AddressZero, wallet.address)).to.be.below(parseEther("0.2"));
+            expect(await escrow.currencyBalances(weth.address, wallet.address)).to.be.below(parseEther("0.2"));
         });
 
         it("[3] should liquidate an account when it is under collateralized by eth", async () => {
@@ -498,10 +467,10 @@ describe("Liquidation", () => {
                 .div(WeiPerEther);
 
             await escrow.liquidate(wallet.address, CURRENCY.DAI, CURRENCY.ETH);
-            const ethBalanceAfter = await escrow.currencyBalances(AddressZero, wallet.address);
+            const ethBalanceAfter = await escrow.currencyBalances(weth.address, wallet.address);
 
             expect(ethBalanceBefore.sub(ethBalanceAfter)).to.equal(closeOutCostETH);
-            expect(await escrow.currencyBalances(AddressZero, owner.address)).to.equal(closeOutCostETH);
+            expect(await escrow.currencyBalances(weth.address, owner.address)).to.equal(closeOutCostETH);
             expect(await escrow.currencyBalances(dai.address, owner.address)).to.equal(parseEther("895"));
 
             // Remaining Dai should be in the portfolio
@@ -529,7 +498,7 @@ describe("Liquidation", () => {
             // in the future cash position of the portfolio before and after)
 
             await escrow.liquidate(wallet.address, CURRENCY.DAI, CURRENCY.ETH);
-            let ethBalanceAfter = await escrow.currencyBalances(AddressZero, wallet.address);
+            let ethBalanceAfter = await escrow.currencyBalances(weth.address, wallet.address);
             const portfolioAfter = await portfolios.getAssets(wallet.address);
 
             // Liquidator Purchased 2.1 ETH for 105 Dai
@@ -545,7 +514,7 @@ describe("Liquidation", () => {
                 .div(WeiPerEther);
 
             expect(ethBalanceBefore.sub(ethBalanceAfter)).to.equal(ethPurchased);
-            expect(await escrow.currencyBalances(AddressZero, owner.address)).to.equal(ethPurchased);
+            expect(await escrow.currencyBalances(weth.address, owner.address)).to.equal(ethPurchased);
             expect(await escrow.currencyBalances(dai.address, owner.address)).to.equal(
                 WeiPerEther.mul(1000).sub(daiShortfall.sub(daiLeft))
             );

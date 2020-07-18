@@ -1,9 +1,9 @@
-import { waffle, ethers } from "@nomiclabs/buidler";
-import { createFixtureLoader } from "ethereum-waffle";
-import { Wallet, providers } from "ethers";
-import { SwapnetDeployer } from "../scripts/SwapnetDeployer";
+import {waffle, ethers} from "@nomiclabs/buidler";
+import {createFixtureLoader} from "ethereum-waffle";
+import {Wallet, providers} from "ethers";
+import {SwapnetDeployer} from "../scripts/SwapnetDeployer";
 import defaultAccounts from "./defaultAccounts.json";
-import { parseEther, BigNumber } from "ethers/utils";
+import {parseEther, BigNumber} from "ethers/utils";
 
 // Silences multiple initialize signature errors
 ethers.errors.setLogLevel("error");
@@ -27,13 +27,16 @@ export async function fixture(provider: providers.Provider, [owner]: Wallet[]) {
     const swapnet = await SwapnetDeployer.deploy(
         owner,
         prereqs.registry.address,
+        prereqs.weth.address,
+        prereqs.uniswapRouter.address,
         parseEther("1.10"),
         parseEther("1.05"),
         parseEther("1.05")
     );
 
-    const { currencyId, erc20, chainlink, uniswapExchange } = await swapnet.deployMockCurrency(
+    const {currencyId, erc20, chainlink, uniswapPair} = await swapnet.deployMockCurrency(
         prereqs.uniswapFactory,
+        prereqs.uniswapRouter,
         parseEther("0.01"),
         parseEther("1.30"),
         true,
@@ -56,7 +59,7 @@ export async function fixture(provider: providers.Provider, [owner]: Wallet[]) {
         futureCash,
         escrow: swapnet.escrow,
         owner,
-        uniswap: uniswapExchange,
+        uniswap: uniswapPair,
         chainlink,
         portfolios: swapnet.portfolios,
         proxyAdmin: swapnet.proxyAdmin,
@@ -64,7 +67,9 @@ export async function fixture(provider: providers.Provider, [owner]: Wallet[]) {
         registry: prereqs.registry,
         directory: swapnet.directory,
         swapnet: swapnet,
-        uniswapFactory: prereqs.uniswapFactory
+        uniswapFactory: prereqs.uniswapFactory,
+        uniswapRouter: prereqs.uniswapRouter,
+        weth: prereqs.weth
     };
 }
 

@@ -3,11 +3,11 @@ import { FutureCash } from "../typechain/FutureCash";
 import { Portfolios } from "../typechain/Portfolios";
 import { Wallet } from "ethers";
 import { MockAggregator } from "../typechain/MockAggregator";
-import { UniswapExchangeInterface } from "../typechain/UniswapExchangeInterface";
 import { Erc20 as ERC20 } from "../typechain/Erc20";
-import { WeiPerEther, AddressZero } from "ethers/constants";
+import { WeiPerEther } from "ethers/constants";
 import { BigNumber, parseEther } from "ethers/utils";
 import { provider, CURRENCY, fastForwardToMaturity } from "./fixtures";
+import {Iweth as IWETH} from "../typechain/Iweth";
 
 // This will stop working in 2033 :)
 export const BLOCK_TIME_LIMIT = 2_000_000_000;
@@ -26,7 +26,7 @@ export class TestUtils {
         public dai: ERC20,
         public owner: Wallet,
         public chainlink: MockAggregator,
-        public uniswap: UniswapExchangeInterface
+        public weth: IWETH
     ) {}
 
     public async setupLiquidity(
@@ -54,7 +54,7 @@ export class TestUtils {
         impliedRateLimit = IMPLIED_RATE_LIMIT
     ) {
         const exchangeRate = await this.chainlink.latestAnswer();
-        const haircut = (await this.escrow.getExchangeRate(this.dai.address, AddressZero)).haircut;
+        const haircut = (await this.escrow.getExchangeRate(this.dai.address, this.weth.address)).haircut;
         const maturities = await this.futureCash.getActiveMaturities();
 
         const ethAmount = borrowFutureCash
@@ -65,7 +65,7 @@ export class TestUtils {
             .mul(parseEther(collateralRatio.toString()))
             .div(WeiPerEther);
 
-        await this.escrow.connect(wallet).depositEth({ value: ethAmount });
+        await this.escrow.connect(wallet).depositEth({value: ethAmount});
         const beforeAmount = await this.escrow.currencyBalances(this.dai.address, wallet.address);
         await this.futureCash
             .connect(wallet)
@@ -86,10 +86,10 @@ export class TestUtils {
     }
 
     public async checkEthBalanceIntegrity(accounts: Wallet[]) {
-        const totalEthBalance = await provider.getBalance(this.escrow.address);
+        const totalEthBalance = await this.weth.balanceOf(this.escrow.address);
         let escrowEthBalance = new BigNumber(0);
         for (let a of accounts) {
-            escrowEthBalance = escrowEthBalance.add(await this.escrow.currencyBalances(AddressZero, a.address));
+            escrowEthBalance = escrowEthBalance.add(await this.escrow.currencyBalances(this.weth.address, a.address));
         }
 
         return escrowEthBalance.eq(totalEthBalance);

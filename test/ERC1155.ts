@@ -59,7 +59,7 @@ describe("ERC1155 Token", () => {
         maturities = await futureCash.getActiveMaturities();
         await fastForwardToMaturity(provider, maturities[1]);
 
-        t = new TestUtils(escrow, futureCash, portfolios, dai, owner, objs.chainlink, objs.uniswap);
+        t = new TestUtils(escrow, futureCash, portfolios, dai, owner, objs.chainlink, objs.weth);
         maturities = await futureCash.getActiveMaturities();
         await t.setupLiquidity();
         await escrow.connect(wallet).deposit(dai.address, WeiPerEther.mul(1000));

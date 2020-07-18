@@ -1,20 +1,21 @@
 import chai from "chai";
-import { solidity } from "ethereum-waffle";
-import { fixture, wallets, fixtureLoader, provider, CURRENCY, fastForwardToMaturity } from "./fixtures";
-import { Wallet } from "ethers";
+import {solidity, deployContract} from "ethereum-waffle";
+import {fixture, wallets, fixtureLoader, provider, fastForwardToMaturity, CURRENCY} from "./fixtures";
+import {Wallet} from "ethers";
 
-import { Erc20 as ERC20 } from "../typechain/Erc20";
-import { FutureCash } from "../typechain/FutureCash";
-import { Escrow } from "../typechain/Escrow";
-import { Portfolios } from "../typechain/Portfolios";
-import { TestUtils, BLOCK_TIME_LIMIT } from "./testUtils";
-import { UniswapExchangeInterface } from "../typechain/UniswapExchangeInterface";
-import { MockAggregator } from "../typechain/MockAggregator";
-import { SwapnetDeployer } from "../scripts/SwapnetDeployer";
-import { parseEther, BigNumber } from "ethers/utils";
-import { UniswapFactoryInterface } from "../typechain/UniswapFactoryInterface";
-import { ErrorDecoder, ErrorCodes } from "../scripts/errorCodes";
-import { AddressZero } from "ethers/constants";
+import {Erc20 as ERC20} from "../typechain/Erc20";
+import {FutureCash} from "../typechain/FutureCash";
+import {Escrow} from "../typechain/Escrow";
+import {Portfolios} from "../typechain/Portfolios";
+import {TestUtils, BLOCK_TIME_LIMIT} from "./testUtils";
+import MockAggregatorArtifact from "../build/MockAggregator.json";
+import {IUniswapV2Factory} from "../typechain/IUniswapV2Factory";
+import {IUniswapV2Router02} from "../typechain/IUniswapV2Router02";
+import {MockAggregator} from "../typechain/MockAggregator";
+import {SwapnetDeployer} from "../scripts/SwapnetDeployer";
+import {parseEther, BigNumber} from "ethers/utils";
+import {ErrorDecoder, ErrorCodes} from "../scripts/errorCodes";
+import { Iweth } from '../typechain/Iweth';
 
 chai.use(solidity);
 const { expect } = chai;
@@ -27,18 +28,18 @@ describe("Multi Currency", () => {
     let escrow: Escrow;
     let portfolios: Portfolios;
     let swapnet: SwapnetDeployer;
-    let uniswapFactory: UniswapFactoryInterface;
+    let uniswapFactory: IUniswapV2Factory;
+    let uniswapRouter: IUniswapV2Router02;
 
     let token: ERC20[] = [];
-    let uniswap: UniswapExchangeInterface[] = [];
     let chainlink: MockAggregator[] = [];
     let futureCash: FutureCash[] = [];
     let wbtc: {
         currencyId: number;
         erc20: ERC20;
         chainlink: MockAggregator;
-        uniswapExchange: UniswapExchangeInterface;
     };
+    let weth: Iweth;
 
     let t1: TestUtils;
     let t2: TestUtils;
@@ -55,14 +56,16 @@ describe("Multi Currency", () => {
         portfolios = objs.portfolios;
         swapnet = objs.swapnet;
         uniswapFactory = objs.uniswapFactory;
+        uniswapRouter = objs.uniswapRouter;
+        weth = objs.weth;
 
         token[0] = objs.erc20;
         futureCash[0] = objs.futureCash;
         chainlink[0] = objs.chainlink;
-        uniswap[0] = objs.uniswap;
 
         const newCurrency = await swapnet.deployMockCurrency(
             objs.uniswapFactory,
+            objs.uniswapRouter,
             parseEther("0.01"),
             parseEther("1.20"),
             true
@@ -82,7 +85,6 @@ describe("Multi Currency", () => {
         token[1] = newCurrency.erc20;
         futureCash[1] = newFutureCash;
         chainlink[1] = newCurrency.chainlink;
-        uniswap[1] = newCurrency.uniswapExchange;
 
         await escrow.setReserveAccount(reserve.address);
         for (let c of token) {
@@ -98,9 +100,17 @@ describe("Multi Currency", () => {
             await escrow.connect(reserve).deposit(c.address, parseEther("1000"));
         }
 
-        t1 = new TestUtils(escrow, futureCash[0], portfolios, token[0], owner, chainlink[0], uniswap[0]);
-        t2 = new TestUtils(escrow, futureCash[1], portfolios, token[1], owner, chainlink[1], uniswap[1]);
-        wbtc = await swapnet.deployMockCurrency(uniswapFactory, parseEther("10"), parseEther("0.7"), false);
+        t1 = new TestUtils(escrow, futureCash[0], portfolios, token[0], owner, chainlink[0], objs.weth);
+        t2 = new TestUtils(escrow, futureCash[1], portfolios, token[1], owner, chainlink[1], objs.weth);
+
+        wbtc = await swapnet.deployMockCurrency(
+            uniswapFactory,
+            uniswapRouter,
+            parseEther("10"),
+            parseEther("0.7"),
+            false,
+            parseEther("1000")
+        );
         await wbtc.erc20.transfer(wallet.address, parseEther("100000"));
 
         const futureCashNew = await swapnet.deployFutureCashMarket(
@@ -114,7 +124,7 @@ describe("Multi Currency", () => {
             1_020_000_000,
             100
         );
-        tNew = new TestUtils(escrow, futureCashNew, portfolios, token[0], owner, chainlink[0], uniswap[0]);
+        tNew = new TestUtils(escrow, futureCashNew, portfolios, token[0], owner, chainlink[0], objs.weth);
 
         // Set the blockheight to the beginning of the next period
         const maturities = await futureCash[0].getActiveMaturities();
@@ -219,7 +229,7 @@ describe("Multi Currency", () => {
                 .settleCashBalance(CURRENCY.DAI, CURRENCY.ETH, wallet.address, owner.address, parseEther("100"));
 
             // Expect ETH to be cleaned out
-            expect(await escrow.currencyBalances(AddressZero, wallet.address)).to.equal(0);
+            expect(await escrow.currencyBalances(weth.address, wallet.address)).to.equal(0);
             // This was a partial settlement
             expect(await escrow.cashBalances(CURRENCY.DAI, owner.address)).to.be.above(0);
         });
@@ -233,7 +243,6 @@ describe("Multi Currency", () => {
 
             const maturities = await futureCash[0].getActiveMaturities();
             await fastForwardToMaturity(provider, maturities[1]);
-
             await escrow.settleCashBalance(
                 CURRENCY.DAI,
                 CURRENCY.ETH,
@@ -243,9 +252,69 @@ describe("Multi Currency", () => {
             );
 
             // Expect ETH to be cleaned out
-            expect(await escrow.currencyBalances(AddressZero, wallet.address)).to.equal(0);
+            expect(await escrow.currencyBalances(weth.address, wallet.address)).to.equal(0);
             // This was a partial settlement
             expect(await escrow.cashBalances(CURRENCY.DAI, owner.address)).to.be.above(0);
+        });
+
+        it("reverts if a uniswap path is not provided when it tries to settle cash", async () => {
+            await t1.setupLiquidity();
+            await t1.borrowAndWithdraw(wallet, parseEther("100"), 1.05, 0, 100_000_000);
+            await wbtc.erc20.connect(wallet).approve(escrow.address, parseEther("100000"));
+            await escrow.connect(wallet).deposit(wbtc.erc20.address, parseEther("0.5"));
+            await escrow.connect(wallet).withdrawEth(parseEther("1"));
+
+            const maturities = await futureCash[0].getActiveMaturities();
+            await fastForwardToMaturity(provider, maturities[1]);
+            await expect(escrow.settleCashBalance(
+                CURRENCY.DAI,
+                wbtc.currencyId,
+                wallet.address,
+                owner.address,
+                parseEther("100")
+            )).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.NO_EXCHANGE_LISTED_FOR_PAIR));
+        });
+
+        it("succeeds when a multihop uniswap path is provided when settling cash", async () => {
+            await t1.setupLiquidity();
+            await t1.borrowAndWithdraw(wallet, parseEther("100"), 1.05, 0, 100_000_000);
+            await wbtc.erc20.connect(wallet).approve(escrow.address, parseEther("100000"));
+            await escrow.connect(wallet).deposit(wbtc.erc20.address, parseEther("0.5"));
+            await escrow.connect(wallet).withdrawEth(parseEther("1"));
+
+            const maturities = await futureCash[0].getActiveMaturities();
+            await fastForwardToMaturity(provider, maturities[1]);
+
+            // Deploy a chainlink oracle for DAI / WBTC
+            const btcUsdChainlink = await deployContract(
+                owner,
+                MockAggregatorArtifact,
+                []
+            ) as MockAggregator;
+            await btcUsdChainlink.setAnswer(parseEther("0.001"))
+
+            // Add a uniswap path between DAI and WBTC
+            await escrow.addExchangeRate(
+                CURRENCY.DAI,
+                wbtc.currencyId,
+                btcUsdChainlink.address,
+                [wbtc.erc20.address, weth.address, t1.dai.address],
+                parseEther("1")
+            )
+
+            const ethBefore = await escrow.currencyBalances(weth.address, wallet.address);
+            await escrow.settleCashBalance(
+                CURRENCY.DAI,
+                wbtc.currencyId,
+                wallet.address,
+                owner.address,
+                parseEther("100")
+            );
+
+            // Expect ETH to be untouched
+            expect(await escrow.currencyBalances(weth.address, wallet.address)).to.equal(ethBefore);
+            // Expect BTC to have been sold
+            expect(await escrow.currencyBalances(wbtc.erc20.address, wallet.address)).to.be.below(parseEther("0.4"));
         });
     });
 

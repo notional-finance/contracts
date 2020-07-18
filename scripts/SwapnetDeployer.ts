@@ -1,8 +1,8 @@
-import { JsonRpcProvider, Provider } from "ethers/providers";
-import { readFileSync, writeFileSync } from "fs";
-import { BigNumber } from "ethers/utils";
-import { WeiPerEther, AddressZero } from "ethers/constants";
-import { Wallet, ContractFactory, Contract, ethers } from "ethers";
+import {JsonRpcProvider, Provider} from "ethers/providers";
+import {readFileSync, writeFileSync} from "fs";
+import {BigNumber} from "ethers/utils";
+import {WeiPerEther, AddressZero} from "ethers/constants";
+import {Wallet, ContractFactory, Contract, ethers} from "ethers";
 
 import ERC20Artifact from "../build/ERC20.json";
 import DirectoryArtifact from "../build/Directory.json";
@@ -12,24 +12,26 @@ import RiskFrameworkArtifact from "../build/RiskFramework.json";
 import ERC1155TokenArtifact from "../build/ERC1155Token.json";
 
 import ERC1820RegistryArtifact from "../mocks/ERC1820Registry.json";
-import UniswapFactoryArtifact from "../mocks/UniswapFactory.json";
-import UniswapExchangeArtifact from "../mocks/UniswapExchange.json";
+import WETHArtifact from "../mocks/WETH9.json";
+import UniswapFactoryArtifact from "@uniswap/v2-core/build/UniswapV2Factory.json";
+import UniswapRouterArtifact from "../mocks/UniswapV2Router02.json";
 import MockAggregatorArtifact from "../build/MockAggregator.json";
 import ProxyAdminArtifact from "../build/ProxyAdmin.json";
 import AdminUpgradeabilityProxyArtifact from "../build/AdminUpgradeabilityProxy.json";
 
-import { Portfolios } from "../typechain/Portfolios";
-import { Escrow } from "../typechain/Escrow";
-import { ProxyAdmin } from "../typechain/ProxyAdmin";
-import { Directory } from "../typechain/Directory";
-import { RiskFramework } from "../typechain/RiskFramework";
-import { Ierc1820Registry as IERC1820Registry } from "../typechain/Ierc1820Registry";
-import { MockAggregator } from "../typechain/MockAggregator";
-import { UniswapExchangeInterface } from "../typechain/UniswapExchangeInterface";
-import { UniswapFactoryInterface } from "../typechain/UniswapFactoryInterface";
-import { Erc20 as ERC20 } from "../typechain/Erc20";
-import { FutureCash } from "../typechain/FutureCash";
-import { Erc1155Token as ERC1155Token } from "../typechain/Erc1155Token";
+import {Portfolios} from "../typechain/Portfolios";
+import {Escrow} from "../typechain/Escrow";
+import {ProxyAdmin} from "../typechain/ProxyAdmin";
+import {Directory} from "../typechain/Directory";
+import {RiskFramework} from "../typechain/RiskFramework";
+import {Ierc1820Registry as IERC1820Registry} from "../typechain/Ierc1820Registry";
+import {MockAggregator} from "../typechain/MockAggregator";
+import {Erc20 as ERC20} from "../typechain/Erc20";
+import {FutureCash} from "../typechain/FutureCash";
+import {Erc1155Token as ERC1155Token} from "../typechain/Erc1155Token";
+import {IUniswapV2Factory} from "../typechain/IUniswapV2Factory";
+import {IUniswapV2Router02} from "../typechain/IUniswapV2Router02";
+import {Iweth as IWETH} from '../typechain/Iweth';
 
 import Debug from "debug";
 import path from "path";
@@ -112,17 +114,18 @@ export class SwapnetDeployer {
     };
 
     public static deployPrerequisites = async (owner: Wallet) => {
-        const uniswapTemplate = await SwapnetDeployer.deployContract(owner, UniswapExchangeArtifact, []);
-        const uniswapFactory = (await SwapnetDeployer.deployContract(
-            owner,
-            UniswapFactoryArtifact,
-            []
-        )) as UniswapFactoryInterface;
-        await uniswapFactory.initializeFactory(uniswapTemplate.address);
+        const weth = (await SwapnetDeployer.deployContract(owner, WETHArtifact, [])) as IWETH;
+        const uniswapFactory = (await SwapnetDeployer.deployContract(owner, UniswapFactoryArtifact, [
+            owner.address
+        ])) as IUniswapV2Factory;
+        const uniswapRouter = (await SwapnetDeployer.deployContract(owner, UniswapRouterArtifact, [
+            uniswapFactory.address,
+            weth.address
+        ])) as IUniswapV2Router02;
 
         const registry = (await SwapnetDeployer.deployContract(owner, ERC1820RegistryArtifact, [])) as IERC1820Registry;
 
-        return { uniswapFactory, registry };
+        return {uniswapFactory, uniswapRouter, registry, weth};
     };
 
     private static txMined = async (tx: Promise<ethers.ContractTransaction>) => {
@@ -142,6 +145,8 @@ export class SwapnetDeployer {
     public static deploy = async (
         owner: Wallet,
         registryAddress: string,
+        wethAddress: string,
+        uniswapRouter: string,
         liquidationDiscount = WeiPerEther,
         settlementDiscount = WeiPerEther,
         portfolioHaircut = WeiPerEther
@@ -164,8 +169,8 @@ export class SwapnetDeployer {
         const escrow = await SwapnetDeployer.deployProxyContract<Escrow>(
             owner,
             SwapnetDeployer.loadArtifact("Escrow"),
-            "address,address",
-            [directory.address, registryAddress],
+            "address,address,address,address",
+            [directory.address, registryAddress, wethAddress, uniswapRouter],
             proxyAdmin
         );
 
@@ -242,7 +247,8 @@ export class SwapnetDeployer {
     };
 
     public deployMockCurrency = async (
-        uniswapFactory: UniswapFactoryInterface,
+        uniswapFactory: IUniswapV2Factory,
+        uniswapRouter: IUniswapV2Router02,
         initialExchangeRate: BigNumber,
         haircut: BigNumber,
         isTradable: boolean,
@@ -261,16 +267,20 @@ export class SwapnetDeployer {
         const currencyId = (await this.escrow.addressToCurrencyId(erc20.address)) as number;
 
         log("Registering new exchange rate");
-        const { chainlink, uniswapExchange } = await this.deployExchangeRate(
+        const {chainlink, uniswapPair} = await this.deployExchangeRate(
             currencyId,
             0,
             initialExchangeRate,
             seedEthBalance,
             haircut,
-            { erc20, uniswapFactory }
+            {
+                erc20: erc20,
+                factory: uniswapFactory,
+                router: uniswapRouter
+            }
         );
 
-        return { currencyId, erc20, chainlink, uniswapExchange };
+        return {currencyId, erc20, chainlink, uniswapPair};
     };
 
     public async deployExchangeRate(
@@ -279,7 +289,11 @@ export class SwapnetDeployer {
         initialExchangeRate: BigNumber,
         seedEthBalance: BigNumber,
         haircut: BigNumber,
-        uniswap?: { erc20: ERC20; uniswapFactory: UniswapFactoryInterface }
+        uniswap?: {
+            erc20: ERC20;
+            factory: IUniswapV2Factory;
+            router: IUniswapV2Router02;
+        }
     ) {
         log("Deploying mock chainlink");
         const chainlink = (await SwapnetDeployer.deployContract(
@@ -289,20 +303,19 @@ export class SwapnetDeployer {
         )) as MockAggregator;
         await SwapnetDeployer.txMined(chainlink.setAnswer(initialExchangeRate));
 
-        let uniswapExchange: any = { address: AddressZero };
+        // This is set here if there is no uniswap exchange defined
+        let uniswapPair = AddressZero;
+        const wethAddress = await this.escrow.currencyIdToAddress(0);
         if (uniswap !== undefined) {
             log("Deploying mock uniswap");
             await SwapnetDeployer.txMined(
-                uniswap.uniswapFactory.createExchange(uniswap.erc20.address, { gasLimit: 5_000_000 })
+                uniswap.factory.createPair(uniswap.erc20.address, wethAddress, {gasLimit: 5_000_000})
             );
-            uniswapExchange = new ethers.Contract(
-                await uniswap.uniswapFactory.getExchange(uniswap.erc20.address),
-                UniswapExchangeArtifact.abi,
-                this.owner
-            ) as UniswapExchangeInterface;
+
+            uniswapPair = await uniswap.factory.getPair(uniswap.erc20.address, wethAddress);
 
             const tokenBalance = seedEthBalance.mul(WeiPerEther).div(initialExchangeRate);
-            await SwapnetDeployer.txMined(uniswap.erc20.approve(uniswapExchange.address, WeiPerEther.mul(100_000_000)));
+            await SwapnetDeployer.txMined(uniswap.erc20.approve(uniswap.router.address, WeiPerEther.mul(100_000_000)));
 
             const chainId = (await this.provider.getNetwork()).chainId;
             if (chainId === 1337) {
@@ -313,19 +326,36 @@ export class SwapnetDeployer {
             const currentBlock = await this.provider.getBlock(await this.provider.getBlockNumber());
 
             // Setup the liquidity pool
-            log(`Seeding mock uniswap pool at ${uniswapExchange.address}`);
+            log(`Seeding mock uniswap pool`);
             await SwapnetDeployer.txMined(
-                uniswapExchange.addLiquidity(seedEthBalance, tokenBalance, currentBlock.timestamp + 10000, {
-                    value: seedEthBalance
-                })
+                uniswap.router.addLiquidityETH(
+                    uniswap.erc20.address,
+                    tokenBalance,
+                    tokenBalance,
+                    seedEthBalance,
+                    await uniswap.router.signer.getAddress(),
+                    currentBlock.timestamp + 10000,
+                    {value: seedEthBalance}
+                )
             );
         }
 
+        let path: string[] = [];
+        if (uniswap != null) {
+            path = [wethAddress, uniswap.erc20.address];
+        }
+
         await SwapnetDeployer.txMined(
-            this.escrow.addExchangeRate(base, quote, chainlink.address, uniswapExchange.address, haircut)
+            this.escrow.addExchangeRate(
+                base,
+                quote,
+                chainlink.address,
+                path,
+                haircut
+            )
         );
 
-        return { chainlink, uniswapExchange };
+        return {chainlink, uniswapPair};
     }
 
     public deployFutureCashMarket = async (

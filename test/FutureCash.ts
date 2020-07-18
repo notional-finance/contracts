@@ -19,6 +19,7 @@ import { Escrow } from "../typechain/Escrow";
 import { Portfolios } from "../typechain/Portfolios";
 import { TestUtils, BLOCK_TIME_LIMIT } from "./testUtils";
 import { parseEther } from "ethers/utils";
+import { Iweth } from '../typechain/Iweth';
 
 chai.use(solidity);
 const { expect } = chai;
@@ -34,6 +35,7 @@ describe("Future Cash", () => {
     let portfolios: Portfolios;
     let t: TestUtils;
     let maturities: number[];
+    let weth: Iweth;
 
     beforeEach(async () => {
         owner = wallets[0];
@@ -45,6 +47,7 @@ describe("Future Cash", () => {
         futureCash = objs.futureCash;
         escrow = objs.escrow;
         portfolios = objs.portfolios;
+        weth = objs.weth;
 
         await dai.transfer(wallet.address, WeiPerEther.mul(10_000));
         await dai.transfer(wallet2.address, WeiPerEther.mul(10_000));
@@ -61,7 +64,7 @@ describe("Future Cash", () => {
         await fastForwardToMaturity(provider, maturities[1]);
         maturities = await futureCash.getActiveMaturities();
 
-        t = new TestUtils(escrow, futureCash, portfolios, dai, owner, objs.chainlink, objs.uniswap);
+        t = new TestUtils(escrow, futureCash, portfolios, dai, owner, objs.chainlink, objs.weth);
     });
 
     afterEach(async () => {
@@ -368,17 +371,17 @@ describe("Future Cash", () => {
                 await escrow.currencyBalances(dai.address, owner.address)
             )
         ).to.be.above(WeiPerEther.mul(10_000));
-        expect(await escrow.currencyBalances(AddressZero, owner.address)).to.equal(0);
+        expect(await escrow.currencyBalances(weth.address, owner.address)).to.equal(0);
 
         // This is the negative balance owed as a fixed rate loan ("takeCollateral")
         expect(await escrow.cashBalances(CURRENCY.DAI, wallet2.address)).to.equal(WeiPerEther.mul(-500));
-        expect(await escrow.currencyBalances(AddressZero, wallet2.address)).to.equal(WeiPerEther.mul(5));
+        expect(await escrow.currencyBalances(weth.address, wallet2.address)).to.equal(WeiPerEther.mul(5));
 
         // This is the lending amount, should be above what they put in
         expect(await escrow.cashBalances(CURRENCY.DAI, wallet.address)).to.equal(WeiPerEther.mul(100));
         // There is some residual left in dai balances.
         expect(await escrow.currencyBalances(dai.address, wallet.address)).to.be.above(0);
-        expect(await escrow.currencyBalances(AddressZero, wallet.address)).to.equal(0);
+        expect(await escrow.currencyBalances(weth.address, wallet.address)).to.equal(0);
     });
 
     // price methods //

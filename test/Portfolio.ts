@@ -50,7 +50,7 @@ describe("Portfolio", () => {
         // Set the blockheight to the beginning of the next period
         maturities = await futureCash.getActiveMaturities();
         await fastForwardToMaturity(provider, maturities[1]);
-        t = new TestUtils(escrow, futureCash, portfolios, dai, owner, objs.chainlink, objs.uniswap);
+        t = new TestUtils(escrow, futureCash, portfolios, dai, owner, objs.chainlink, objs.weth);
         maturities = await futureCash.getActiveMaturities();
     });
 

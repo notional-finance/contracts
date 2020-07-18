@@ -5,7 +5,6 @@ import "./lib/SafeUInt128.sol";
 import "./lib/SafeInt256.sol";
 import "./lib/ABDKMath64x64.sol";
 import "./lib/SafeMath.sol";
-import "./lib/UniswapExchangeInterface.sol";
 
 import "./utils/Governed.sol";
 import "./utils/Common.sol";

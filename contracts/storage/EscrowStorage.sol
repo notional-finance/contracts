@@ -4,9 +4,10 @@ contract EscrowStorage {
     // keccak256("ERC777TokensRecipient")
     bytes32 internal constant TOKENS_RECIPIENT_INTERFACE_HASH = 0xb281fc8c12954d22544db45de3159a39272895b169a852b314f9cc762e44c53b;
 
-    // Since ETH does not have a token address, we use the zero address to denominate its location. It also
-    // has special functions for deposits.
-    address internal constant G_ETH_CURRENCY = address(0);
+    // Internally we use WETH to represent ETH
+    address public WETH;
+    // We use the uniswap router to get pricing information for token exchange
+    address public UNISWAP_ROUTER;
 
     /**
      * Exchange rates are defined by an oracle and an on chain exchange. In the future, these may be combined
@@ -16,11 +17,11 @@ contract EscrowStorage {
     struct ExchangeRate {
         // The address of the chainlink price oracle
         address rateOracle;
-        // The address of the uniswap exchange. This is used for trustlessly settling cash on chain.
-        address onChainExchange;
         // Amount of haircut to apply to the exchange rate, this defines the collateralization ratio
         // between the two currencies.
         uint128 haircut;
+        // Uniswap router path that specifies the exchange path
+        address[] uniswapPath;
     }
 
     uint16 public maxCurrencyId;

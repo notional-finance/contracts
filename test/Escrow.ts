@@ -5,15 +5,16 @@ import { Wallet } from "ethers";
 import { WeiPerEther, AddressZero } from "ethers/constants";
 
 import ERC777Artifact from "../mocks/ERC777.json";
-import { Erc20 as ERC20 } from "../typechain/Erc20";
-import { FutureCash } from "../typechain/FutureCash";
-import { ErrorDecoder, ErrorCodes } from "../scripts/errorCodes";
-import { Escrow } from "../typechain/Escrow";
-import { Portfolios } from "../typechain/Portfolios";
-import { TestUtils } from "./testUtils";
-import { parseEther } from "ethers/utils";
-import { Ierc1820Registry as IERC1820Registry } from "../typechain/Ierc1820Registry";
-import { MockAggregator } from "../typechain/MockAggregator";
+import {Erc20 as ERC20} from "../typechain/Erc20";
+import {Iweth as IWETH} from "../typechain/Iweth";
+import {FutureCash} from "../typechain/FutureCash";
+import {ErrorDecoder, ErrorCodes} from "../scripts/errorCodes";
+import {Escrow} from "../typechain/Escrow";
+import {Portfolios} from "../typechain/Portfolios";
+import {TestUtils} from "./testUtils";
+import {parseEther} from "ethers/utils";
+import {Ierc1820Registry as IERC1820Registry} from "../typechain/Ierc1820Registry";
+import {MockAggregator} from "../typechain/MockAggregator";
 
 chai.use(solidity);
 const { expect } = chai;
@@ -31,6 +32,7 @@ describe("Deposits and Withdraws", () => {
     let chainlink: MockAggregator;
     let t: TestUtils;
     let registry: IERC1820Registry;
+    let weth: IWETH;
     let maturities: number[];
 
     beforeEach(async () => {
@@ -46,6 +48,7 @@ describe("Deposits and Withdraws", () => {
         portfolios = objs.portfolios;
         registry = objs.registry;
         chainlink = objs.chainlink;
+        weth = objs.weth;
 
         await dai.transfer(wallet.address, WeiPerEther.mul(10_000));
         await dai.transfer(wallet2.address, WeiPerEther.mul(10_000));
@@ -59,10 +62,11 @@ describe("Deposits and Withdraws", () => {
         rateAnchor = 1_050_000_000;
         await futureCash.setRateFactors(rateAnchor, 100);
 
+        // Set the blockheight to the beginning of the next period
         maturities = await futureCash.getActiveMaturities();
         await fastForwardToMaturity(provider, maturities[1]);
         maturities = await futureCash.getActiveMaturities();
-        t = new TestUtils(escrow, futureCash, portfolios, dai, owner, objs.chainlink, objs.uniswap);
+        t = new TestUtils(escrow, futureCash, portfolios, dai, owner, objs.chainlink, objs.weth);
     });
 
     afterEach(async () => {
@@ -74,12 +78,20 @@ describe("Deposits and Withdraws", () => {
 
     // deposits //
     it("allows users to deposit eth", async () => {
-        await escrow.depositEth({ value: WeiPerEther.mul(200) });
-        expect(await escrow.currencyBalances(AddressZero, owner.address)).to.equal(WeiPerEther.mul(200));
+        await escrow.depositEth({value: WeiPerEther.mul(200)});
+        expect(await escrow.currencyBalances(weth.address, owner.address)).to.equal(WeiPerEther.mul(200));
+    });
+
+    it("allows users to deposit weth", async () => {
+        await weth.deposit({value: parseEther("200")});
+        await weth.approve(escrow.address, parseEther("10000"));
+        await escrow.deposit(weth.address, parseEther("200"));
+        expect(await escrow.currencyBalances(weth.address, owner.address)).to.equal(WeiPerEther.mul(200));
+        expect(await weth.balanceOf(owner.address)).to.equal(0);
     });
 
     it("fails if users deposit more than unt128 max eth", async () => {
-        await expect(escrow.depositEth({ value: "0xfffffffffffffffffffffffffffffffffff" })).to.be.revertedWith(
+        await expect(escrow.depositEth({value: "0xfffffffffffffffffffffffffffffffffff"})).to.be.revertedWith(
             ErrorDecoder.decodeError(ErrorCodes.OVER_MAX_ETH_BALANCE)
         );
     });
@@ -146,7 +158,7 @@ describe("Deposits and Withdraws", () => {
         const balance = await owner.getBalance();
         await escrow.depositEth({ value: WeiPerEther });
         await escrow.withdrawEth(WeiPerEther.div(2));
-        expect(await escrow.currencyBalances(AddressZero, owner.address)).to.equal(WeiPerEther.div(2));
+        expect(await escrow.currencyBalances(weth.address, owner.address)).to.equal(WeiPerEther.div(2));
         expect(balance.sub(await owner.getBalance())).to.be.at.least(WeiPerEther.div(2));
     });
 
@@ -160,14 +172,14 @@ describe("Deposits and Withdraws", () => {
     });
 
     it("prevents users from withdrawing from address zero currency ", async () => {
-        await escrow.depositEth({ value: WeiPerEther });
+        await escrow.depositEth({value: WeiPerEther});
         await expect(escrow.withdraw(AddressZero, WeiPerEther)).to.be.revertedWith(
             ErrorDecoder.decodeError(ErrorCodes.INVALID_CURRENCY)
         );
     });
 
     it("prevents users from withdrawing more eth than they own", async () => {
-        await escrow.depositEth({ value: WeiPerEther });
+        await escrow.depositEth({value: WeiPerEther});
         await expect(escrow.withdrawEth(WeiPerEther.mul(2))).to.be.revertedWith(
             ErrorDecoder.encodeError(ErrorCodes.INSUFFICIENT_BALANCE)
         );
