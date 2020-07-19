@@ -1,20 +1,15 @@
-import {Wallet, Contract} from "ethers";
-import {JsonRpcProvider} from "ethers/providers";
-import {SwapnetDeployer} from "./SwapnetDeployer";
-import { WeiPerEther } from 'ethers/constants';
-import { BigNumber, parseEther } from 'ethers/utils';
-import {config} from "dotenv";
+import { Wallet } from "ethers";
+import { JsonRpcProvider } from "ethers/providers";
+import { SwapnetDeployer } from "./SwapnetDeployer";
+import { WeiPerEther } from "ethers/constants";
+import { BigNumber, parseEther } from "ethers/utils";
+import { config } from "dotenv";
 import Debug from "debug";
 
-import ERC1820RegistryArtifact from "../mocks/ERC1820Registry.json";
-import UniswapFactoryArtifact from "../mocks/UniswapFactory.json";
-import { UniswapFactoryInterface } from '../typechain/UniswapFactoryInterface';
-import { IERC1820Registry } from '../typechain/IERC1820Registry';
-
 const log = Debug("swapnet:deploy");
-const envPath = `${process.env.DOTENV_CONFIG_PATH}`
+const envPath = `${process.env.DOTENV_CONFIG_PATH}`;
 log(`Loading enviromnent from ${envPath} from ${process.cwd()}`);
-config({path: envPath});
+config({ path: envPath });
 
 async function main() {
     const chainId = process.env.DEPLOY_CHAIN_ID as string;
@@ -22,42 +17,15 @@ async function main() {
     let owner: Wallet;
 
     switch (chainId) {
-        // Parity Local Dev Mode
-        case "17":
         // Local Ganache
         case "1337":
             // This is the local ganache deployment
-            log("Deploying to local ganache")
+            log("Deploying to local ganache");
             owner = new Wallet(
                 process.env.TESTNET_PRIVATE_KEY as string,
                 new JsonRpcProvider(process.env.TESTNET_PROVIDER)
             );
             prereqs = await SwapnetDeployer.deployPrerequisites(owner);
-            break;
-        // Ropsten (PoW)
-        case "3":
-        // Rinkeby (PoA Geth)
-        case "4":
-        // Kovan (PoA Parity)
-        case "42":
-            log(`Deploying to remote testnet using ${process.env.TESTNET_PROVIDER}`);
-            owner = new Wallet(
-                process.env.TESTNET_PRIVATE_KEY as string,
-                new JsonRpcProvider(process.env.TESTNET_PROVIDER)
-            );
-            prereqs = {
-                registry: new Contract(
-                    process.env.ERC1820_REGISTRY_ADDRESS as string,
-                    ERC1820RegistryArtifact.abi,
-                    owner
-                ) as IERC1820Registry,
-                uniswapFactory: new Contract(
-                    process.env.UNISWAP_FACTORY_ADDRESS as string,
-                    UniswapFactoryArtifact.abi,
-                    owner
-                ) as UniswapFactoryInterface
-            }
-            // TODO: this should upgrade the existing contracts rather than deploy new ones
             break;
         case "1":
         default:
@@ -65,15 +33,21 @@ async function main() {
             log("Unknown chain id, quitting");
             process.exit(1);
     }
-    const swapnet = await SwapnetDeployer.deploy(owner, prereqs.registry.address);
+    const swapnet = await SwapnetDeployer.deploy(
+        owner,
+        prereqs.registry.address,
+        prereqs.weth.address,
+        prereqs.uniswapRouter.address
+    );
 
     // Deploy mock currencies and markets, don't do this if it is mainnet
     let currencyId = process.env.CURRENCY_ID !== undefined ? parseInt(process.env.CURRENCY_ID) : 0;
     if (process.env.DEPLOY_MOCK === "true") {
         let obj = await swapnet.deployMockCurrency(
             prereqs.uniswapFactory,
-            parseEther("0.01"),       // ETH/MOCK exchange rate
-            parseEther("1.30"),       // Haircut
+            prereqs.uniswapRouter,
+            parseEther("0.01"), // ETH/MOCK exchange rate
+            parseEther("1.30"), // Haircut
             true
         );
         currencyId = obj.currencyId;
@@ -97,7 +71,7 @@ async function main() {
         maxTradeSize,
         liquidityFee,
         transactionFee
-    )
+    );
 
     await swapnet.saveAddresses(process.env.CONTRACTS_FILE as string);
 }

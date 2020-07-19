@@ -786,6 +786,15 @@ contract FutureCash is Governed {
     /********** Rate Methods ******************************/
 
     /**
+     * @notice Returns the market object at the specified maturity
+     * @param maturity the maturity of the market
+     * @return market object
+     */
+    function getMarket(uint32 maturity) external view returns (Market memory) {
+        return markets[maturity];
+    }
+
+    /**
      * @notice Returns the current discount rate for the market. Will not return negative interest rates
      * @param maturity the maturity to get the rate for
      * @return a tuple where the first value is the simple discount rate and the second value is a boolean indicating

@@ -1,4 +1,5 @@
 #!/bin/bash
+set -e
 
 # Rebuild artifacts
 if [[ ! -v SKIP_BUILD ]]; then
