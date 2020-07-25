@@ -65,6 +65,7 @@ describe("Generic Tests", () => {
             maturities[0],
             WeiPerEther.mul(10_000),
             WeiPerEther.mul(10_000),
+            0, 100_000_000, 
             BLOCK_TIME_LIMIT
         );
         const futureCashProxy = new ethers.Contract(

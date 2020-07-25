@@ -39,7 +39,7 @@ cash balances, collateral lockup for trading, cash transfers (settlement), and l
 - [`setReserveAccount(address account)`](#setReserveAccount)
 - [`listTradableCurrency(address token)`](#listTradableCurrency)
 - [`listDepositCurrency(address token)`](#listDepositCurrency)
-- [`addExchangeRate(uint16 base, uint16 quote, address rateOracle, address onChainExchange, uint128 haircut)`](#addExchangeRate)
+- [`addExchangeRate(uint16 base, uint16 quote, address rateOracle, address[] uniswapPath, uint128 haircut)`](#addExchangeRate)
 
 # Methods
 ### `isValidCurrency`
@@ -381,7 +381,7 @@ accounts
 - `base`: the base currency
 - `quote`: the quote currency
 - `rateOracle`: the oracle that will give the exchange rate between the two
-- `onChainExchange`: uniswap exchange for trustless exchange
+- `uniswapPath`: path between uniswap exchanges
 - `haircut`: multiple to apply to the exchange rate that sets the collateralization ratio
 
 ***

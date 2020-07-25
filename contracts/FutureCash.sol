@@ -244,20 +244,27 @@ contract FutureCash is Governed {
      * `maxFutureCash`. Mints liquidity tokens back to the sender.
      * @dev - TRADE_FAILED_MAX_TIME: maturity specified is not yet active
      * - MARKET_INACTIVE: maturity is not a valid one
-     * - OVER_MAX_FUTURE_CASH: depositing collateral would require more future cash than specified
+     * - OVER_MAX_FUTURE_CASH: future cash amount required exceeds supplied maxFutureCash
+     * - OUT_OF_IMPLIED_RATE_BOUNDS: depositing collateral would require more future cash than specified
      * - INSUFFICIENT_BALANCE: insufficient collateral to deposit into market
      * @param maturity the period to add liquidity to
-     * @param minCollateral the amount of collateral to add to the pool
-     * @param maxFutureCash the maximum amount of future cash to add to the pool
+     * @param collateral the amount of collateral to add to the pool
+     * @param maxFutureCash the max amount of future cash to add to the pool, when initializing a pool this is the
+     * amount of future cash that will be added
+     * @param minImpliedRate the minimum implied rate that we will add liquidity at
+     * @param maxImpliedRate the maximum implied rate that we will add liquidity at
      * @param maxTime after this time the trade will fail
      */
     function addLiquidity(
         uint32 maturity,
-        uint128 minCollateral,
+        uint128 collateral,
         uint128 maxFutureCash,
+        uint32 minImpliedRate,
+        uint32 maxImpliedRate,
         uint32 maxTime
     ) public {
         _isValidBlock(maturity, maxTime);
+        uint32 timeToMaturity = maturity - uint32(block.timestamp);
         Market storage market = markets[maturity];
         // We call settle here instead of at the end of the function because if we have matured liquidity
         // tokens this will put collateral back into our portfolio so that we can add it back into the markets.
@@ -277,36 +284,47 @@ contract FutureCash is Governed {
             }
 
             market.totalFutureCash = maxFutureCash;
-            market.totalCollateral = minCollateral;
-            market.totalLiquidity = minCollateral;
+            market.totalCollateral = collateral;
+            market.totalLiquidity = collateral;
             // We have to initialize this to the exchange rate implied by the proportion of cash to future cash.
-            uint32 timeToMaturity = maturity - uint32(block.timestamp);
-            market.lastImpliedRate = _getImpliedRateRequire(market, timeToMaturity);
+            uint32 impliedRate = _getImpliedRateRequire(market, timeToMaturity);
+            require(minImpliedRate <= maxImpliedRate 
+                && minImpliedRate <= impliedRate && impliedRate <= maxImpliedRate,
+                $$(ErrorCode(OUT_OF_IMPLIED_RATE_BOUNDS))
+            );
+            market.lastImpliedRate = impliedRate;
 
-            liquidityTokenAmount = minCollateral;
+            liquidityTokenAmount = collateral;
             futureCash = maxFutureCash;
         } else {
             // We calculate the amount of liquidity tokens to mint based on the share of the future cash
             // that the liquidity provider is depositing.
             liquidityTokenAmount = uint128(
-                uint256(market.totalLiquidity).mul(minCollateral).div(market.totalCollateral)
+                uint256(market.totalLiquidity).mul(collateral).div(market.totalCollateral)
             );
 
             // We use the prevailing proportion to calculate the required amount of current cash to deposit.
-            futureCash = uint128(uint256(market.totalFutureCash).mul(minCollateral).div(market.totalCollateral));
-            // If this proportion has moved beyond what the liquidity provider is willing to pay then we
-            // will revert here.
+            futureCash = uint128(uint256(market.totalFutureCash).mul(collateral).div(market.totalCollateral));
             require(futureCash <= maxFutureCash, $$(ErrorCode(OVER_MAX_FUTURE_CASH)));
 
             // Add the future cash and collateral to the pool.
             market.totalFutureCash = market.totalFutureCash.add(futureCash);
-            market.totalCollateral = market.totalCollateral.add(minCollateral);
+            market.totalCollateral = market.totalCollateral.add(collateral);
             market.totalLiquidity = market.totalLiquidity.add(liquidityTokenAmount);
+
+            // If this proportion has moved beyond what the liquidity provider is willing to pay then we
+            // will revert here.
+            uint32 impliedRate = _getImpliedRateRequire(market, timeToMaturity);
+            require(minImpliedRate <= maxImpliedRate 
+                && minImpliedRate <= impliedRate && impliedRate <= maxImpliedRate,
+                $$(ErrorCode(OUT_OF_IMPLIED_RATE_BOUNDS))
+            );
+
         }
 
         // Move the collateral into the contract's collateral balances account. This must happen before the trade
         // is placed so that the free collateral check is correct.
-        Escrow().depositIntoMarket(msg.sender, G_COLLATERAL_TOKEN, FUTURE_CASH_GROUP, minCollateral, 0);
+        Escrow().depositIntoMarket(msg.sender, G_COLLATERAL_TOKEN, FUTURE_CASH_GROUP, collateral, 0);
 
         // Providing liquidity results in two tokens generated, a liquidity token and a CASH_PAYER which
         // represents the obligation that offsets the future cash in the market.
@@ -336,7 +354,7 @@ contract FutureCash is Governed {
         // This will do a free collateral check before it adds to the portfolio.
         Portfolios().upsertAccountAssetBatch(msg.sender, assets);
 
-        emit AddLiquidity(msg.sender, maturity, liquidityTokenAmount, futureCash, minCollateral);
+        emit AddLiquidity(msg.sender, maturity, liquidityTokenAmount, futureCash, collateral);
     }
 
     /**

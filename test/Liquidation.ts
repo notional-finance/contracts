@@ -84,18 +84,21 @@ describe("Liquidation", () => {
             maturities[0],
             WeiPerEther.mul(10_000),
             WeiPerEther.mul(10_000),
+            0, 100_000_000, 
             BLOCK_TIME_LIMIT
         );
         await futureCash.addLiquidity(
             maturities[1],
             WeiPerEther.mul(10_000),
             WeiPerEther.mul(10_000),
+            0, 100_000_000, 
             BLOCK_TIME_LIMIT
         );
         await futureCash.addLiquidity(
             maturities[2],
             WeiPerEther.mul(10_000),
             WeiPerEther.mul(10_000),
+            0, 100_000_000, 
             BLOCK_TIME_LIMIT
         );
     });
@@ -174,7 +177,7 @@ describe("Liquidation", () => {
                 .takeCollateral(maturities[0], WeiPerEther.mul(200), BLOCK_TIME_LIMIT, 60_000_000);
             await futureCash
                 .connect(wallet)
-                .addLiquidity(maturities[1], WeiPerEther.mul(500), WeiPerEther.mul(500), BLOCK_TIME_LIMIT);
+                .addLiquidity(maturities[1], WeiPerEther.mul(500), WeiPerEther.mul(500), 0, 100_000_000, BLOCK_TIME_LIMIT);
             const daiBalance = await escrow.currencyBalances(dai.address, wallet.address);
             // At this point the dai claim in the liquidity tokens is collateralizing the payer. Leave 100 dai in just to
             // test that we will settle both properly.
@@ -196,10 +199,10 @@ describe("Liquidation", () => {
                 .takeCollateral(maturities[0], WeiPerEther.mul(200), BLOCK_TIME_LIMIT, 60_000_000);
             await futureCash
                 .connect(wallet)
-                .addLiquidity(maturities[1], WeiPerEther.mul(200), WeiPerEther.mul(200), BLOCK_TIME_LIMIT);
+                .addLiquidity(maturities[1], WeiPerEther.mul(200), WeiPerEther.mul(200), 0, 100_000_000, BLOCK_TIME_LIMIT);
             await futureCash
                 .connect(wallet)
-                .addLiquidity(maturities[2], WeiPerEther.mul(200), WeiPerEther.mul(200), BLOCK_TIME_LIMIT);
+                .addLiquidity(maturities[2], WeiPerEther.mul(200), WeiPerEther.mul(200), 0, 100_000_000, BLOCK_TIME_LIMIT);
             const daiBalance = await escrow.currencyBalances(dai.address, wallet.address);
             // At this point the dai claim in the liquidity tokens is collateralizing the payer.
             await escrow.connect(wallet).withdraw(dai.address, daiBalance);
@@ -431,7 +434,7 @@ describe("Liquidation", () => {
             await escrow.deposit(dai.address, WeiPerEther.mul(1000));
 
             await escrow.connect(wallet).deposit(dai.address, parseEther("90"));
-            await futureCash.addLiquidity(maturities[1], parseEther("90"), parseEther("90"), BLOCK_TIME_LIMIT);
+            await futureCash.addLiquidity(maturities[1], parseEther("90"), parseEther("90"), 0, 100_000_000, BLOCK_TIME_LIMIT);
             const [ethBalanceBefore] = await t.borrowAndWithdraw(wallet, parseEther("100"));
             await escrow.connect(wallet).withdrawEth(ethBalanceBefore.sub(parseEther("0.2")));
 

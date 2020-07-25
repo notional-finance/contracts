@@ -42,7 +42,7 @@ export class TestUtils {
             await this.escrow.connect(lp).deposit(this.dai.address, collateralAmount);
             await this.futureCash
                 .connect(lp)
-                .addLiquidity(maturities[m], collateralAmount, futureCashAmount, BLOCK_TIME_LIMIT);
+                .addLiquidity(maturities[m], collateralAmount, futureCashAmount, 0, 100_000_000, BLOCK_TIME_LIMIT);
         }
     }
 

@@ -4,7 +4,7 @@ Marketplace for trading future cash tokens to create fixed rate entitlements or 
 
 
 ## Methods
-- [`addLiquidity(uint32 maturity, uint128 minCollateral, uint128 maxFutureCash, uint32 maxTime)`](#addLiquidity)
+- [`addLiquidity(uint32 maturity, uint128 collateral, uint128 maxFutureCash, uint32 minImpliedRate, uint32 maxImpliedRate, uint32 maxTime)`](#addLiquidity)
 - [`removeLiquidity(uint32 maturity, uint128 amount, uint32 maxTime)`](#removeLiquidity)
 - [`getFutureCashToCollateral(uint32 maturity, uint128 futureCashAmount)`](#getFutureCashToCollateral)
 - [`getFutureCashToCollateralAtTime(uint32 maturity, uint128 futureCashAmount, uint32 blockTime)`](#getFutureCashToCollateralAtTime)
@@ -37,14 +37,18 @@ Marketplace for trading future cash tokens to create fixed rate entitlements or 
 `maxFutureCash`. Mints liquidity tokens back to the sender.
 #### Parameters:
 - `maturity`: the period to add liquidity to
-- `minCollateral`: the amount of collateral to add to the pool
-- `maxFutureCash`: the maximum amount of future cash to add to the pool
+- `collateral`: the amount of collateral to add to the pool
+- `maxFutureCash`: the max amount of future cash to add to the pool, when initializing a pool this is the
+amount of future cash that will be added
+- `minImpliedRate`: the minimum implied rate that we will add liquidity at
+- `maxImpliedRate`: the maximum implied rate that we will add liquidity at
 - `maxTime`: after this time the trade will fail
 
 #### Error Codes:
 - TRADE_FAILED_MAX_TIME: maturity specified is not yet active
 - MARKET_INACTIVE: maturity is not a valid one
-- OVER_MAX_FUTURE_CASH: depositing collateral would require more future cash than specified
+- OVER_MAX_FUTURE_CASH: future cash amount required exceeds supplied maxFutureCash
+- OUT_OF_IMPLIED_RATE_BOUNDS: depositing collateral would require more future cash than specified
 - INSUFFICIENT_BALANCE: insufficient collateral to deposit into market
 
 ***
