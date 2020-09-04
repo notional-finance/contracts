@@ -15,28 +15,29 @@ import "./Directory.sol";
  * A base contract to set the contract references on each contract.
  */
 contract Governed is OpenZeppelinUpgradesOwnable, Initializable {
-    address public directory;
+    address public DIRECTORY;
     mapping(uint256 => address) private contracts;
 
-    function initialize(address _directory) public initializer {
+    function initialize(address directory) public initializer {
         _owner = msg.sender;
-        directory = _directory;
+        DIRECTORY = directory;
     }
 
     enum CoreContracts {
         Escrow,
         RiskFramework,
         Portfolios,
-        ERC1155Token
+        ERC1155Token,
+        ERC1155Trade
     }
 
-    function setContract(CoreContracts name, address _address) public {
-        require(msg.sender == directory, $$(ErrorCode(UNAUTHORIZED_CALLER)));
-        contracts[uint256(name)] = _address;
+    function setContract(CoreContracts name, address contractAddress) public {
+        require(msg.sender == DIRECTORY, $$(ErrorCode(UNAUTHORIZED_CALLER)));
+        contracts[uint256(name)] = contractAddress;
     }
 
-    function _fetchDependencies(CoreContracts[] memory dependencies) internal {
-        address[] memory _contracts = Directory(directory).getContracts(dependencies);
+    function _setDependencies(CoreContracts[] memory dependencies) internal {
+        address[] memory _contracts = Directory(DIRECTORY).getContracts(dependencies);
         for (uint256 i; i < _contracts.length; i++) {
             contracts[uint256(dependencies[i])] = _contracts[i];
         }
@@ -54,6 +55,10 @@ contract Governed is OpenZeppelinUpgradesOwnable, Initializable {
         return IRiskFramework(contracts[uint256(CoreContracts.RiskFramework)]);
     }
 
+    function calledByRisk() internal view returns (bool) {
+        return msg.sender == contracts[(uint256(CoreContracts.RiskFramework))];
+    }
+
     function calledByEscrow() internal view returns (bool) {
         return msg.sender == contracts[(uint256(CoreContracts.Escrow))];
     }
@@ -62,7 +67,11 @@ contract Governed is OpenZeppelinUpgradesOwnable, Initializable {
         return msg.sender == contracts[(uint256(CoreContracts.Portfolios))];
     }
 
-    function calledByERC1155() internal view returns (bool) {
+    function calledByERC1155Token() internal view returns (bool) {
         return msg.sender == contracts[(uint256(CoreContracts.ERC1155Token))];
+    }
+
+    function calledByERC1155Trade() internal view returns (bool) {
+        return msg.sender == contracts[(uint256(CoreContracts.ERC1155Trade))];
     }
 }

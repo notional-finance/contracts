@@ -14,7 +14,9 @@ export const wallets = defaultAccounts.map(acc => {
 export const fixtureLoader = createFixtureLoader(provider, [wallets[0]]);
 export const CURRENCY = {
     ETH: 0,
-    DAI: 1
+    DAI: 1,
+    USDC: 2,
+    WBTC: 3
 };
 
 /**
@@ -28,30 +30,28 @@ export async function fixture(provider: providers.Provider, [owner]: Wallet[]) {
         owner,
         prereqs.registry.address,
         prereqs.weth.address,
-        prereqs.uniswapRouter.address,
         parseEther("1.10"),
         parseEther("1.05"),
-        parseEther("1.05")
+        parseEther("0.95"),
+        parseEther("1.01")
     );
 
-    const {currencyId, erc20, chainlink, uniswapPair} = await swapnet.deployMockCurrency(
-        prereqs.uniswapFactory,
-        prereqs.uniswapRouter,
+    const {currencyId, erc20, chainlink} = await swapnet.deployMockCurrency(
         parseEther("0.01"),
-        parseEther("1.30"),
-        true,
-        parseEther("10000")
+        parseEther("1.30")
     );
 
     // We will do 60 second blocks for testing
     const futureCash = await swapnet.deployFutureCashMarket(
         currencyId,
         4,
-        60,
+        2592000,
         parseEther("10000"),
         new BigNumber(0),
         new BigNumber(0),
-        1e9
+        1e9,
+        1_100_000_000,
+        85
     );
 
     return {
@@ -59,7 +59,6 @@ export async function fixture(provider: providers.Provider, [owner]: Wallet[]) {
         futureCash,
         escrow: swapnet.escrow,
         owner,
-        uniswap: uniswapPair,
         chainlink,
         portfolios: swapnet.portfolios,
         proxyAdmin: swapnet.proxyAdmin,
@@ -67,8 +66,6 @@ export async function fixture(provider: providers.Provider, [owner]: Wallet[]) {
         registry: prereqs.registry,
         directory: swapnet.directory,
         swapnet: swapnet,
-        uniswapFactory: prereqs.uniswapFactory,
-        uniswapRouter: prereqs.uniswapRouter,
         weth: prereqs.weth
     };
 }

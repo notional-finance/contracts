@@ -14,7 +14,7 @@ contract Directory is OpenZeppelinUpgradesOwnable, Initializable {
     mapping(uint256 => address) public contracts;
     event SetContract(Governed.CoreContracts name, address contractAddress);
 
-    function initialize() public initializer {
+    function initialize() external initializer {
         _owner = msg.sender;
     }
 
@@ -25,13 +25,13 @@ contract Directory is OpenZeppelinUpgradesOwnable, Initializable {
      * @param name the contract that dependencies depend on
      * @param dependencies a list of contracts that depend on name
      */
-    function setDependencies(Governed.CoreContracts name, Governed.CoreContracts[] calldata dependencies)
-        external
-        onlyOwner
-    {
-        address _address = contracts[uint256(name)];
+    function setDependencies(
+        Governed.CoreContracts name,
+        Governed.CoreContracts[] calldata dependencies
+    ) external onlyOwner {
+        address contractAddress = contracts[uint256(name)];
         for (uint256 i; i < dependencies.length; i++) {
-            Governed(contracts[uint256(dependencies[i])]).setContract(name, _address);
+            Governed(contracts[uint256(dependencies[i])]).setContract(name, contractAddress);
         }
     }
 
@@ -43,12 +43,12 @@ contract Directory is OpenZeppelinUpgradesOwnable, Initializable {
      * @param dependencies a list of core contracts required by the caller
      * @return a list of addresses corresponding to the dependencies
      */
-    function getContracts(Governed.CoreContracts[] memory dependencies) public view returns (address[] memory) {
-        address[] memory _contracts = new address[](dependencies.length);
-        for (uint256 i; i < _contracts.length; i++) {
-            _contracts[i] = contracts[uint256(dependencies[i])];
+    function getContracts(Governed.CoreContracts[] calldata dependencies) external view returns (address[] memory) {
+        address[] memory contractAddresses = new address[](dependencies.length);
+        for (uint256 i; i < contractAddresses.length; i++) {
+            contractAddresses[i] = contracts[uint256(dependencies[i])];
         }
-        return _contracts;
+        return contractAddresses;
     }
 
     /**
@@ -56,11 +56,11 @@ contract Directory is OpenZeppelinUpgradesOwnable, Initializable {
      * dependencies.
      *
      * @param name the enum of the contract
-     * @param _address the address of the contract
+     * @param contractAddress the address of the contract
      */
-    function setContract(Governed.CoreContracts name, address _address) public onlyOwner {
-        contracts[uint256(name)] = _address;
+    function setContract(Governed.CoreContracts name, address contractAddress) external onlyOwner {
+        contracts[uint256(name)] = contractAddress;
 
-        emit SetContract(name, _address);
+        emit SetContract(name, contractAddress);
     }
 }

@@ -275,20 +275,25 @@ whether or not the maturity has passed
 
 # Governance Methods
 ### `setRateFactors`
-> Sets rate factors that will determine the liquidity curve
+> Sets rate factors that will determine the liquidity curve. Rate Anchor is set as an exchange rate
+between collateral and future cash shifted by the INSTRUMENT_PRECISION so 1.05 exchange rate will be equal to
+1.05 * INSTRUMENT_PRECISION. As a general default, INSTRUMENT_PRECISION will be set to 1e9.
 #### Parameters:
 - `rateAnchor`: the offset of the liquidity curve
 - `rateScalar`: the sensitivity of the liquidity curve to changes
 
 ***
 ### `setMaxTradeSize`
-> Sets the maximum amount that can be traded in a single trade
+> Sets the maximum amount that can be traded in a single trade.
 #### Parameters:
 - `amount`: the max trade size
 
 ***
 ### `setFee`
-> Sets fee parameters for the market
+> Sets fee parameters for the market. Liquidity Fees are set as basis points and shift the traded
+exchange rate. A basis point is the equivalent of 1e5 if INSTRUMENT_PRECISION is set to 1e9.
+Transaction fees are set as a percentage shifted by 1e18. For example a 1% transaction fee will be set
+as 1.01e18.
 #### Parameters:
 - `liquidityFee`: a change in the traded exchange rate paid to liquidity providers
 - `transactionFee`: percentage of a transaction that accrues to the reserve account

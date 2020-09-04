@@ -5,6 +5,8 @@ import { Wallet } from "ethers";
 import { WeiPerEther, AddressZero } from "ethers/constants";
 
 import ERC777Artifact from "../mocks/ERC777.json";
+import MockUSDC from "../mocks/MockUSDC.json";
+import MockAggregatorArtifact from "../build/MockAggregator.json";
 import {Erc20 as ERC20} from "../typechain/Erc20";
 import {Iweth as IWETH} from "../typechain/Iweth";
 import {FutureCash} from "../typechain/FutureCash";
@@ -12,7 +14,7 @@ import {ErrorDecoder, ErrorCodes} from "../scripts/errorCodes";
 import {Escrow} from "../typechain/Escrow";
 import {Portfolios} from "../typechain/Portfolios";
 import {TestUtils} from "./testUtils";
-import {parseEther} from "ethers/utils";
+import {parseEther, BigNumber} from "ethers/utils";
 import {Ierc1820Registry as IERC1820Registry} from "../typechain/Ierc1820Registry";
 import {MockAggregator} from "../typechain/MockAggregator";
 
@@ -66,27 +68,26 @@ describe("Deposits and Withdraws", () => {
         maturities = await futureCash.getActiveMaturities();
         await fastForwardToMaturity(provider, maturities[1]);
         maturities = await futureCash.getActiveMaturities();
-        t = new TestUtils(escrow, futureCash, portfolios, dai, owner, objs.chainlink, objs.weth);
+        t = new TestUtils(escrow, futureCash, portfolios, dai, owner, objs.chainlink, objs.weth, CURRENCY.DAI);
     });
 
     afterEach(async () => {
         expect(await t.checkEthBalanceIntegrity([owner, wallet, wallet2, wallet3])).to.be.true;
         expect(await t.checkBalanceIntegrity([owner, wallet, wallet2, wallet3])).to.be.true;
-        expect(await t.checkCashIntegrity([owner, wallet, wallet2, wallet3])).to.be.true;
-        expect(await t.checkMarketIntegrity([owner, wallet, wallet2, wallet3])).to.be.true;
+        expect(await t.checkMarketIntegrity([owner, wallet, wallet2, wallet3], maturities)).to.be.true;
     });
 
     // deposits //
     it("allows users to deposit eth", async () => {
         await escrow.depositEth({value: WeiPerEther.mul(200)});
-        expect(await escrow.currencyBalances(weth.address, owner.address)).to.equal(WeiPerEther.mul(200));
+        expect(await escrow.cashBalances(CURRENCY.ETH, owner.address)).to.equal(WeiPerEther.mul(200));
     });
 
     it("allows users to deposit weth", async () => {
         await weth.deposit({value: parseEther("200")});
         await weth.approve(escrow.address, parseEther("10000"));
         await escrow.deposit(weth.address, parseEther("200"));
-        expect(await escrow.currencyBalances(weth.address, owner.address)).to.equal(WeiPerEther.mul(200));
+        expect(await escrow.cashBalances(CURRENCY.ETH, owner.address)).to.equal(WeiPerEther.mul(200));
         expect(await weth.balanceOf(owner.address)).to.equal(0);
     });
 
@@ -99,7 +100,7 @@ describe("Deposits and Withdraws", () => {
     it("allows users to deposit dai", async () => {
         await dai.approve(escrow.address, WeiPerEther);
         await escrow.deposit(dai.address, WeiPerEther);
-        expect(await escrow.currencyBalances(dai.address, owner.address)).to.equal(WeiPerEther);
+        expect(await escrow.cashBalances(CURRENCY.DAI, owner.address)).to.equal(WeiPerEther);
     });
 
     it("does not allow users to deposit invalid currencies", async () => {
@@ -126,29 +127,22 @@ describe("Deposits and Withdraws", () => {
         );
     });
 
-    it("does not allow deposit currencies to be listed in future cash markets", async () => {
-        const erc777 = await deployContract(owner, ERC777Artifact, [registry.address]);
-        await escrow.listDepositCurrency(erc777.address);
-
-        await expect(portfolios.createFutureCashGroup(2, 100, 1e9, 2, AddressZero, AddressZero)).to.be.revertedWith(
-            ErrorDecoder.decodeError(ErrorCodes.INVALID_CURRENCY)
-        );
-    });
-
-    it("does not allow invalid currencies as deposit currencies", async () => {
-        expect(await escrow.isDepositCurrency(3)).to.be.false;
+    it("does not allow currencies to be listed twice", async () => {
+        await expect(
+            escrow.listCurrency(dai.address, { isERC777: true, hasTransferFee: false })
+        ).to.be.revertedWith(ErrorDecoder.decodeError(ErrorCodes.INVALID_CURRENCY));
     });
 
     it("supports erc777 token transfers", async () => {
         const erc777 = await deployContract(owner, ERC777Artifact, [registry.address]);
-        await escrow.listDepositCurrency(erc777.address);
+        await escrow.listCurrency(erc777.address, { isERC777: true, hasTransferFee: false });
 
         await expect(erc777.send(escrow.address, 100, []))
             .to.emit(erc777, "Sent")
             .withArgs(owner.address, owner.address, escrow.address, 100, "0x", "0x");
 
         // Check balances
-        expect(await escrow.currencyBalances(erc777.address, owner.address)).to.equal(100);
+        expect(await escrow.cashBalances(2, owner.address)).to.equal(100);
         expect(await erc777.balanceOf(owner.address)).to.equal(99999999999900);
         expect(await erc777.balanceOf(escrow.address)).to.equal(100);
     });
@@ -158,7 +152,7 @@ describe("Deposits and Withdraws", () => {
         const balance = await owner.getBalance();
         await escrow.depositEth({ value: WeiPerEther });
         await escrow.withdrawEth(WeiPerEther.div(2));
-        expect(await escrow.currencyBalances(weth.address, owner.address)).to.equal(WeiPerEther.div(2));
+        expect(await escrow.cashBalances(CURRENCY.ETH, owner.address)).to.equal(WeiPerEther.div(2));
         expect(balance.sub(await owner.getBalance())).to.be.at.least(WeiPerEther.div(2));
     });
 
@@ -167,7 +161,7 @@ describe("Deposits and Withdraws", () => {
         await dai.approve(futureCash.address, WeiPerEther);
         await escrow.deposit(dai.address, WeiPerEther);
         await escrow.withdraw(dai.address, WeiPerEther.div(2));
-        expect(await escrow.currencyBalances(dai.address, owner.address)).to.equal(WeiPerEther.div(2));
+        expect(await escrow.cashBalances(CURRENCY.DAI, owner.address)).to.equal(WeiPerEther.div(2));
         expect(balance.sub(await dai.balanceOf(owner.address))).to.be.at.least(WeiPerEther.div(2));
     });
 
@@ -226,41 +220,56 @@ describe("Deposits and Withdraws", () => {
     });
 
     it("converts balances to ETH", async () => {
-        const converted = await escrow.convertBalancesToETH([WeiPerEther, parseEther("100")]);
+        let converted = await escrow.convertBalancesToETH([WeiPerEther, parseEther("-100")]);
 
         expect(converted[0]).to.equal(WeiPerEther);
-        expect(converted[1]).to.equal(parseEther("1.3"));
+        expect(converted[1]).to.equal(parseEther("-1.3"));
+
+        converted = await escrow.convertBalancesToETH([parseEther("-1"), parseEther("-100")]);
+
+        expect(converted[0]).to.equal(parseEther("-1.3"));
+        expect(converted[1]).to.equal(parseEther("-1.3"));
     });
+
+    it("converts balances that are not denominated with 18 decimals to ETH", async () => {
+        const mockUSDC = await deployContract(owner, MockUSDC, []) as ERC20;
+        const mockChainlink = await deployContract(owner, MockAggregatorArtifact, []) as MockAggregator;
+        // Here we assume an exchange rate w/ 18 decimal places
+        await mockChainlink.setAnswer(parseEther("0.01"));
+        await escrow.listCurrency(mockUSDC.address, { isERC777: false, hasTransferFee: false });
+        await escrow.addExchangeRate(2, 0, mockChainlink.address, parseEther("1.2"), WeiPerEther, false);
+
+        let converted = await escrow.convertBalancesToETH([0, 0, new BigNumber(100 * 1e6)]);
+        expect(converted[2]).to.equal(parseEther("1"));
+
+        converted = await escrow.convertBalancesToETH([0, 0, new BigNumber(-100 * 1e6)]);
+        expect(converted[2]).to.equal(parseEther("1.2").mul(-1));
+    })
+
+    it("converts balances that are not denominated with 18 decimals to ETH where the exchange rate must be inverted", async () => {
+        const mockUSDC = await deployContract(owner, MockUSDC, []) as ERC20;
+        const mockChainlink = await deployContract(owner, MockAggregatorArtifact, []) as MockAggregator;
+        await mockChainlink.setAnswer(100e6);
+        await escrow.listCurrency(mockUSDC.address, { isERC777: false, hasTransferFee: false });
+        // Here the exchange rate has 6 decimal place precision
+        await escrow.addExchangeRate(2, 0, mockChainlink.address, parseEther("1.2"), new BigNumber(1e6), true);
+
+        let converted = await escrow.convertBalancesToETH([0, 0, new BigNumber(100 * 1e6)]);
+        expect(converted[2]).to.equal(parseEther("1"));
+
+        converted = await escrow.convertBalancesToETH([0, 0, new BigNumber(-100 * 1e6)]);
+        expect(converted[2]).to.equal(parseEther("1.2").mul(-1));
+    })
+
 
     // settle cash //
-    it("does not allow settling accounts against yourself", async () => {
-        await expect(
-            escrow.settleCashBalance(CURRENCY.DAI, CURRENCY.ETH, wallet.address, wallet.address, WeiPerEther.mul(100))
-        ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.COUNTERPARTY_CANNOT_BE_SELF));
-    });
-
     it("does not allow settling with an invalid currency", async () => {
         await expect(
-            escrow.settleCashBalance(3, CURRENCY.ETH, wallet.address, owner.address, WeiPerEther.mul(100))
-        ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INVALID_TRADABLE_CURRENCY));
+            escrow.settleCashBalance(3, CURRENCY.ETH, wallet.address, WeiPerEther.mul(100))
+        ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INVALID_CURRENCY));
         await expect(
-            escrow.settleCashBalanceBatch(3, CURRENCY.ETH, [wallet.address], [owner.address], [WeiPerEther.mul(100)])
-        ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INVALID_TRADABLE_CURRENCY));
-    });
-
-    it("does not allow settling with an invalid deposit currency", async () => {
-        await expect(
-            escrow.settleCashBalance(CURRENCY.DAI, CURRENCY.DAI, wallet.address, owner.address, WeiPerEther.mul(100))
-        ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INVALID_DEPOSIT_CURRENCY));
-        await expect(
-            escrow.settleCashBalanceBatch(
-                CURRENCY.DAI,
-                CURRENCY.DAI,
-                [wallet.address],
-                [owner.address],
-                [WeiPerEther.mul(100)]
-            )
-        ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INVALID_DEPOSIT_CURRENCY));
+            escrow.settleCashBalanceBatch(3, CURRENCY.ETH, [wallet.address], [WeiPerEther.mul(100)])
+        ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INVALID_CURRENCY));
     });
 
     it("settles cash in batch", async () => {
@@ -278,7 +287,6 @@ describe("Deposits and Withdraws", () => {
                     CURRENCY.DAI,
                     CURRENCY.ETH,
                     [wallet.address, wallet2.address],
-                    [owner.address, owner.address],
                     [parseEther("100"), parseEther("250")]
                 )
         ).to.not.be.reverted;
@@ -297,7 +305,7 @@ describe("Deposits and Withdraws", () => {
         await expect(
             escrow
                 .connect(wallet2)
-                .settleCashBalance(CURRENCY.DAI, CURRENCY.ETH, wallet.address, owner.address, parseEther("1"))
+                .settleCashBalance(CURRENCY.DAI, CURRENCY.ETH, wallet.address, parseEther("1"))
         ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INSUFFICIENT_FREE_COLLATERAL_FOR_SETTLER));
         await expect(
             escrow
@@ -306,7 +314,6 @@ describe("Deposits and Withdraws", () => {
                     CURRENCY.DAI,
                     CURRENCY.ETH,
                     [wallet.address],
-                    [owner.address],
                     [parseEther("1")]
                 )
         ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INSUFFICIENT_FREE_COLLATERAL_FOR_SETTLER));
@@ -338,12 +345,15 @@ describe("Deposits and Withdraws", () => {
         ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INSUFFICIENT_FREE_COLLATERAL_FOR_LIQUIDATOR));
     });
 
-    it("does not allow liquidating with an invalid deposit currency", async () => {
-        await expect(escrow.liquidate(wallet.address, CURRENCY.DAI, CURRENCY.DAI)).to.be.revertedWith(
-            ErrorDecoder.encodeError(ErrorCodes.INVALID_DEPOSIT_CURRENCY)
+    it("does not allow liquidating with an invalid currency", async () => {
+        await expect(escrow.liquidate(wallet.address, CURRENCY.DAI, 3)).to.be.revertedWith(
+            ErrorDecoder.encodeError(ErrorCodes.INVALID_CURRENCY)
+        );
+        await expect(escrow.liquidateBatch([wallet.address], CURRENCY.DAI, 3)).to.be.revertedWith(
+            ErrorDecoder.encodeError(ErrorCodes.INVALID_CURRENCY)
         );
         await expect(escrow.liquidateBatch([wallet.address], CURRENCY.DAI, CURRENCY.DAI)).to.be.revertedWith(
-            ErrorDecoder.encodeError(ErrorCodes.INVALID_DEPOSIT_CURRENCY)
+            ErrorDecoder.encodeError(ErrorCodes.INVALID_CURRENCY)
         );
     });
 

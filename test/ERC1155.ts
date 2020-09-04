@@ -1,6 +1,6 @@
 import chai from "chai";
 import { solidity, deployContract } from "ethereum-waffle";
-import { fixture, wallets, fixtureLoader, provider, fastForwardToMaturity } from "./fixtures";
+import { fixture, wallets, fixtureLoader, provider, fastForwardToMaturity, CURRENCY } from "./fixtures";
 import { Wallet } from "ethers";
 import { WeiPerEther, AddressZero } from "ethers/constants";
 
@@ -10,16 +10,30 @@ import { ErrorDecoder, ErrorCodes } from "../scripts/errorCodes";
 import { Escrow } from "../typechain/Escrow";
 import { Portfolios } from "../typechain/Portfolios";
 import { Erc1155Token as ERC1155Token } from "../typechain/Erc1155Token";
-import { TestUtils, BLOCK_TIME_LIMIT } from "./testUtils";
-import { BigNumber } from "ethers/utils";
+import { TestUtils, BLOCK_TIME_LIMIT, SwapType } from "./testUtils";
+import { BigNumber, parseEther, defaultAbiCoder } from "ethers/utils";
 
 import ERC1155MockReceiverArtifact from "../mocks/ERC1155MockReceiver.json";
+import { Iweth } from '../typechain/Iweth';
+import { MockAggregator } from '../typechain/MockAggregator';
+import { Erc1155Trade } from '../typechain/Erc1155Trade';
 
 chai.use(solidity);
 const { expect } = chai;
 
+enum TradeType {
+    TakeCollateral = 0,
+    TakeFutureCash = 1,
+    AddLiquidity = 2,
+    RemoveLiquidity = 3
+}
+
+const MAX_IMPLIED_RATE = 10_000_000;
+const MIN_IMPLIED_RATE = 0;
+
 describe("ERC1155 Token", () => {
     let dai: ERC20;
+    let weth: Iweth;
     let owner: Wallet;
     let wallet: Wallet;
     let wallet2: Wallet;
@@ -28,9 +42,11 @@ describe("ERC1155 Token", () => {
     let escrow: Escrow;
     let portfolios: Portfolios;
     let erc1155: ERC1155Token;
+    let erc1155trade: Erc1155Trade;
     let t: TestUtils;
     let maturities: number[];
     let erc1155Receiver: any;
+    let chainlink: MockAggregator;
 
     beforeEach(async () => {
         owner = wallets[0];
@@ -43,6 +59,9 @@ describe("ERC1155 Token", () => {
         escrow = objs.escrow;
         portfolios = objs.portfolios;
         erc1155 = objs.erc1155;
+        weth = objs.weth;
+        chainlink = objs.chainlink;
+        erc1155trade = objs.swapnet.erc1155trade;
 
         await dai.transfer(wallet.address, WeiPerEther.mul(10_000));
         await dai.transfer(wallet2.address, WeiPerEther.mul(10_000));
@@ -51,28 +70,34 @@ describe("ERC1155 Token", () => {
         await dai.connect(wallet).approve(escrow.address, WeiPerEther.mul(100_000_000));
         await dai.connect(wallet2).approve(escrow.address, WeiPerEther.mul(100_000_000));
 
+        await weth.connect(wallet).deposit({value: parseEther("1000")});
+        await weth.connect(wallet).approve(escrow.address, parseEther("100000000"));
+        await weth.connect(wallet2).deposit({value: parseEther("1000")});
+        await weth.connect(wallet2).approve(escrow.address, parseEther("100000000"));
+
         rateAnchor = 1_050_000_000;
         await futureCash.setRateFactors(rateAnchor, 100);
         erc1155Receiver = await deployContract(owner, ERC1155MockReceiverArtifact);
+        await escrow.connect(owner).deposit(dai.address, parseEther("50000"));
 
         // Set the blockheight to the beginning of the next period
         maturities = await futureCash.getActiveMaturities();
         await fastForwardToMaturity(provider, maturities[1]);
 
-        t = new TestUtils(escrow, futureCash, portfolios, dai, owner, objs.chainlink, objs.weth);
+        t = new TestUtils(escrow, futureCash, portfolios, dai, owner, objs.chainlink, objs.weth, CURRENCY.DAI);
         maturities = await futureCash.getActiveMaturities();
         await t.setupLiquidity();
         await escrow.connect(wallet).deposit(dai.address, WeiPerEther.mul(1000));
     });
 
     afterEach(async () => {
+        expect(await t.checkEthBalanceIntegrity([owner, wallet, wallet2, erc1155Receiver])).to.be.true;
         expect(await t.checkBalanceIntegrity([owner, wallet, wallet2, erc1155Receiver])).to.be.true;
-        expect(await t.checkCashIntegrity([owner, wallet, wallet2, erc1155Receiver])).to.be.true;
-        expect(await t.checkMarketIntegrity([owner, wallet, wallet2, erc1155Receiver])).to.be.true;
+        expect(await t.checkMarketIntegrity([owner, wallet, wallet2, erc1155Receiver], maturities)).to.be.true;
     });
 
     it("cannot send tokens to the zero address", async () => {
-        const id = await erc1155["encodeAssetId((uint8,uint16,uint32,uint32,bytes1,uint32,uint128))"](
+        const id = await erc1155["encodeAssetId((uint8,uint16,uint32,bytes1,uint32,uint128))"](
             await portfolios.getAsset(owner.address, 0)
         );
 
@@ -83,7 +108,7 @@ describe("ERC1155 Token", () => {
 
     it("cannot transfer matured assets", async () => {
         await futureCash.connect(wallet).takeFutureCash(maturities[0], WeiPerEther.mul(100), BLOCK_TIME_LIMIT, 0);
-        const id = await erc1155["encodeAssetId((uint8,uint16,uint32,uint32,bytes1,uint32,uint128))"](
+        const id = await erc1155["encodeAssetId((uint8,uint16,uint32,bytes1,uint32,uint128))"](
             await portfolios.getAsset(wallet.address, 0)
         );
 
@@ -94,7 +119,7 @@ describe("ERC1155 Token", () => {
     });
 
     it("cannot overflow uint128 in value", async () => {
-        const id = await erc1155["encodeAssetId((uint8,uint16,uint32,uint32,bytes1,uint32,uint128))"](
+        const id = await erc1155["encodeAssetId((uint8,uint16,uint32,bytes1,uint32,uint128))"](
             await portfolios.getAsset(owner.address, 0)
         );
 
@@ -114,8 +139,8 @@ describe("ERC1155 Token", () => {
     it("only the sender can call transfer", async () => {
         await futureCash
             .connect(wallet)
-            .takeFutureCash(maturities[0], WeiPerEther.mul(100), BLOCK_TIME_LIMIT, 40_000_000);
-        const id = await erc1155["encodeAssetId((uint8,uint16,uint32,uint32,bytes1,uint32,uint128))"](
+            .takeFutureCash(maturities[0], WeiPerEther.mul(100), BLOCK_TIME_LIMIT, MIN_IMPLIED_RATE);
+        const id = await erc1155["encodeAssetId((uint8,uint16,uint32,bytes1,uint32,uint128))"](
             await portfolios.getAsset(wallet.address, 0)
         );
 
@@ -127,8 +152,8 @@ describe("ERC1155 Token", () => {
     it("cannot call transfer with too much balance", async () => {
         await futureCash
             .connect(wallet)
-            .takeFutureCash(maturities[0], WeiPerEther.mul(100), BLOCK_TIME_LIMIT, 40_000_000);
-        const id = await erc1155["encodeAssetId((uint8,uint16,uint32,uint32,bytes1,uint32,uint128))"](
+            .takeFutureCash(maturities[0], WeiPerEther.mul(100), BLOCK_TIME_LIMIT, MIN_IMPLIED_RATE);
+        const id = await erc1155["encodeAssetId((uint8,uint16,uint32,bytes1,uint32,uint128))"](
             await portfolios.getAsset(wallet.address, 0)
         );
 
@@ -140,8 +165,8 @@ describe("ERC1155 Token", () => {
     it("can transfer cash receiver", async () => {
         await futureCash
             .connect(wallet)
-            .takeFutureCash(maturities[0], WeiPerEther.mul(100), BLOCK_TIME_LIMIT, 40_000_000);
-        const id = await erc1155["encodeAssetId((uint8,uint16,uint32,uint32,bytes1,uint32,uint128))"](
+            .takeFutureCash(maturities[0], WeiPerEther.mul(100), BLOCK_TIME_LIMIT, MIN_IMPLIED_RATE);
+        const id = await erc1155["encodeAssetId((uint8,uint16,uint32,bytes1,uint32,uint128))"](
             await portfolios.getAsset(wallet.address, 0)
         );
 
@@ -155,7 +180,7 @@ describe("ERC1155 Token", () => {
     });
 
     it("can transfer liquidity tokens between accounts", async () => {
-        const id = await erc1155["encodeAssetId((uint8,uint16,uint32,uint32,bytes1,uint32,uint128))"](
+        const id = await erc1155["encodeAssetId((uint8,uint16,uint32,bytes1,uint32,uint128))"](
             await portfolios.getAsset(owner.address, 0)
         );
 
@@ -171,8 +196,8 @@ describe("ERC1155 Token", () => {
     it("cannot transfer future cash payer between accounts", async () => {
         await futureCash
             .connect(wallet)
-            .takeCollateral(maturities[0], WeiPerEther.mul(100), BLOCK_TIME_LIMIT, 60_000_000);
-        const id = await erc1155["encodeAssetId((uint8,uint16,uint32,uint32,bytes1,uint32,uint128))"](
+            .takeCollateral(maturities[0], WeiPerEther.mul(100), BLOCK_TIME_LIMIT, MAX_IMPLIED_RATE);
+        const id = await erc1155["encodeAssetId((uint8,uint16,uint32,bytes1,uint32,uint128))"](
             await portfolios.getAsset(wallet.address, 0)
         );
 
@@ -185,15 +210,15 @@ describe("ERC1155 Token", () => {
         await t.setupLiquidity(owner, 0.5, WeiPerEther.mul(10_000), [1]);
         await futureCash
             .connect(wallet)
-            .takeFutureCash(maturities[0], WeiPerEther.mul(100), BLOCK_TIME_LIMIT, 40_000_000);
+            .takeFutureCash(maturities[0], WeiPerEther.mul(100), BLOCK_TIME_LIMIT, MIN_IMPLIED_RATE);
         await futureCash
             .connect(wallet)
-            .takeFutureCash(maturities[1], WeiPerEther.mul(100), BLOCK_TIME_LIMIT, 20_000_000);
+            .takeFutureCash(maturities[1], WeiPerEther.mul(100), BLOCK_TIME_LIMIT, MIN_IMPLIED_RATE);
 
-        const id1 = await erc1155["encodeAssetId((uint8,uint16,uint32,uint32,bytes1,uint32,uint128))"](
+        const id1 = await erc1155["encodeAssetId((uint8,uint16,uint32,bytes1,uint32,uint128))"](
             await portfolios.getAsset(wallet.address, 0)
         );
-        const id2 = await erc1155["encodeAssetId((uint8,uint16,uint32,uint32,bytes1,uint32,uint128))"](
+        const id2 = await erc1155["encodeAssetId((uint8,uint16,uint32,bytes1,uint32,uint128))"](
             await portfolios.getAsset(wallet.address, 1)
         );
 
@@ -218,20 +243,19 @@ describe("ERC1155 Token", () => {
 
     it("can decode asset ids", async () => {
         const asset = await portfolios.getAsset(owner.address, 0);
-        const id = await erc1155["encodeAssetId((uint8,uint16,uint32,uint32,bytes1,uint32,uint128))"](asset);
+        const id = await erc1155["encodeAssetId((uint8,uint16,uint32,bytes1,uint32,uint128))"](asset);
         const vals = await erc1155.decodeAssetId(id);
 
         expect(vals[0]).to.equal(asset.futureCashGroupId);
         expect(vals[1]).to.equal(asset.instrumentId);
-        expect(vals[2]).to.equal(asset.startTime);
-        expect(vals[3]).to.equal(asset.duration);
-        expect(vals[4]).to.equal(asset.swapType);
+        expect(vals[2]).to.equal(asset.maturity);
+        expect(vals[3]).to.equal(asset.swapType);
     });
 
     it("can approve and use operators", async () => {
         await erc1155.connect(owner).setApprovalForAll(wallet2.address, true);
         expect(await erc1155.isApprovedForAll(owner.address, wallet2.address));
-        const id = await erc1155["encodeAssetId((uint8,uint16,uint32,uint32,bytes1,uint32,uint128))"](
+        const id = await erc1155["encodeAssetId((uint8,uint16,uint32,bytes1,uint32,uint128))"](
             await portfolios.getAsset(owner.address, 0)
         );
 
@@ -242,7 +266,7 @@ describe("ERC1155 Token", () => {
 
     it("supports erc1155 token receivers on success", async () => {
         await erc1155Receiver.setShouldReject(false);
-        const id = await erc1155["encodeAssetId((uint8,uint16,uint32,uint32,bytes1,uint32,uint128))"](
+        const id = await erc1155["encodeAssetId((uint8,uint16,uint32,bytes1,uint32,uint128))"](
             await portfolios.getAsset(owner.address, 0)
         );
 
@@ -255,7 +279,7 @@ describe("ERC1155 Token", () => {
 
     it("supports erc1155 token receivers on failure", async () => {
         await erc1155Receiver.setShouldReject(true);
-        const id = await erc1155["encodeAssetId((uint8,uint16,uint32,uint32,bytes1,uint32,uint128))"](
+        const id = await erc1155["encodeAssetId((uint8,uint16,uint32,bytes1,uint32,uint128))"](
             await portfolios.getAsset(owner.address, 0)
         );
 
@@ -271,15 +295,15 @@ describe("ERC1155 Token", () => {
         await t.setupLiquidity(owner, 0.5, WeiPerEther.mul(10_000), [1]);
         await futureCash
             .connect(wallet)
-            .takeFutureCash(maturities[0], WeiPerEther.mul(100), BLOCK_TIME_LIMIT, 40_000_000);
+            .takeFutureCash(maturities[0], WeiPerEther.mul(100), BLOCK_TIME_LIMIT, MIN_IMPLIED_RATE);
         await futureCash
             .connect(wallet)
-            .takeFutureCash(maturities[1], WeiPerEther.mul(100), BLOCK_TIME_LIMIT, 20_000_000);
+            .takeFutureCash(maturities[1], WeiPerEther.mul(100), BLOCK_TIME_LIMIT, MIN_IMPLIED_RATE);
 
-        const id1 = await erc1155["encodeAssetId((uint8,uint16,uint32,uint32,bytes1,uint32,uint128))"](
+        const id1 = await erc1155["encodeAssetId((uint8,uint16,uint32,bytes1,uint32,uint128))"](
             await portfolios.getAsset(wallet.address, 0)
         );
-        const id2 = await erc1155["encodeAssetId((uint8,uint16,uint32,uint32,bytes1,uint32,uint128))"](
+        const id2 = await erc1155["encodeAssetId((uint8,uint16,uint32,bytes1,uint32,uint128))"](
             await portfolios.getAsset(wallet.address, 1)
         );
 
@@ -301,15 +325,15 @@ describe("ERC1155 Token", () => {
         await t.setupLiquidity(owner, 0.5, WeiPerEther.mul(10_000), [1]);
         await futureCash
             .connect(wallet)
-            .takeFutureCash(maturities[0], WeiPerEther.mul(100), BLOCK_TIME_LIMIT, 40_000_000);
+            .takeFutureCash(maturities[0], WeiPerEther.mul(100), BLOCK_TIME_LIMIT, MIN_IMPLIED_RATE);
         await futureCash
             .connect(wallet)
-            .takeFutureCash(maturities[1], WeiPerEther.mul(100), BLOCK_TIME_LIMIT, 20_000_000);
+            .takeFutureCash(maturities[1], WeiPerEther.mul(100), BLOCK_TIME_LIMIT, MIN_IMPLIED_RATE);
 
-        const id1 = await erc1155["encodeAssetId((uint8,uint16,uint32,uint32,bytes1,uint32,uint128))"](
+        const id1 = await erc1155["encodeAssetId((uint8,uint16,uint32,bytes1,uint32,uint128))"](
             await portfolios.getAsset(wallet.address, 0)
         );
-        const id2 = await erc1155["encodeAssetId((uint8,uint16,uint32,uint32,bytes1,uint32,uint128))"](
+        const id2 = await erc1155["encodeAssetId((uint8,uint16,uint32,bytes1,uint32,uint128))"](
             await portfolios.getAsset(wallet.address, 1)
         );
 
@@ -329,5 +353,973 @@ describe("ERC1155 Token", () => {
     it("supports erc165 interface lookup", async () => {
         expect(await erc1155.supportsInterface("0xd9b67a26")).to.be.true;
         expect(await erc1155.supportsInterface("0xffffffff")).to.be.false;
+    });
+
+    describe("batch operations", async () => {
+        it("reverts trade on maxTime", async () => {
+            await expect(
+                erc1155trade.connect(wallet).batchOperation(wallet.address, 0, [], [])
+            ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.TRADE_FAILED_MAX_TIME));
+            await expect(
+                erc1155trade.connect(wallet).batchOperationWithdraw(wallet.address, 0, [], [], [])
+            ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.TRADE_FAILED_MAX_TIME));
+        });
+
+        it("reverts trade on unapproved operators", async () => {
+            await expect(
+                erc1155trade.connect(wallet).batchOperation(owner.address, BLOCK_TIME_LIMIT, [], [])
+            ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.UNAUTHORIZED_CALLER));
+            await expect(
+                erc1155trade.connect(wallet).batchOperationWithdraw(owner.address, BLOCK_TIME_LIMIT, [], [], [])
+            ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.UNAUTHORIZED_CALLER));
+        });
+
+        it("reverts trade on invalid currency deposit", async () => {
+            await expect(
+                erc1155trade.connect(wallet).batchOperation(wallet.address, BLOCK_TIME_LIMIT, [{ currencyId: 3, amount: parseEther("100") }],[])
+            ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INVALID_CURRENCY));
+        });
+
+        it("reverts trade on invalid currency withdraw", async () => {
+            await expect(
+                erc1155trade.connect(wallet).batchOperationWithdraw(wallet.address, BLOCK_TIME_LIMIT, [], [], [{ to: owner.address, currencyId: 3, amount: parseEther("100") }])
+            ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INVALID_CURRENCY));
+        });
+
+        it("allows trade [deposit]", async () => {
+            await erc1155trade.connect(wallet2).batchOperation(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [{ currencyId: 1, amount: parseEther("100") }],
+                []
+            );
+
+            expect(await escrow.cashBalances(CURRENCY.DAI, wallet2.address)).to.equal(parseEther("100"));
+        });
+
+        it("allows trade [deposit, takeFutureCash]", async () => {
+            await erc1155trade.connect(wallet2).batchOperation(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [{ currencyId: 1, amount: parseEther("100") }],
+                [{ 
+                    tradeType: TradeType.TakeFutureCash, 
+                    futureCashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: "0x"
+                }]
+            );
+            expect(await t.hasCashReceiver(wallet2, maturities[0], parseEther("100"))).to.be.true;
+        });
+
+        it("allows trade [deposit, takeFutureCash, slippageData]", async () => {
+            const slippage = defaultAbiCoder.encode(['uint32'], [0]);
+            await erc1155trade.connect(wallet2).batchOperation(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [{ currencyId: 1, amount: parseEther("100") }],
+                [{ 
+                    tradeType: TradeType.TakeFutureCash, 
+                    futureCashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: slippage
+                }]
+            );
+            expect(await t.hasCashReceiver(wallet2, maturities[0], parseEther("100"))).to.be.true;
+        });
+
+        it("reverts trade on slippage [deposit, takeFutureCash, slippageData]", async () => {
+            const slippage = defaultAbiCoder.encode(['uint32'], [500_000_000]);
+            await expect(erc1155trade.connect(wallet2).batchOperation(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [{ currencyId: 1, amount: parseEther("100") }],
+                [{ 
+                    tradeType: TradeType.TakeFutureCash, 
+                    futureCashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: slippage
+                }]
+            )).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.TRADE_FAILED_SLIPPAGE));
+        });
+
+        it("allows trade [deposit, takeCollateral]", async () => {
+            await erc1155trade.connect(wallet2).batchOperation(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [{ currencyId: 0, amount: parseEther("1.5") }],
+                [{ 
+                    tradeType: TradeType.TakeCollateral, 
+                    futureCashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: "0x"
+                }]
+            );
+            expect(await t.hasCashPayer(wallet2, maturities[0], parseEther("100"))).to.be.true;
+        });
+
+        it("allows trade [deposit, takeCollateral, slippageData]", async () => {
+            const slippage = defaultAbiCoder.encode(['uint32'], [100_000_000]);
+            await erc1155trade.connect(wallet2).batchOperation(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [{ currencyId: 0, amount: parseEther("1.5") }],
+                [{ 
+                    tradeType: TradeType.TakeCollateral, 
+                    futureCashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: slippage
+                }]
+            );
+            expect(await t.hasCashPayer(wallet2, maturities[0], parseEther("100"))).to.be.true;
+        });
+
+        it("reverts trade on slippage [deposit, takeCollateral, slippageData]", async () => {
+            const slippage = defaultAbiCoder.encode(['uint32'], [0]);
+            await expect(erc1155trade.connect(wallet2).batchOperation(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [{ currencyId: 0, amount: parseEther("1.5") }],
+                [{ 
+                    tradeType: TradeType.TakeCollateral, 
+                    futureCashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: slippage
+                }]
+            )).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.TRADE_FAILED_SLIPPAGE));
+        })
+
+        it("allows trade [deposit, takeCollateral, withdraw]", async () => {
+            const slippage = defaultAbiCoder.encode(['uint32'], [100_000_000]);
+            const balanceBefore = await dai.balanceOf(wallet2.address);
+            await erc1155trade.connect(wallet2).batchOperationWithdraw(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [{ currencyId: 0, amount: parseEther("1.5") }],
+                [{ 
+                    tradeType: TradeType.TakeCollateral, 
+                    futureCashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: slippage
+                }],
+                [{ to: wallet2.address, currencyId: 1, amount: 0 }]
+            );
+            expect(await escrow.cashBalances(CURRENCY.DAI, wallet2.address)).to.equal(0);
+            expect(await dai.balanceOf(wallet2.address)).to.be.above(balanceBefore);
+        });
+
+        it("reverts on fc check [deposit, takeCollateral, withdraw]", async () => {
+            await expect(erc1155trade.connect(wallet2).batchOperationWithdraw(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [{ currencyId: 0, amount: parseEther("1.5") }],
+                [{ 
+                    tradeType: TradeType.TakeCollateral, 
+                    futureCashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: "0x"
+                }],
+                [
+                    { to: wallet2.address, currencyId: 1, amount: 0 },
+                    { to: wallet2.address, currencyId: 0, amount: parseEther("1") },
+                ]
+            )).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INSUFFICIENT_FREE_COLLATERAL));
+        });
+
+        it("allows trade [deposit, addLiquidity]", async () => {
+            await erc1155trade.connect(wallet2).batchOperation(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [{ currencyId: 1, amount: parseEther("100") }],
+                [{ 
+                    tradeType: TradeType.AddLiquidity, 
+                    futureCashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: "0x"
+                }]
+            );
+            expect(await t.hasLiquidityToken(wallet2, maturities[0], parseEther("100"))).to.be.true;
+        });
+
+        it("allows trade [deposit, addLiquidity, slippageData(min/max rate)]", async () => {
+            const slippage = defaultAbiCoder.encode(['uint32', 'uint32'], [0, 100_000_000]);
+            await erc1155trade.connect(wallet2).batchOperation(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [{ currencyId: 1, amount: parseEther("100") }],
+                [{ 
+                    tradeType: TradeType.AddLiquidity, 
+                    futureCashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: slippage
+                }]
+            );
+            expect(await t.hasLiquidityToken(wallet2, maturities[0], parseEther("100"))).to.be.true;
+        });
+
+        it("allows trade [deposit, addLiquidity, slippageData(min/max rate, futureCash)]", async () => {
+            const slippage = defaultAbiCoder.encode(['uint32', 'uint32', 'uint128'], [0, 100_000_000, parseEther("100")]);
+            await erc1155trade.connect(wallet2).batchOperation(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [{ currencyId: 1, amount: parseEther("100") }],
+                [{ 
+                    tradeType: TradeType.AddLiquidity, 
+                    futureCashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: slippage
+                }]
+            );
+            expect(await t.hasLiquidityToken(wallet2, maturities[0], parseEther("100"))).to.be.true;
+        });
+
+        it("reverts trade on slippage [deposit, addLiquidity, slippageData(min/max rate, future cash)", async () => {
+            let slippage = defaultAbiCoder.encode(['uint32', 'uint32', 'uint128'], [0, 1, parseEther("100")]);
+            await expect(erc1155trade.connect(wallet2).batchOperation(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [{ currencyId: 1, amount: parseEther("100") }],
+                [{ 
+                    tradeType: TradeType.AddLiquidity, 
+                    futureCashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: slippage
+                }]
+            )).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.OUT_OF_IMPLIED_RATE_BOUNDS));
+
+            slippage = defaultAbiCoder.encode(['uint32', 'uint32', 'uint128'], [100_000_000, 200_000_000, parseEther("100")]);
+            await expect(erc1155trade.connect(wallet2).batchOperation(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [{ currencyId: 1, amount: parseEther("100") }],
+                [{ 
+                    tradeType: TradeType.AddLiquidity, 
+                    futureCashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: slippage
+                }]
+            )).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.OUT_OF_IMPLIED_RATE_BOUNDS));
+
+            slippage = defaultAbiCoder.encode(['uint32', 'uint32', 'uint128'], [0, 100_000_000, parseEther("1")]);
+            await expect(erc1155trade.connect(wallet2).batchOperation(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [{ currencyId: 1, amount: parseEther("100") }],
+                [{ 
+                    tradeType: TradeType.AddLiquidity, 
+                    futureCashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: slippage
+                }]
+            )).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.OVER_MAX_FUTURE_CASH));
+        });
+
+        it("allows trade [, removeLiquidity]", async () => {
+            const slippage = defaultAbiCoder.encode(['uint32', 'uint32'], [0, 100_000_000]);
+            await erc1155trade.connect(wallet2).batchOperation(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [{ currencyId: 1, amount: parseEther("100") }],
+                [{ 
+                    tradeType: TradeType.AddLiquidity, 
+                    futureCashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: slippage
+                }]
+            );
+
+            await erc1155trade.connect(wallet2).batchOperation(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [{ currencyId: 1, amount: parseEther("100") }],
+                [{ 
+                    tradeType: TradeType.RemoveLiquidity, 
+                    futureCashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: "0x"
+                }]
+            );
+
+            expect(await t.hasLiquidityToken(wallet2, maturities[0], parseEther("100"))).to.be.false;
+        });
+
+        it("reverts trade if not enough liquidity tokens on removeLiquidity", async () => {
+            await expect(erc1155trade.connect(wallet2).batchOperation(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [{ currencyId: 1, amount: parseEther("100") }],
+                [{ 
+                    tradeType: TradeType.RemoveLiquidity, 
+                    futureCashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: "0x"
+                }]
+            )).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INSUFFICIENT_BALANCE));
+        });
+
+        it("reverts trade if deposit is not enough for takeFutureCash", async () => {
+            await expect(erc1155trade.connect(wallet2).batchOperation(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [],
+                [{ 
+                    tradeType: TradeType.TakeFutureCash, 
+                    futureCashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: "0x"
+                }]
+            )).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INSUFFICIENT_BALANCE));
+        });
+        it("reverts trade if deposit is not enough for addLiquidity", async () => {
+            await expect(erc1155trade.connect(wallet2).batchOperation(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [],
+                [{ 
+                    tradeType: TradeType.AddLiquidity, 
+                    futureCashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: "0x"
+                }]
+            )).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INSUFFICIENT_BALANCE));
+        });
+
+        it("allows trade [depositEth, takeCollateral]", async () => {
+            await erc1155trade.connect(wallet2).batchOperation(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [],
+                [{ 
+                    tradeType: TradeType.TakeCollateral, 
+                    futureCashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: "0x"
+                }],
+                {value: parseEther("1.5")}
+            );
+            expect(await escrow.cashBalances(CURRENCY.ETH, wallet2.address)).to.equal(parseEther("1.5"));
+        });
+
+        it("allows trade for batchOperationWithdraw [depositEth, takeCollateral]", async () => {
+            await erc1155trade.connect(wallet2).batchOperationWithdraw(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [],
+                [{ 
+                    tradeType: TradeType.TakeCollateral, 
+                    futureCashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: "0x"
+                }],
+                [],
+                {value: parseEther("1.5")}
+            );
+            expect(await escrow.cashBalances(CURRENCY.ETH, wallet2.address)).to.equal(parseEther("1.5"));
+        });
+
+        it("withdraws exact amount for batchOperationWithdraw [depositEth, takeCollateral]", async () => {
+            await escrow.connect(wallet2).deposit(dai.address, parseEther("10"));
+            await erc1155trade.connect(wallet2).batchOperationWithdraw(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [],
+                [{ 
+                    tradeType: TradeType.TakeCollateral, 
+                    futureCashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: "0x"
+                }],
+                [{
+                    to: wallet2.address,
+                    currencyId: 1,
+                    amount: 0
+                }],
+                {value: parseEther("1.5")}
+            );
+            expect(await escrow.cashBalances(CURRENCY.DAI, wallet2.address)).to.equal(parseEther("10"));
+        });
+
+        it("withdraws exact amount for batchOperationWithdraw [deposit, takeFutureCash]", async () => {
+            await escrow.connect(wallet2).deposit(dai.address, parseEther("10"));
+            await erc1155trade.connect(wallet2).batchOperationWithdraw(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [{ currencyId: 1, amount: parseEther("100") }],
+                [{ 
+                    tradeType: TradeType.TakeFutureCash, 
+                    futureCashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: "0x"
+                }],
+                [{
+                    to: wallet2.address,
+                    currencyId: 1,
+                    amount: 0
+                }],
+            );
+            expect(await escrow.cashBalances(CURRENCY.DAI, wallet2.address)).to.equal(parseEther("10"));
+        });
+
+        it("withdraws exact amount for batchOperationWithdraw [deposit, removeLiquidity]", async () => {
+            await escrow.connect(wallet2).deposit(dai.address, parseEther("10"));
+            const slippage = defaultAbiCoder.encode(['uint32', 'uint32'], [0, 100_000_000]);
+            await erc1155trade.connect(wallet2).batchOperation(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [{ currencyId: 1, amount: parseEther("100") }],
+                [{ 
+                    tradeType: TradeType.AddLiquidity, 
+                    futureCashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: slippage
+                }]
+            );
+
+            await erc1155trade.connect(wallet2).batchOperationWithdraw(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [{ currencyId: 1, amount: parseEther("100") }],
+                [{ 
+                    tradeType: TradeType.RemoveLiquidity, 
+                    futureCashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: "0x"
+                }],
+                [{
+                    to: wallet2.address,
+                    currencyId: 1,
+                    amount: 0
+                }],
+            );
+            expect(await escrow.cashBalances(CURRENCY.DAI, wallet2.address)).to.equal(parseEther("10"));
+        });
+
+        it("withdraws exact amount for batchOperationWithdraw [deposit, takeCollateral, takeFutureCash]", async () => {
+            await t.setupLiquidity(owner, 0.5, parseEther("10000"), [1]);
+            await escrow.connect(wallet2).deposit(dai.address, parseEther("10"));
+            await erc1155trade.connect(wallet2).batchOperationWithdraw(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [{ currencyId: 1, amount: parseEther("100") }],
+                [{ 
+                    tradeType: TradeType.TakeCollateral, 
+                    futureCashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: "0x"
+                }, {
+                    tradeType: TradeType.TakeFutureCash, 
+                    futureCashGroup: 1,
+                    maturity: maturities[1],
+                    amount: parseEther("100"),
+                    slippageData: "0x"
+                }],
+                [{
+                    to: wallet2.address,
+                    currencyId: 1,
+                    amount: 0
+                }],
+                {value: parseEther("1.5")}
+            );
+
+            expect(await escrow.cashBalances(CURRENCY.DAI, wallet2.address)).to.equal(parseEther("10"));
+        });
+
+    });
+
+    describe("block trades", async () => {
+        let periodSize: number;
+        const depositType = { 
+            name: 'deposits',
+            type: 'tuple[]',
+            components: [
+                {
+                    "internalType": "uint16",
+                    "name": "currencyId",
+                    "type": "uint16"
+                },
+                {
+                    "internalType": "uint128",
+                    "name": "amount",
+                    "type": "uint128"
+                }
+            ]
+        };
+        let cashPayerAssetId: BigNumber;
+        let cashReceiverAssetId: BigNumber;
+        let cashPayerIdiosyncraticAssetId: BigNumber;
+        let cashReceiverIdiosyncraticAssetId: BigNumber;
+
+        beforeEach(async () => {
+            await erc1155trade.setBridgeProxy(owner.address);
+            periodSize = await futureCash.G_PERIOD_SIZE();
+            cashPayerAssetId = await erc1155trade["encodeAssetId(uint8,uint16,uint32,bytes1)"](
+                1, 0, maturities[0], SwapType.CASH_PAYER
+            )
+            cashReceiverAssetId = await erc1155trade["encodeAssetId(uint8,uint16,uint32,bytes1)"](
+                1, 0, maturities[0], SwapType.CASH_RECEIVER
+            )
+
+            // Creates an idiosyncratic future cash group with a max period size of 1 year.
+            await portfolios.createFutureCashGroup(1, 31_536_000, 1e9, 1, AddressZero, AddressZero);
+
+            cashPayerIdiosyncraticAssetId = await erc1155trade["encodeAssetId(uint8,uint16,uint32,bytes1)"](
+                2, 0, maturities[0] + 100, SwapType.CASH_PAYER
+            )
+            cashReceiverIdiosyncraticAssetId = await erc1155trade["encodeAssetId(uint8,uint16,uint32,bytes1)"](
+                2, 0, maturities[0] + 100, SwapType.CASH_RECEIVER
+            )
+
+            // This messes with the free collateral checks
+            await escrow.connect(wallet).withdraw(dai.address, WeiPerEther.mul(1000));
+        });
+
+        it("allows the bridge proxy to call the function", async () => {
+            const data = defaultAbiCoder.encode([depositType], [[]]);
+
+            await expect(erc1155trade.connect(wallet).safeTransferFrom(
+                wallet.address,
+                wallet2.address,
+                cashPayerAssetId,
+                parseEther("100"),
+                data
+            )).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.UNAUTHORIZED_CALLER));
+        });
+
+        it("operators must be approved by both from and to (or from == msg.sender)", async () => {
+            const data = defaultAbiCoder.encode([depositType], [[{ currencyId: 0, amount: parseEther("1.5") }]]);
+            await erc1155trade.connect(wallet2).setApprovalForAll(wallet.address, true);
+            await expect(erc1155trade.connect(wallet).safeTransferFrom(
+                wallet.address,
+                wallet2.address,
+                cashPayerAssetId,
+                parseEther("100"),
+                data
+            )).to.be.not.be.reverted;
+
+            await expect(erc1155trade.connect(wallet2).safeTransferFrom(
+                wallet.address,
+                owner.address,
+                cashPayerAssetId,
+                parseEther("100"),
+                data
+            )).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.UNAUTHORIZED_CALLER));
+
+            await erc1155trade.connect(owner).setApprovalForAll(wallet2.address, true);
+            await erc1155trade.connect(wallet).setApprovalForAll(wallet2.address, true);
+            await expect(erc1155trade.connect(wallet2).safeTransferFrom(
+                owner.address,
+                wallet.address,
+                cashPayerAssetId,
+                parseEther("100"),
+                data
+            )).to.not.be.reverted;
+        });
+
+        it("allows cash group trade [deposit, cashReceiver]", async () => {
+            const data = defaultAbiCoder.encode([depositType], [[{ currencyId: 0, amount: parseEther("1.5") }]]);
+
+            await erc1155trade.safeTransferFrom(
+                wallet.address,
+                wallet2.address,
+                cashReceiverAssetId,
+                parseEther("100"),
+                data
+            );
+
+            expect(await escrow.cashBalances(CURRENCY.ETH, wallet.address)).to.equal(parseEther("1.5"));
+            expect(await t.hasCashPayer(wallet, maturities[0], parseEther("100"))).to.be.true;
+            expect(await t.hasCashReceiver(wallet2, maturities[0], parseEther("100"))).to.be.true;
+        });
+
+        it("allows cash group trade [deposit, cashPayer]", async () => {
+            const data = defaultAbiCoder.encode([depositType], [[{ currencyId: 0, amount: parseEther("1.5") }]]);
+
+            await erc1155trade.safeTransferFrom(
+                wallet.address,
+                wallet2.address,
+                cashPayerAssetId,
+                parseEther("100"),
+                data
+            );
+
+            expect(await escrow.cashBalances(CURRENCY.ETH, wallet2.address)).to.equal(parseEther("1.5"));
+            expect(await t.hasCashPayer(wallet2, maturities[0], parseEther("100"))).to.be.true;
+            expect(await t.hasCashReceiver(wallet, maturities[0], parseEther("100"))).to.be.true;
+        });
+
+        it("allows cash group trade [cashReceiver]", async () => {
+            await escrow.connect(wallet).depositEth({value: parseEther("1.5")});
+
+            await erc1155trade.safeTransferFrom(
+                wallet.address,
+                wallet2.address,
+                cashReceiverAssetId,
+                parseEther("100"),
+                '0x'
+            );
+
+            expect(await t.hasCashPayer(wallet, maturities[0], parseEther("100"))).to.be.true;
+            expect(await t.hasCashReceiver(wallet2, maturities[0], parseEther("100"))).to.be.true;
+        });
+
+        it("allows cash group trade [cashPayer]", async () => {
+            await escrow.connect(wallet2).depositEth({value: parseEther("1.5")});
+
+            await erc1155trade.safeTransferFrom(
+                wallet.address,
+                wallet2.address,
+                cashPayerAssetId,
+                parseEther("100"),
+                "0x"
+            );
+
+            expect(await t.hasCashReceiver(wallet, maturities[0], parseEther("100"))).to.be.true;
+            expect(await t.hasCashPayer(wallet2, maturities[0], parseEther("100"))).to.be.true;
+        });
+
+        it("reverts on liquidity token trade", async () => {
+            const id = await erc1155trade["encodeAssetId(uint8,uint16,uint32,bytes1)"](
+                1, 0, maturities[0], SwapType.LIQUIDITY_TOKEN
+            )
+            await expect(erc1155trade.safeTransferFrom(
+                wallet.address,
+                wallet2.address,
+                id,
+                parseEther("100"),
+                "0x"
+            )).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INVALID_SWAP));
+        });
+
+        it("reverts cash group trade on insufficient free collateral", async () => {
+            await expect(erc1155trade.safeTransferFrom(
+                wallet.address,
+                wallet2.address,
+                cashReceiverAssetId,
+                parseEther("100"),
+                "0x"
+            )).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INSUFFICIENT_FREE_COLLATERAL));
+        });
+
+        it("reverts if maturity does not match cash group", async () => {
+            const pastId = await erc1155trade["encodeAssetId(uint8,uint16,uint32,bytes1)"](
+                1, 0, periodSize, SwapType.CASH_PAYER
+            );
+
+            const wrongPeriodSize = await erc1155trade["encodeAssetId(uint8,uint16,uint32,bytes1)"](
+                1, 0, maturities[0] + 100, SwapType.CASH_PAYER
+            );
+
+            const pastNumPeriods = await erc1155trade["encodeAssetId(uint8,uint16,uint32,bytes1)"](
+                1, 0, maturities[3] + 2 * periodSize, SwapType.CASH_PAYER
+            );
+
+            await expect(erc1155trade.safeTransferFrom(
+                wallet.address,
+                wallet2.address,
+                pastId,
+                parseEther("100"),
+                defaultAbiCoder.encode([depositType], [[{currencyId: 0, amount: parseEther("1.5")}]])
+            )).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.TRADE_MATURITY_ALREADY_PASSED));
+
+            await expect(erc1155trade.safeTransferFrom(
+                wallet.address,
+                wallet2.address,
+                wrongPeriodSize,
+                parseEther("100"),
+                defaultAbiCoder.encode([depositType], [[{currencyId: 0, amount: parseEther("1.5")}]])
+            )).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INVALID_SWAP));
+
+            await expect(erc1155trade.safeTransferFrom(
+                wallet.address,
+                wallet2.address,
+                pastNumPeriods,
+                parseEther("100"),
+                defaultAbiCoder.encode([depositType], [[{currencyId: 0, amount: parseEther("1.5")}]])
+            )).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.PAST_MAX_MATURITY));
+        });
+
+        it("allows idiosyncratic trade [cashReceiver]", async () => {
+            await escrow.connect(wallet).depositEth({value: parseEther("1.5")});
+
+            await erc1155trade.safeTransferFrom(
+                wallet.address,
+                wallet2.address,
+                cashReceiverIdiosyncraticAssetId,
+                parseEther("100"),
+                "0x"
+            );
+
+            expect(await t.hasCashPayer(wallet, maturities[0] + 100, parseEther("100"))).to.be.true;
+            expect(await t.hasCashReceiver(wallet2, maturities[0] + 100, parseEther("100"))).to.be.true;
+        });
+
+        it("allows idiosyncratic trade [cashPayer]", async () => {
+            await escrow.connect(wallet2).depositEth({value: parseEther("1.5")});
+
+            await erc1155trade.safeTransferFrom(
+                wallet.address,
+                wallet2.address,
+                cashPayerIdiosyncraticAssetId,
+                parseEther("100"),
+                "0x"
+            );
+
+            expect(await t.hasCashPayer(wallet2, maturities[0] + 100, parseEther("100"))).to.be.true;
+            expect(await t.hasCashReceiver(wallet, maturities[0] + 100, parseEther("100"))).to.be.true;
+        });
+
+        it("allows idiosyncratic trade [deposit, cashReceiver]", async () => {
+            const data = defaultAbiCoder.encode([depositType], [[{ currencyId: 0, amount: parseEther("1.5") }]]);
+
+            await erc1155trade.safeTransferFrom(
+                wallet.address,
+                wallet2.address,
+                cashReceiverIdiosyncraticAssetId,
+                parseEther("100"),
+                data
+            );
+
+            expect(await escrow.cashBalances(CURRENCY.ETH, wallet.address)).to.equal(parseEther("1.5"));
+            expect(await t.hasCashPayer(wallet, maturities[0] + 100, parseEther("100"))).to.be.true;
+            expect(await t.hasCashReceiver(wallet2, maturities[0] + 100, parseEther("100"))).to.be.true;
+        });
+
+        it("allows idiosyncratic trade [deposit, cashPayer]", async () => {
+            const data = defaultAbiCoder.encode([depositType], [[{ currencyId: 0, amount: parseEther("1.5") }]]);
+
+            await erc1155trade.safeTransferFrom(
+                wallet.address,
+                wallet2.address,
+                cashPayerIdiosyncraticAssetId,
+                parseEther("100"),
+                data
+            );
+
+            expect(await escrow.cashBalances(CURRENCY.ETH, wallet2.address)).to.equal(parseEther("1.5"));
+            expect(await t.hasCashReceiver(wallet, maturities[0] + 100, parseEther("100"))).to.be.true;
+            expect(await t.hasCashPayer(wallet2, maturities[0] + 100, parseEther("100"))).to.be.true;
+        });
+
+        it("reverts idiosyncratic trade on insufficient free collateral", async () => {
+            await expect(erc1155trade.safeTransferFrom(
+                wallet.address,
+                wallet2.address,
+                cashReceiverIdiosyncraticAssetId,
+                parseEther("100"),
+                "0x"
+            )).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INSUFFICIENT_FREE_COLLATERAL));
+        });
+
+        it("reverts idiosyncratic trade on over max length", async () => {
+            const id = await erc1155trade["encodeAssetId(uint8,uint16,uint32,bytes1)"](
+                2, 0, BLOCK_TIME_LIMIT, SwapType.CASH_PAYER
+            )
+            const data = defaultAbiCoder.encode([depositType], [[{ currencyId: 0, amount: parseEther("1.5") }]]);
+
+            await expect(erc1155trade.safeTransferFrom(
+                wallet.address,
+                wallet2.address,
+                id,
+                parseEther("100"),
+                data
+            )).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.PAST_MAX_MATURITY));
+        });
+
+        it("reverts idiosyncratic trade in the past", async () => {
+            const id = await erc1155trade["encodeAssetId(uint8,uint16,uint32,bytes1)"](
+                2, 0, periodSize + 100, SwapType.CASH_PAYER
+            )
+            const data = defaultAbiCoder.encode([depositType], [[{ currencyId: 0, amount: parseEther("1.5") }]]);
+
+            await expect(erc1155trade.safeTransferFrom(
+                wallet.address,
+                wallet2.address,
+                id,
+                parseEther("100"),
+                data
+            )).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.TRADE_MATURITY_ALREADY_PASSED));
+        });
+
+        it("reverts on an invalid future cash group", async () => {
+            let id = await erc1155trade["encodeAssetId(uint8,uint16,uint32,bytes1)"](
+                0, 0, periodSize + 100, SwapType.CASH_PAYER
+            );
+
+            let data = defaultAbiCoder.encode([depositType], [[{ currencyId: 0, amount: parseEther("1.5") }]]);
+
+            await expect(erc1155trade.safeTransferFrom(
+                wallet.address,
+                wallet2.address,
+                id,
+                parseEther("100"),
+                data
+            )).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INVALID_FUTURE_CASH_GROUP));
+
+            id = await erc1155trade["encodeAssetId(uint8,uint16,uint32,bytes1)"](
+                3, 0, periodSize + 100, SwapType.CASH_PAYER
+            );
+
+            data = defaultAbiCoder.encode([depositType], [[{ currencyId: 0, amount: parseEther("1.5") }]]);
+            
+            await expect(erc1155trade.safeTransferFrom(
+                wallet.address,
+                wallet2.address,
+                id,
+                parseEther("100"),
+                data
+            )).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INVALID_FUTURE_CASH_GROUP));
+        });
+
+        it("still settle idiosyncratic trades to cash balances", async () => { 
+            const data = defaultAbiCoder.encode([depositType], [[{ currencyId: 0, amount: parseEther("1.5") }]]);
+
+            await erc1155trade.safeTransferFrom(
+                wallet.address,
+                wallet2.address,
+                cashPayerIdiosyncraticAssetId,
+                parseEther("100"),
+                data
+            );
+
+            await fastForwardToMaturity(provider, maturities[0] + 100);
+            await portfolios.settleMaturedAssetsBatch([wallet.address, wallet2.address]);
+
+            expect(await escrow.cashBalances(1, wallet2.address)).to.equal(parseEther("-100"));
+            expect(await escrow.cashBalances(1, wallet.address)).to.equal(parseEther("100"));
+        });
+
+        it("still successfully liquidates if trade is larger than AMM liquidity", async () => {
+            const data = defaultAbiCoder.encode([depositType], [[{ currencyId: 0, amount: parseEther("300") }]]);
+
+            await erc1155trade.safeTransferFrom(
+                wallet.address,
+                wallet2.address,
+                cashPayerAssetId,
+                parseEther("20000"), // There is only 10k in liquidity
+                data
+            );
+
+            await chainlink.setAnswer(parseEther("0.012"));
+            expect(await t.isCollateralized(wallet2)).to.be.false;
+            await escrow.liquidate(wallet2.address, 1, 0);
+            expect(await t.isCollateralized(wallet2)).to.be.true;
+        });
+
+        it("still liquidates idiosyncratic trades", async () => {
+            const data = defaultAbiCoder.encode([depositType], [[{ currencyId: 0, amount: parseEther("300") }]]);
+
+            await erc1155trade.safeTransferFrom(
+                wallet.address,
+                wallet2.address,
+                cashPayerIdiosyncraticAssetId,
+                parseEther("20000"),
+                data
+            );
+
+            await chainlink.setAnswer(parseEther("0.012"));
+            expect(await t.isCollateralized(wallet2)).to.be.false;
+            await escrow.liquidate(wallet2.address, 1, 0);
+            expect(await t.isCollateralized(wallet2)).to.be.true;
+        });
+
+        it("calculates free collateral properly when there are two cash groups with the same currency", async () => {
+            let data = defaultAbiCoder.encode([depositType], [[{ currencyId: 0, amount: parseEther("1.5") }]]);
+
+            await erc1155trade.safeTransferFrom(
+                wallet.address,
+                wallet2.address,
+                cashPayerIdiosyncraticAssetId,
+                parseEther("100"),
+                data
+            );
+            const fc = await portfolios.freeCollateralView(wallet2.address);
+
+            data = defaultAbiCoder.encode([depositType], [[{ currencyId: 0, amount: parseEther("1.5") }]]);
+
+            await erc1155trade.safeTransferFrom(
+                wallet.address,
+                wallet2.address,
+                cashPayerAssetId,
+                parseEther("100"),
+                data
+            );
+
+            expect((await portfolios.freeCollateralView(wallet2.address))[1][1]).to.equal(fc[1][1].mul(2));
+        });
+
+        it("idiosyncratic assets aggregate in a portfolio", async () => {
+            let data = defaultAbiCoder.encode([depositType], [[{ currencyId: 0, amount: parseEther("1.5") }]]);
+
+            await erc1155trade.safeTransferFrom(
+                wallet.address,
+                wallet2.address,
+                cashPayerIdiosyncraticAssetId,
+                parseEther("100"),
+                data
+            );
+
+            await erc1155trade.safeTransferFrom(
+                wallet.address,
+                wallet2.address,
+                cashPayerIdiosyncraticAssetId,
+                parseEther("100"),
+                data
+            );
+
+            expect(await portfolios.getAssets(wallet.address)).to.have.lengthOf(1);
+            expect(await portfolios.getAssets(wallet2.address)).to.have.lengthOf(1);
+        });
+
+        it("idiosyncratic assets do not net out in the risk formula", async () => {
+            let data = defaultAbiCoder.encode([depositType], [[{ currencyId: 0, amount: parseEther("1.5") }]]);
+            cashReceiverIdiosyncraticAssetId = await erc1155trade["encodeAssetId(uint8,uint16,uint32,bytes1)"](
+                2, 0, maturities[0] + 200, SwapType.CASH_RECEIVER
+            )
+
+            await erc1155trade.safeTransferFrom(
+                wallet.address,
+                wallet2.address,
+                cashPayerIdiosyncraticAssetId,
+                parseEther("100"),
+                data
+            );
+
+            await erc1155trade.safeTransferFrom(
+                wallet.address,
+                wallet2.address,
+                cashReceiverIdiosyncraticAssetId,
+                parseEther("100"),
+                data
+            );
+
+            expect((await portfolios.freeCollateralView(wallet.address))[1][CURRENCY.DAI]).to.equal(parseEther("-100"));
+            expect((await portfolios.freeCollateralView(wallet2.address))[1][CURRENCY.DAI]).to.equal(parseEther("-100"));
+        });
     });
 });

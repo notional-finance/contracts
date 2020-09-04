@@ -21,6 +21,7 @@ library Common {
     int256 internal constant RATE_DECIMALS = 1e9;
     uint128 internal constant DECIMALS = 1e18;
     uint128 internal constant MAX_UINT_128 = (2**128) - 1;
+    uint32 internal constant MAX_UINT_32 = (2**32) - 1;
 
     /**
      * The collateral requirement per currency in the portfolio. Only used as an
@@ -45,10 +46,8 @@ library Common {
         uint8 futureCashGroupId;
         // The instrument id for this asset
         uint16 instrumentId;
-        // The beginning of the period of this asset in seconds
-        uint32 startTime;
-        // The duration of this asset in seconds
-        uint32 duration;
+        // When this asset matures, in seconds
+        uint32 maturity;
         // A 1 byte bitfield defined above that contains instrument agnostic
         // information about a asset (i.e. payer or receiver, periodic or nonperiodic)
         bytes1 swapType;
@@ -56,6 +55,7 @@ library Common {
         uint32 rate;
         // The notional for this asset
         uint128 notional;
+        // uint32 unused space
     }
 
     /**
@@ -73,19 +73,52 @@ library Common {
         uint32 periodSize;
         // The precision of the discount rate oracle
         uint32 precision;
-        // The currency group identifier for this future cash group
-        uint16 currency;
         // The discount rate oracle that applies to all instruments in this group
         address futureCashMarket;
+        // The currency group identifier for this future cash group
+        uint16 currency;
         // The address where the risk formula is stored
         address riskFormula;
     }
 
-    struct AccountBalance {
-        // Balance of currency net of cash
-        int256 netBalance;
-        // If the currency can only be used as deposits and cannot be assetd
-        bool isDepositCurrency;
+    /**
+     * Used to describe deposits in ERC1155.batchOperation
+     */
+    struct Deposit {
+        // Currency Id to deposit
+        uint16 currencyId;
+        // Amount of tokens to deposit
+        uint128 amount;
+    }
+
+    /**
+     * Used to describe withdraws in ERC1155.batchOperationWithdraw
+     */
+    struct Withdraw {
+        // Destination of the address to withdraw to
+        address to;
+        // Currency Id to withdraw
+        uint16 currencyId;
+        // Amount of tokens to withdraw
+        uint128 amount;
+    }
+
+    enum TradeType {
+        TakeCollateral,
+        TakeFutureCash,
+        AddLiquidity,
+        RemoveLiquidity
+    }
+
+    /**
+     * Used to describe a trade in ERC1155.batchOperation
+     */
+    struct Trade {
+        TradeType tradeType;
+        uint8 futureCashGroup;
+        uint32 maturity;
+        uint128 amount;
+        bytes slippageData;
     }
 
     /**
@@ -149,13 +182,6 @@ library Common {
     }
 
     /**
-     * Calculates the maturity of a asset.
-     */
-    function getMaturity(Asset memory asset) internal pure returns (uint32) {
-        return asset.startTime + asset.duration;
-    }
-
-    /**
      * Returns a liquidity token swap type, this is marked as receiver that
      * will be stored in the portfolio.
      */
@@ -180,53 +206,41 @@ library Common {
 
     /**
      * Creates a 32 byte asset id from a asset object. This is used to represent the asset in
-     * the ERC1155 token standard. The actual id is located in the least significant 12 bytes
+     * the ERC1155 token standard. The actual id is located in the least significant 8 bytes
      * of the id. The ordering of the elements in the id are important because they define how
      * a portfolio will be sorted by `Common._sortPortfolio`.
      */
     function encodeAssetId(Asset memory asset) internal pure returns (uint256) {
-        bytes12 id = (bytes12(bytes1(asset.futureCashGroupId)) & 0xFF0000000000000000000000) |
-            ((bytes12(bytes2(asset.instrumentId)) >> 8) & 0x00FFFF000000000000000000) |
-            ((bytes12(bytes4(asset.startTime)) >> 24) & 0x000000FFFFFFFF0000000000) |
-            ((bytes12(bytes4(asset.duration)) >> 56) & 0x00000000000000FFFFFFFF00) |
-            ((bytes12(asset.swapType) >> 88) & 0x0000000000000000000000FF);
+        bytes8 id = (bytes8(bytes1(asset.futureCashGroupId)) & 0xFF00000000000000) |
+            ((bytes8(bytes2(asset.instrumentId)) >> 8) & 0x00FFFF0000000000) |
+            ((bytes8(bytes4(asset.maturity)) >> 24) & 0x000000FFFFFFFF00) |
+            ((bytes8(asset.swapType) >> 56) & 0x00000000000000FF);
 
-        return uint256(bytes32(id) >> 160);
+        return uint256(bytes32(id) >> 192);
     }
 
     /**
      * Decodes a uint256 id for a asset
      *
      * @param _id a uint256 asset id
-     * @return (futureCashGroupId, instrumentId, startTime, duration)
+     * @return (futureCashGroupId, instrumentId, maturity)
      */
-    function decodeAssetId(uint256 _id)
-        internal
-        pure
-        returns (
-            uint8,
-            uint16,
-            uint32,
-            uint32
-        )
+    function decodeAssetId(uint256 _id) internal pure returns (uint8, uint16, uint32)
     {
-        bytes12 id = bytes12(bytes32(_id) << 160);
+        bytes32 id = bytes32(_id);
         return (
             // Instrument Group Id
-            uint8(bytes1((id & 0xFF0000000000000000000000))),
+            uint8(bytes1((id & 0x000000000000000000000000000000000000000000000000FF00000000000000) << 192)),
             // Instrument Id
-            uint16(bytes2((id & 0x00FFFF000000000000000000) << 8)),
-            // Start Time
-            uint32(bytes4((id & 0x000000FFFFFFFF0000000000) << 24)),
-            // Duration
-            uint32(bytes4((id & 0x00000000000000FFFFFFFF00) << 56))
+            uint16(bytes2((id & 0x00000000000000000000000000000000000000000000000000FFFF0000000000) << 200)),
+            // Maturity
+            uint32(bytes4((id & 0x000000000000000000000000000000000000000000000000000000FFFFFFFF00) << 216))
         );
     }
 
     /**
      * Does a quicksort of the portfolio by the 256 bit id. This sorting is used in a few
      * algorithms to ensure that they work properly.
-     * @dev TODO: change this to a heapsort or mergesort
      *
      * @param data the in memory portfolio to sort
      */

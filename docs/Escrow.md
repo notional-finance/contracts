@@ -351,7 +351,9 @@ accounts
 
 # Governance Methods
 ### `setDiscounts`
-> Sets discounts applied when purchasing collateral during liquidation or settlement
+> Sets discounts applied when purchasing collateral during liquidation or settlement. Discounts are
+represented as percentages multiplied by 1e18. For example, a 5% discount for liquidators will be set as
+1.05e18
 #### Parameters:
 - `liquidation`: discount applied to liquidation
 - `settlement`: discount applied to settlement

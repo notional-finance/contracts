@@ -1,57 +1,102 @@
 pragma solidity ^0.6.0;
 
-
 library SafeInt256 {
-    /**
-     * @notice x+y. If any operator is higher than maxFixedAdd() it
-     * might overflow.
-     * In solidity maxInt256 + 1 = minInt256 and viceversa.
-     * @dev
-     * Test add(maxFixedAdd(),maxFixedAdd()) returns maxInt256()-1
-     * Test add(maxFixedAdd()+1,maxFixedAdd()+1) fails
-     * Test add(-maxFixedSub(),-maxFixedSub()) returns minInt256()
-     * Test add(-maxFixedSub()-1,-maxFixedSub()-1) fails
-     * Test add(maxInt256(),maxInt256()) fails
-     * Test add(minInt256(),minInt256()) fails
-     */
-    function add(int256 x, int256 y) internal pure returns (int256) {
-        int256 z = x + y;
-        if (x > 0 && y > 0) require(z > x && z > y, $$(ErrorCode(INT256_ADDITION_OVERFLOW)));
-        if (x < 0 && y < 0) require(z < x && z < y, $$(ErrorCode(INT256_ADDITION_OVERFLOW)));
-        return z;
-    }
+    int256 constant private _INT256_MIN = -2**255;
 
     /**
-     * @notice x-y. You can use add(x,-y) instead.
-     * @dev Tests covered by add(x,y)
+     * @dev Returns the multiplication of two signed integers, reverting on
+     * overflow.
+     *
+     * Counterpart to Solidity's `*` operator.
+     *
+     * Requirements:
+     *
+     * - Multiplication cannot overflow.
      */
-    function sub(int256 x, int256 y) internal pure returns (int256) {
-        return add(x, neg(y));
-    }
-
-    function mul(int256 x, int256 y) internal pure returns (int256) {
-        if (x == 0) {
+    function mul(int256 a, int256 b) internal pure returns (int256) {
+        // Gas optimization: this is cheaper than requiring 'a' not being zero, but the
+        // benefit is lost if 'b' is also tested.
+        // See: https://github.com/OpenZeppelin/openzeppelin-contracts/pull/522
+        if (a == 0) {
             return 0;
         }
 
-        int256 z = x * y;
-        require(z / x == y, $$(ErrorCode(INT256_MULTIPLICATION_OVERFLOW)));
+        require(!(a == -1 && b == _INT256_MIN), "SignedSafeMath: multiplication overflow");
 
-        return z;
+        int256 c = a * b;
+        require(c / a == b, "SignedSafeMath: multiplication overflow");
+
+        return c;
     }
 
-    function div(int256 x, int256 y) internal pure returns (int256) {
-        require(y > 0, $$(ErrorCode(INT256_DIVIDE_BY_ZERO)));
-        return x / y;
+    /**
+     * @dev Returns the integer division of two signed integers. Reverts on
+     * division by zero. The result is rounded towards zero.
+     *
+     * Counterpart to Solidity's `/` operator. Note: this function uses a
+     * `revert` opcode (which leaves remaining gas untouched) while Solidity
+     * uses an invalid opcode to revert (consuming all remaining gas).
+     *
+     * Requirements:
+     *
+     * - The divisor cannot be zero.
+     */
+    function div(int256 a, int256 b) internal pure returns (int256) {
+        require(b != 0, "SignedSafeMath: division by zero");
+        require(!(b == -1 && a == _INT256_MIN), "SignedSafeMath: division overflow");
+
+        int256 c = a / b;
+
+        return c;
+    }
+
+    /**
+     * @dev Returns the subtraction of two signed integers, reverting on
+     * overflow.
+     *
+     * Counterpart to Solidity's `-` operator.
+     *
+     * Requirements:
+     *
+     * - Subtraction cannot overflow.
+     */
+    function sub(int256 a, int256 b) internal pure returns (int256) {
+        int256 c = a - b;
+        require((b >= 0 && c <= a) || (b < 0 && c > a), "SignedSafeMath: subtraction overflow");
+
+        return c;
+    }
+
+    /**
+     * @dev Returns the addition of two signed integers, reverting on
+     * overflow.
+     *
+     * Counterpart to Solidity's `+` operator.
+     *
+     * Requirements:
+     *
+     * - Addition cannot overflow.
+     */
+    function add(int256 a, int256 b) internal pure returns (int256) {
+        int256 c = a + b;
+        require((b >= 0 && c >= a) || (b < 0 && c < a), "SignedSafeMath: addition overflow");
+
+        return c;
     }
 
     function abs(int256 x) internal pure returns (int256) {
-        if (x < 0) return -x;
+        if (x < 0) return neg(x);
         else return x;
     }
 
     function neg(int256 x) internal pure returns (int256) {
-        require(x != (-2**255), $$(ErrorCode(INT256_NEGATE_MIN_INT)));
-        return -x;
+        return mul(x, -1);
+    }
+
+    function subNoNeg(int256 x, int256 y) internal pure returns (int256) {
+        int256 z = sub(x, y);
+        require(z >= 0, $$(ErrorCode(INSUFFICIENT_BALANCE)));
+
+        return z;
     }
 }

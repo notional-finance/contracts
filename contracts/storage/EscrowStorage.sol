@@ -6,8 +6,6 @@ contract EscrowStorage {
 
     // Internally we use WETH to represent ETH
     address public WETH;
-    // We use the uniswap router to get pricing information for token exchange
-    address public UNISWAP_ROUTER;
 
     /**
      * Exchange rates are defined by an oracle and an on chain exchange. In the future, these may be combined
@@ -17,39 +15,50 @@ contract EscrowStorage {
     struct ExchangeRate {
         // The address of the chainlink price oracle
         address rateOracle;
+        // The decimals of precision that the rate oracle uses
+        uint128 rateDecimals;
+        // True of the exchange rate must be inverted
+        bool mustInvert;
         // Amount of haircut to apply to the exchange rate, this defines the collateralization ratio
-        // between the two currencies.
+        // between the two currencies. This must be stored with 18 decimal precision because it is used
+        // to convert to an ETH balance.
         uint128 haircut;
-        // Uniswap router path that specifies the exchange path
-        address[] uniswapPath;
+    }
+
+    // Holds token features that can be used to check certain behaviors on deposit / withdraw.
+    struct TokenOptions {
+        // Whether or not the token implements the ERC777 standard.
+        bool isERC777;
+        // Whether or not the token charges transfer fees
+        bool hasTransferFee;
     }
 
     uint16 public maxCurrencyId;
     mapping(uint16 => address) public currencyIdToAddress;
+    mapping(uint16 => uint256) public currencyIdToDecimals;
     mapping(address => uint16) public addressToCurrencyId;
-    // TODO: is this more efficient as a mapping or struct?
-    uint16[] public depositCurrencies;
+    mapping(address => TokenOptions) public tokenOptions;
 
-    // Mapping from base token address to quote token address
-    mapping(address => mapping(address => ExchangeRate)) public exchangeRateOracles;
-    // Mapping from token address => account address => balance held in escrow
-    mapping(address => mapping(address => uint256)) public currencyBalances;
+    // Mapping from base currency id to quote currency id
+    mapping(uint16 => mapping(uint16 => ExchangeRate)) public exchangeRateOracles;
 
-    /**
-     * 6: Mapping from currency group id => account address => cash balance. Cash balance is generated
-     * when settling swaps and can be positive or negative.
-     */
+    // Holds account cash balances that can be positive or negative.
     mapping(uint16 => mapping(address => int256)) public cashBalances;
 
     /********** Governance Settings ******************/
-    // 7: The address of the account that holds reserve balances in each currency. Fees are paid to this
+    // The address of the account that holds reserve balances in each currency. Fees are paid to this
     // account on trading and in the case of a default, this account is drained.
     address public G_RESERVE_ACCOUNT;
-    // 8: The discount given to a liquidator when they purchase ETH for the local currency of an obligation.
+    // The discount given to a liquidator when they purchase ETH for the local currency of an obligation.
     // This discount is taken off of the exchange rate oracle price.
     uint128 public G_LIQUIDATION_DISCOUNT;
-    // 9: The discount given to an account that settles obligations collateralized by ETH in order to settle
+    // The discount given to an account that settles obligations collateralized by ETH in order to settle
     // cash balances for accounts.
     uint128 public G_SETTLEMENT_DISCOUNT;
+    // This is the incentive given to liquidators who pull liquidity tokens out of an undercollateralized
+    // account in order to bring it back into collateralization.
+    uint128 public G_LIQUIDITY_TOKEN_REPO_INCENTIVE;
+    // Cached copy of the same value on the RiskFramework contract.
+    uint128 public G_LIQUIDITY_HAIRCUT;
     /********** Governance Settings ******************/
 }

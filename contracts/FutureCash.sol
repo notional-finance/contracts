@@ -9,8 +9,7 @@ import "./lib/SafeMath.sol";
 import "./utils/Governed.sol";
 import "./utils/Common.sol";
 
-import "./Escrow.sol";
-import "./Portfolios.sol";
+import "@openzeppelin/contracts/utils/SafeCast.sol";
 
 /**
  * @title Future Cash Market
@@ -25,24 +24,25 @@ contract FutureCash is Governed {
     int128 internal constant PRECISION_64x64 = 0x3b9aca000000000000000000;
     uint256 internal constant MAX64 = 0x7FFFFFFFFFFFFFFF;
     int64 internal constant LN_1E18 = 0x09a667e259;
+    bool internal constant CHECK_FC = true;
+    bool internal constant DEFER_CHECK = false;
+    uint32 internal constant SECONDS_IN_YEAR = 31536000;
 
     /**
      * @dev skip
      * @param _directory reference to other contracts
      * @param collateralToken address of the token that will be used in this market
      */
-    function initialize(address _directory, address collateralToken) public initializer {
+    function initialize(address _directory, address collateralToken) external initializer {
         Governed.initialize(_directory);
-
-        // This sets an immutable parameter that defines the token that this future cash market trades.
-        G_COLLATERAL_TOKEN = collateralToken;
 
         // Setting dependencies can only be done once here. With proxy contracts the addresses shouldn't
         // change as we upgrade the logic.
-        Governed.CoreContracts[] memory dependencies = new Governed.CoreContracts[](2);
+        Governed.CoreContracts[] memory dependencies = new Governed.CoreContracts[](3);
         dependencies[0] = CoreContracts.Escrow;
         dependencies[1] = CoreContracts.Portfolios;
-        _fetchDependencies(dependencies);
+        dependencies[2] = CoreContracts.ERC1155Trade;
+        _setDependencies(dependencies);
     }
 
     // Defines the fields for each market in each maturity.
@@ -67,10 +67,7 @@ contract FutureCash is Governed {
 
     /********** Governance Parameters *********************/
 
-    // Represents the address of the token that will be the collateral in the marketplace.
-    address public G_COLLATERAL_TOKEN;
-    // These next parameters are set by the Portfolios contract and are immutable, except for
-    // G_NUM_PERIODS
+    // These next parameters are set by the Portfolios contract and are immutable, except for G_NUM_PERIODS
     uint8 public FUTURE_CASH_GROUP;
     uint16 public INSTRUMENT;
     uint32 public INSTRUMENT_PRECISION;
@@ -114,16 +111,18 @@ contract FutureCash is Governed {
         if (FUTURE_CASH_GROUP == 0) {
             FUTURE_CASH_GROUP = futureCashGroupId;
             INSTRUMENT = instrumentId;
-            INSTRUMENT_PRECISION = precision;
-            G_PERIOD_SIZE = periodSize;
         }
 
-        // This is the only mutable governance parameter.
+        require(precision == 1e9, $$(ErrorCode(INVALID_INSTRUMENT_PRECISION)));
+        INSTRUMENT_PRECISION = precision;
+        G_PERIOD_SIZE = periodSize;
         G_NUM_PERIODS = numPeriods;
     }
 
     /**
-     * @notice Sets rate factors that will determine the liquidity curve
+     * @notice Sets rate factors that will determine the liquidity curve. Rate Anchor is set as the target annualized exchange
+     * rate so 1.10 * INSTRUMENT_PRECISION represents a target annualized rate of 10%. Rate anchor will be scaled accordingly
+     * when a future cash market is initialized. As a general default, INSTRUMENT_PRECISION will be set to 1e9.
      * @dev governance
      * @param rateAnchor the offset of the liquidity curve
      * @param rateScalar the sensitivity of the liquidity curve to changes
@@ -137,7 +136,7 @@ contract FutureCash is Governed {
     }
 
     /**
-     * @notice Sets the maximum amount that can be traded in a single trade
+     * @notice Sets the maximum amount that can be traded in a single trade.
      * @dev governance
      * @param amount the max trade size
      */
@@ -148,7 +147,10 @@ contract FutureCash is Governed {
     }
 
     /**
-     * @notice Sets fee parameters for the market
+     * @notice Sets fee parameters for the market. Liquidity Fees are set as basis points and shift the traded
+     * exchange rate. A basis point is the equivalent of 1e5 if INSTRUMENT_PRECISION is set to 1e9.
+     * Transaction fees are set as a percentage shifted by 1e18. For example a 1% transaction fee will be set
+     * as 1.01e18.
      * @dev governance
      * @param liquidityFee a change in the traded exchange rate paid to liquidity providers
      * @param transactionFee percentage of a transaction that accrues to the reserve account
@@ -262,13 +264,63 @@ contract FutureCash is Governed {
         uint32 minImpliedRate,
         uint32 maxImpliedRate,
         uint32 maxTime
-    ) public {
+    ) external {
+        Common.Asset[] memory assets = _addLiquidity(
+            msg.sender,
+            maturity,
+            collateral,
+            maxFutureCash,
+            minImpliedRate,
+            maxImpliedRate,
+            maxTime
+        );
+
+        // This will do a free collateral check before it adds to the portfolio.
+        Portfolios().upsertAccountAssetBatch(msg.sender, assets, CHECK_FC);
+    }
+
+    /**
+     * @notice Used by ERC1155 contract to add liquidity
+     * @dev skip
+     */
+    function addLiquidityOnBehalf(
+        address account,
+        uint32 maturity,
+        uint128 collateral,
+        uint128 maxFutureCash,
+        uint32 minImpliedRate,
+        uint32 maxImpliedRate
+    ) external {
+        require(calledByERC1155Trade(), $$(ErrorCode(UNAUTHORIZED_CALLER)));
+
+        Common.Asset[] memory assets = _addLiquidity(
+            account,
+            maturity,
+            collateral,
+            maxFutureCash,
+            minImpliedRate,
+            maxImpliedRate,
+            uint32(block.timestamp)
+        );
+
+        Portfolios().upsertAccountAssetBatch(account, assets, DEFER_CHECK);
+    }
+
+    function _addLiquidity(
+        address account,
+        uint32 maturity,
+        uint128 collateral,
+        uint128 maxFutureCash,
+        uint32 minImpliedRate,
+        uint32 maxImpliedRate,
+        uint32 maxTime
+    ) internal returns (Common.Asset[] memory) {
         _isValidBlock(maturity, maxTime);
         uint32 timeToMaturity = maturity - uint32(block.timestamp);
         Market storage market = markets[maturity];
         // We call settle here instead of at the end of the function because if we have matured liquidity
         // tokens this will put collateral back into our portfolio so that we can add it back into the markets.
-        Portfolios().settleAccount(msg.sender);
+        Portfolios().settleMaturedAssets(account);
 
         uint128 futureCash;
         uint128 liquidityTokenAmount;
@@ -279,7 +331,15 @@ contract FutureCash is Governed {
             // determine the initial exchange rate of the market (taking into account rateScalar and rateAnchor, of course).
             // Governance will never allow rateScalar to be set to 0.
             if (market.rateScalar == 0) {
-                market.rateAnchor = G_RATE_ANCHOR;
+                // G_RATE_ANCHOR is stored as the annualized rate. Here we normalize it to the rate that is required given the
+                // time to maturity. (RATE_ANCHOR - 1) * timeToMaturity / SECONDS_IN_YEAR + 1
+                market.rateAnchor = SafeCast.toUint32(
+                    uint256(G_RATE_ANCHOR)
+                        .sub(INSTRUMENT_PRECISION)
+                        .mul(timeToMaturity)
+                        .div(SECONDS_IN_YEAR)
+                        .add(INSTRUMENT_PRECISION)
+                );
                 market.rateScalar = G_RATE_SCALAR;
             }
 
@@ -299,12 +359,12 @@ contract FutureCash is Governed {
         } else {
             // We calculate the amount of liquidity tokens to mint based on the share of the future cash
             // that the liquidity provider is depositing.
-            liquidityTokenAmount = uint128(
+            liquidityTokenAmount = SafeCast.toUint128(
                 uint256(market.totalLiquidity).mul(collateral).div(market.totalCollateral)
             );
 
             // We use the prevailing proportion to calculate the required amount of current cash to deposit.
-            futureCash = uint128(uint256(market.totalFutureCash).mul(collateral).div(market.totalCollateral));
+            futureCash = SafeCast.toUint128(uint256(market.totalFutureCash).mul(collateral).div(market.totalCollateral));
             require(futureCash <= maxFutureCash, $$(ErrorCode(OVER_MAX_FUTURE_CASH)));
 
             // Add the future cash and collateral to the pool.
@@ -324,7 +384,7 @@ contract FutureCash is Governed {
 
         // Move the collateral into the contract's collateral balances account. This must happen before the trade
         // is placed so that the free collateral check is correct.
-        Escrow().depositIntoMarket(msg.sender, G_COLLATERAL_TOKEN, FUTURE_CASH_GROUP, collateral, 0);
+        Escrow().depositIntoMarket(account, FUTURE_CASH_GROUP, collateral, 0);
 
         // Providing liquidity results in two tokens generated, a liquidity token and a CASH_PAYER which
         // represents the obligation that offsets the future cash in the market.
@@ -333,8 +393,7 @@ contract FutureCash is Governed {
         assets[0] = Common.Asset(
             FUTURE_CASH_GROUP,
             INSTRUMENT,
-            maturity - G_PERIOD_SIZE,
-            G_PERIOD_SIZE,
+            maturity,
             Common.getLiquidityToken(),
             INSTRUMENT_PRECISION,
             liquidityTokenAmount
@@ -344,46 +403,91 @@ contract FutureCash is Governed {
         assets[1] = Common.Asset(
             FUTURE_CASH_GROUP,
             INSTRUMENT,
-            maturity - G_PERIOD_SIZE,
-            G_PERIOD_SIZE,
+            maturity,
             Common.getCashPayer(),
             INSTRUMENT_PRECISION,
             futureCash
         );
 
-        // This will do a free collateral check before it adds to the portfolio.
-        Portfolios().upsertAccountAssetBatch(msg.sender, assets);
+        emit AddLiquidity(account, maturity, liquidityTokenAmount, futureCash, collateral);
 
-        emit AddLiquidity(msg.sender, maturity, liquidityTokenAmount, futureCash, collateral);
+        return assets;
     }
 
     /**
      * @notice Removes liquidity from the future cash market. The sender's liquidity tokens are burned and they
      * are credited back with future cash and collateral at the prevailing exchange rate. This function
      * only works when removing liquidity from an active market. For markets that are matured, the sender
-     * must settle their liquidity token via `Portfolios().settleAccount()`.
+     * must settle their liquidity token via `Portfolios().settleMaturedAssets()`.
      * @dev - TRADE_FAILED_MAX_TIME: maturity specified is not yet active
      * - MARKET_INACTIVE: maturity is not a valid one
      * - INSUFFICIENT_BALANCE: account does not have sufficient tokens to remove
      * @param maturity the period to remove liquidity from
      * @param amount the amount of liquidity tokens to burn
      * @param maxTime after this block the trade will fail
+     * @return the amount of collateral claim the removed liquidity tokens have
      */
     function removeLiquidity(
         uint32 maturity,
         uint128 amount,
         uint32 maxTime
-    ) public {
+    ) external returns (uint128) {
+        (Common.Asset[] memory assets, uint128 collateral) = _removeLiquidity(
+            msg.sender,
+            maturity,
+            amount,
+            maxTime
+        );
+
+        // This function call will check if the account in question actually has
+        // enough liquidity tokens to remove.
+        Portfolios().upsertAccountAssetBatch(msg.sender, assets, CHECK_FC);
+
+        return collateral;
+    }
+
+    /**
+     * @notice Used by ERC1155 contract to remove liquidity
+     * @dev skip
+     */
+    function removeLiquidityOnBehalf(
+        address account,
+        uint32 maturity,
+        uint128 amount
+    ) external returns (uint128) {
+        require(calledByERC1155Trade(), $$(ErrorCode(UNAUTHORIZED_CALLER)));
+
+        (Common.Asset[] memory assets, uint128 collateral) = _removeLiquidity(
+            account,
+            maturity,
+            amount,
+            uint32(block.timestamp)
+        );
+
+        Portfolios().upsertAccountAssetBatch(account, assets, DEFER_CHECK);
+
+        return collateral;
+    }
+
+    function _removeLiquidity(
+        address account,
+        uint32 maturity,
+        uint128 amount,
+        uint32 maxTime
+    ) internal returns (Common.Asset[] memory, uint128) {
         // This method only works when the market is active.
-        _isValidBlock(maturity, maxTime);
+        uint32 blockTime = uint32(block.timestamp);
+        require(blockTime <= maxTime, $$(ErrorCode(TRADE_FAILED_MAX_TIME)));
+        require(blockTime < maturity, $$(ErrorCode(MARKET_INACTIVE)));
+
         Market storage market = markets[maturity];
 
         // Here we calculate the amount of current cash that the liquidity token represents.
-        uint128 collateral = uint128(uint256(market.totalCollateral).mul(amount).div(market.totalLiquidity));
+        uint128 collateral = SafeCast.toUint128(uint256(market.totalCollateral).mul(amount).div(market.totalLiquidity));
         market.totalCollateral = market.totalCollateral.sub(collateral);
 
         // This is the amount of future cash that the liquidity token has a claim to.
-        uint128 futureCashAmount = uint128(uint256(market.totalFutureCash).mul(amount).div(market.totalLiquidity));
+        uint128 futureCashAmount = SafeCast.toUint128(uint256(market.totalFutureCash).mul(amount).div(market.totalLiquidity));
         market.totalFutureCash = market.totalFutureCash.sub(futureCashAmount);
 
         // We do this calculation after the previous two so that we do not mess with the totalLiquidity
@@ -392,15 +496,14 @@ contract FutureCash is Governed {
 
         // Move the collateral from the contract's collateral balances account back to the sender. This must happen
         // before the free collateral check in the Portfolio call below.
-        Escrow().withdrawFromMarket(msg.sender, G_COLLATERAL_TOKEN, FUTURE_CASH_GROUP, collateral, 0);
+        Escrow().withdrawFromMarket(account, FUTURE_CASH_GROUP, collateral, 0);
 
         Common.Asset[] memory assets = new Common.Asset[](2);
         // This will remove the liquidity tokens
         assets[0] = Common.Asset(
             FUTURE_CASH_GROUP,
             INSTRUMENT,
-            maturity - G_PERIOD_SIZE,
-            G_PERIOD_SIZE,
+            maturity,
             // We mark this as a "PAYER" liquidity token so the portfolio reduces the balance
             Common.makeCounterparty(Common.getLiquidityToken()),
             INSTRUMENT_PRECISION,
@@ -411,17 +514,14 @@ contract FutureCash is Governed {
         assets[1] = Common.Asset(
             FUTURE_CASH_GROUP,
             INSTRUMENT,
-            maturity - G_PERIOD_SIZE,
-            G_PERIOD_SIZE,
+            maturity,
             Common.getCashReceiver(),
             INSTRUMENT_PRECISION,
             futureCashAmount
         );
 
-        // This function call will check if the account in question actually has enough liquidity tokens to remove.
-        Portfolios().upsertAccountAssetBatch(msg.sender, assets);
-
-        emit RemoveLiquidity(msg.sender, maturity, amount, futureCashAmount, collateral);
+        emit RemoveLiquidity(account, maturity, amount, futureCashAmount, collateral);
+        return (assets, collateral);
     }
 
     /**
@@ -436,13 +536,13 @@ contract FutureCash is Governed {
         address account,
         uint128 tokenAmount,
         uint32 maturity
-    ) public returns (uint128) {
+    ) external returns (uint128) {
         require(calledByPortfolios(), $$(ErrorCode(UNAUTHORIZED_CALLER)));
 
         (uint128 collateral, uint128 futureCash) = _settleLiquidityToken(tokenAmount, maturity);
 
         // Move the collateral from the contract's collateral balances account back to the sender
-        Escrow().withdrawFromMarket(account, G_COLLATERAL_TOKEN, FUTURE_CASH_GROUP, collateral, 0);
+        Escrow().withdrawFromMarket(account, FUTURE_CASH_GROUP, collateral, 0);
 
         // No need to remove the liquidity token from the portfolio, the calling function will take care of this.
 
@@ -463,11 +563,11 @@ contract FutureCash is Governed {
         Market storage market = markets[maturity];
 
         // Here we calculate the amount of collateral that the liquidity token represents.
-        uint128 collateral = uint128(uint256(market.totalCollateral).mul(tokenAmount).div(market.totalLiquidity));
+        uint128 collateral = SafeCast.toUint128(uint256(market.totalCollateral).mul(tokenAmount).div(market.totalLiquidity));
         market.totalCollateral = market.totalCollateral.sub(collateral);
 
         // This is the amount of future cash that the liquidity token has a claim to.
-        uint128 futureCash = uint128(uint256(market.totalFutureCash).mul(tokenAmount).div(market.totalLiquidity));
+        uint128 futureCash = SafeCast.toUint128(uint256(market.totalFutureCash).mul(tokenAmount).div(market.totalLiquidity));
         market.totalFutureCash = market.totalFutureCash.sub(futureCash);
 
         // We do this calculation after the previous two so that we do not mess with the totalLiquidity
@@ -512,9 +612,9 @@ contract FutureCash is Governed {
         uint32 timeToMaturity = maturity - blockTime;
 
         ( /* market */, uint128 collateral) = _tradeCalculation(interimMarket, int256(futureCashAmount), timeToMaturity);
-        uint128 fee = collateral.mul(G_TRANSACTION_FEE).div(Common.DECIMALS);
         // On trade failure, we will simply return 0
-        return collateral - fee;
+        uint128 fee = _calculateTransactionFee(collateral, timeToMaturity);
+        return collateral.sub(fee);
     }
 
     /**
@@ -538,40 +638,81 @@ contract FutureCash is Governed {
         uint128 futureCashAmount,
         uint32 maxTime,
         uint32 maxImpliedRate
-    ) public returns (uint128) {
+    ) external returns (uint128) {
+        (Common.Asset memory asset, uint128 collateral) = _takeCollateral(
+            msg.sender,
+            maturity,
+            futureCashAmount,
+            maxTime,
+            maxImpliedRate
+        );
+
+        // This will do a free collateral check before it adds to the portfolio.
+        Portfolios().upsertAccountAsset(msg.sender, asset, CHECK_FC);
+
+        return collateral;
+    }
+
+    /**
+     * @notice Used by ERC1155 contract to take collateral
+     * @dev skip
+     */
+    function takeCollateralOnBehalf(
+        address account,
+        uint32 maturity,
+        uint128 futureCashAmount,
+        uint32 maxImpliedRate
+    ) external returns (uint128) {
+        require(calledByERC1155Trade(), $$(ErrorCode(UNAUTHORIZED_CALLER)));
+
+        (Common.Asset memory asset, uint128 collateral) = _takeCollateral(
+            account,
+            maturity,
+            futureCashAmount,
+            uint32(block.timestamp),
+            maxImpliedRate
+        );
+
+        Portfolios().upsertAccountAsset(account, asset, DEFER_CHECK);
+
+        return collateral;
+    }
+
+    function _takeCollateral(
+        address account,
+        uint32 maturity,
+        uint128 futureCashAmount,
+        uint32 maxTime,
+        uint32 maxImpliedRate
+    ) internal returns (Common.Asset memory, uint128) {
         _isValidBlock(maturity, maxTime);
         require(futureCashAmount <= G_MAX_TRADE_SIZE, $$(ErrorCode(TRADE_FAILED_TOO_LARGE)));
 
         uint128 collateral = _updateMarket(maturity, int256(futureCashAmount));
         require(collateral > 0, $$(ErrorCode(TRADE_FAILED_LACK_OF_LIQUIDITY)));
 
-        uint128 fee = collateral.mul(G_TRANSACTION_FEE).div(Common.DECIMALS);
-
         uint32 timeToMaturity = maturity - uint32(block.timestamp);
-        uint32 impliedRate = _calculateImpliedRate(collateral - fee, futureCashAmount, timeToMaturity);
+        uint128 fee = _calculateTransactionFee(collateral, timeToMaturity);
+        uint32 impliedRate = _calculateImpliedRate(collateral.sub(fee), futureCashAmount, timeToMaturity);
         require(impliedRate <= maxImpliedRate, $$(ErrorCode(TRADE_FAILED_SLIPPAGE)));
 
         // Move the collateral from the contract's collateral balances account to the sender. This must happen before
         // the call to insert the trade below in order for the free collateral check to work properly.
-        Escrow().withdrawFromMarket(msg.sender, G_COLLATERAL_TOKEN, FUTURE_CASH_GROUP, collateral, fee);
+        Escrow().withdrawFromMarket(account, FUTURE_CASH_GROUP, collateral, fee);
 
         // The sender now has an obligation to pay cash at maturity.
-        Portfolios().upsertAccountAsset(
-            msg.sender,
-            Common.Asset(
-                FUTURE_CASH_GROUP,
-                INSTRUMENT,
-                maturity - G_PERIOD_SIZE,
-                G_PERIOD_SIZE,
-                Common.getCashPayer(),
-                INSTRUMENT_PRECISION,
-                futureCashAmount
-            )
+        Common.Asset memory asset = Common.Asset(
+            FUTURE_CASH_GROUP,
+            INSTRUMENT,
+            maturity,
+            Common.getCashPayer(),
+            INSTRUMENT_PRECISION,
+            futureCashAmount
         );
 
-        emit TakeCollateral(msg.sender, maturity, futureCashAmount, collateral, fee);
+        emit TakeCollateral(account, maturity, futureCashAmount, collateral, fee);
 
-        return collateral;
+        return (asset, collateral);
     }
 
     /**
@@ -604,9 +745,9 @@ contract FutureCash is Governed {
         uint32 timeToMaturity = maturity - blockTime;
 
         ( /* market */, uint128 collateral) = _tradeCalculation(interimMarket, int256(futureCashAmount).neg(), timeToMaturity);
-        uint128 fee = collateral.mul(G_TRANSACTION_FEE).div(Common.DECIMALS);
+        uint128 fee = _calculateTransactionFee(collateral, timeToMaturity);
         // On trade failure, we will simply return 0
-        return collateral + fee;
+        return collateral.add(fee);
     }
 
     /**
@@ -629,84 +770,86 @@ contract FutureCash is Governed {
         uint128 futureCashAmount,
         uint32 maxTime,
         uint128 minImpliedRate
-    ) public returns (uint128) {
+    ) external returns (uint128) {
+        (Common.Asset memory asset, uint128 collateral) = _takeFutureCash(
+            msg.sender,
+            maturity,
+            futureCashAmount,
+            maxTime,
+            minImpliedRate
+        );
+
+        // This will do a free collateral check before it adds to the portfolio.
+        Portfolios().upsertAccountAsset(msg.sender, asset, CHECK_FC);
+
+        return collateral;
+    }
+
+    /**
+     * @notice Used by ERC1155 contract to take future cash
+     * @dev skip
+     */
+    function takeFutureCashOnBehalf(
+        address account,
+        uint32 maturity,
+        uint128 futureCashAmount,
+        uint32 minImpliedRate
+    ) external returns (uint128) {
+        require(calledByERC1155Trade(), $$(ErrorCode(UNAUTHORIZED_CALLER)));
+
+        (Common.Asset memory asset, uint128 collateral) = _takeFutureCash(
+            account,
+            maturity,
+            futureCashAmount,
+            uint32(block.timestamp),
+            minImpliedRate
+        );
+
+        Portfolios().upsertAccountAsset(account, asset, DEFER_CHECK);
+
+        return collateral;
+    }
+
+    function _takeFutureCash(
+        address account,
+        uint32 maturity,
+        uint128 futureCashAmount,
+        uint32 maxTime,
+        uint128 minImpliedRate
+    ) internal returns (Common.Asset memory, uint128) {
         _isValidBlock(maturity, maxTime);
         require(futureCashAmount <= G_MAX_TRADE_SIZE, $$(ErrorCode(TRADE_FAILED_TOO_LARGE)));
 
         uint128 collateral = _updateMarket(maturity, int256(futureCashAmount).neg());
         require(collateral > 0, $$(ErrorCode(TRADE_FAILED_LACK_OF_LIQUIDITY)));
 
-        uint128 fee = collateral.mul(G_TRANSACTION_FEE).div(Common.DECIMALS);
-
         uint32 timeToMaturity = maturity - uint32(block.timestamp);
-        uint32 impliedRate = _calculateImpliedRate(collateral + fee, futureCashAmount, timeToMaturity);
+        uint128 fee = _calculateTransactionFee(collateral, timeToMaturity);
+
+        uint32 impliedRate = _calculateImpliedRate(collateral.add(fee), futureCashAmount, timeToMaturity);
         require(impliedRate >= minImpliedRate, $$(ErrorCode(TRADE_FAILED_SLIPPAGE)));
 
         // Move the collateral from the sender to the contract address. This must happen before the
         // insert trade call below.
-        Escrow().depositIntoMarket(msg.sender, G_COLLATERAL_TOKEN, FUTURE_CASH_GROUP, collateral, fee);
+        Escrow().depositIntoMarket(account, FUTURE_CASH_GROUP, collateral, fee);
 
-        // The sender is now owed a future cash balance at maturity
-        Portfolios().upsertAccountAsset(
-            msg.sender,
-            Common.Asset(
-                FUTURE_CASH_GROUP,
-                INSTRUMENT,
-                maturity - G_PERIOD_SIZE,
-                G_PERIOD_SIZE,
-                Common.getCashReceiver(),
-                INSTRUMENT_PRECISION,
-                futureCashAmount
-            )
+        Common.Asset memory asset = Common.Asset(
+            FUTURE_CASH_GROUP,
+            INSTRUMENT,
+            maturity,
+            Common.getCashReceiver(),
+            INSTRUMENT_PRECISION,
+            futureCashAmount
         );
 
-        emit TakeFutureCash(msg.sender, maturity, futureCashAmount, collateral, fee);
+        emit TakeFutureCash(account, maturity, futureCashAmount, collateral, fee);
 
-        return collateral;
+        return (asset, collateral);
     }
 
     /********** Trading Cash ******************************/
 
     /********** Liquidation *******************************/
-
-    /**
-     * @notice Uses collateralAvailable to purchase future cash in order to offset the obligation amount at
-     * the specified maturity. Used by the Portfolio contract during liquidation.
-     * @dev skip
-     * @param collateralAvailable amount of collateral available to purchase offsetting obligations
-     * @param obligation the max amount of obligations to offset
-     * @param maturity the maturity of the obligation
-     * @return (collateral cost of offsetting future cash, the amount of obligation offset)
-     */
-    function tradeCashPayer(
-        uint128 collateralAvailable,
-        uint128 obligation,
-        uint32 maturity
-    ) public returns (uint128, uint128) {
-        require(calledByPortfolios(), $$(ErrorCode(UNAUTHORIZED_CALLER)));
-
-        uint128 totalFutureCash = markets[maturity].totalFutureCash;
-        uint128 futureCashToRepay;
-        // The floor for the value these positions is at a 1-1 exchange rate. This is the least favorable rate
-        // for the liquidated account since we guarantee that exchange rates cannot go below zero.
-        if (collateralAvailable >= obligation && totalFutureCash >= obligation) {
-            futureCashToRepay = obligation;
-        } else if (totalFutureCash >= collateralAvailable) {
-            // We cannot accurately calculate how much future cash we can possibly offset here, but
-            // we know that it is at least "collateralAvailable". Figure out the cost for that and then
-            // proceed.
-            futureCashToRepay = collateralAvailable;
-        }
-
-        uint128 repayCost = _updateMarket(maturity, int256(futureCashToRepay).neg());
-
-        if (repayCost > 0) {
-            return (repayCost, futureCashToRepay);
-        } else {
-            // Closing out the obligation was unsuccessful.
-            return (0, 0);
-        }
-    }
 
     /**
      * @notice Turns future cash tokens into a current collateral. Used by portfolios when settling cash.
@@ -723,24 +866,16 @@ contract FutureCash is Governed {
         uint128 collateralRequired,
         uint128 maxFutureCash,
         uint32 maturity
-    ) public returns (uint128) {
+    ) external returns (uint128) {
         require(calledByPortfolios(), $$(ErrorCode(UNAUTHORIZED_CALLER)));
 
-        uint128 futureCashAmount = maxFutureCash;
-        uint128 totalFutureCash = markets[maturity].totalFutureCash;
-        if (maxFutureCash > totalFutureCash) {
-            // Don't sell future cash than is in the market.
-            futureCashAmount = totalFutureCash;
-        }
-
-        uint128 collateral = _updateMarket(maturity, int256(futureCashAmount));
+        uint128 collateral = _updateMarket(maturity, int256(maxFutureCash));
 
         // Here we've sold collateral in excess of what was required, so we credit the remaining back
         // to the account that was holding the trade.
         if (collateral > collateralRequired) {
             Escrow().withdrawFromMarket(
                 account,
-                G_COLLATERAL_TOKEN,
                 FUTURE_CASH_GROUP,
                 collateral - collateralRequired,
                 0
@@ -764,37 +899,27 @@ contract FutureCash is Governed {
         uint128 collateralRequired,
         uint128 maxTokenAmount,
         uint32 maturity
-    )
-        public
-        returns (
-            uint128,
-            uint128,
-            uint128
-        )
-    {
+    ) external returns (uint128, uint128, uint128) {
         require(calledByPortfolios(), $$(ErrorCode(UNAUTHORIZED_CALLER)));
         Market memory market = markets[maturity];
 
         // This is the total claim on collateral that the tokens have.
         uint128 tokensToRemove = maxTokenAmount;
-        uint128 collateralAmount = uint128(
+        uint128 collateralAmount = SafeCast.toUint128(
             uint256(market.totalCollateral).mul(tokensToRemove).div(market.totalLiquidity)
         );
 
         if (collateralAmount > collateralRequired) {
             // If the total claim is greater than required, we only want to remove part of the liquidity.
-            tokensToRemove = uint128(
+            tokensToRemove = SafeCast.toUint128(
                 uint256(collateralRequired).mul(market.totalLiquidity).div(market.totalCollateral)
             );
             collateralAmount = collateralRequired;
         }
 
         // This method will credit the collateralAmount back to the balances on the escrow contract.
-        (
-            ,
-            /* uint128 */
-            uint128 futureCashAmount
-        ) = _settleLiquidityToken(tokensToRemove, maturity);
+        uint128 futureCashAmount;
+        (collateralAmount, futureCashAmount) = _settleLiquidityToken(tokensToRemove, maturity);
 
         return (collateralAmount, futureCashAmount, tokensToRemove);
     }
@@ -825,8 +950,15 @@ contract FutureCash is Governed {
             return (INSTRUMENT_PRECISION, true);
         } else {
             uint32 timeToMaturity = maturity - uint32(block.timestamp);
-            market.rateAnchor = _getNewRateAnchor(market, timeToMaturity);
-            uint32 rate = _getExchangeRate(market, timeToMaturity, 0);
+            bool success;
+            uint32 rate;
+
+            (market.rateAnchor, success) = _getNewRateAnchor(market, timeToMaturity);
+            if (!success) revert($$(ErrorCode(RATE_OVERFLOW)));
+
+            (rate, success) = _getExchangeRate(market, timeToMaturity, 0);
+            if (!success) revert($$(ErrorCode(RATE_OVERFLOW)));
+
             return (rate, false);
         }
     }
@@ -852,7 +984,7 @@ contract FutureCash is Governed {
      * @notice Gets the maturities for all the active markets.
      * @return an array of blocks where the currently active markets will mature at
      */
-    function getActiveMaturities() public view returns (uint32[] memory) {
+    function getActiveMaturities() external view returns (uint32[] memory) {
         uint32[] memory ids = new uint32[](G_NUM_PERIODS);
         uint32 blockTime = uint32(block.timestamp);
         uint32 currentMaturity = blockTime - (blockTime % G_PERIOD_SIZE) + G_PERIOD_SIZE;
@@ -863,6 +995,16 @@ contract FutureCash is Governed {
     }
 
     /*********** Internal Methods ********************/
+
+    function _calculateTransactionFee(uint128 collateral, uint32 timeToMaturity) internal view returns (uint128) {
+        return SafeCast.toUint128(
+            uint256(collateral)
+                .mul(G_TRANSACTION_FEE)
+                .mul(timeToMaturity)
+                .div(G_PERIOD_SIZE)
+                .div(Common.DECIMALS)
+        );
+    }
 
     function _updateMarket(uint32 maturity, int256 futureCashAmount) internal returns (uint128) {
         Market memory interimMarket = markets[maturity];
@@ -921,18 +1063,28 @@ contract FutureCash is Governed {
 
         // Get the new rate anchor for this market, this accounts for the anchor rate changing as we
         // roll down to maturity. This needs to be saved to the market if we actually trade.
-        interimMarket.rateAnchor = _getNewRateAnchor(interimMarket, timeToMaturity);
+        bool success;
+        (interimMarket.rateAnchor, success) = _getNewRateAnchor(interimMarket, timeToMaturity);
+        if (!success) return (interimMarket, 0);
 
         // Calculate the exchange rate the user will actually trade at, we simulate the future cash amount
         // added or subtracted to the numerator of the proportion.
-        uint32 tradeExchangeRate = _getExchangeRate(interimMarket, timeToMaturity, futureCashAmount);
+        uint256 tradeExchangeRate;
+        (tradeExchangeRate, success) = _getExchangeRate(interimMarket, timeToMaturity, futureCashAmount);
+        if (!success) return (interimMarket, 0);
 
         // The fee amount will decrease as we roll down to maturity
-        uint32 fee = uint32(uint256(G_LIQUIDITY_FEE).mul(timeToMaturity).div(G_PERIOD_SIZE));
+        uint256 fee = uint256(G_LIQUIDITY_FEE).mul(timeToMaturity).div(G_PERIOD_SIZE);
         if (futureCashAmount > 0) {
-            tradeExchangeRate = tradeExchangeRate + fee;
+            uint256 postFeeRate = tradeExchangeRate + fee;
+            // This is an overflow on the fee
+            if (postFeeRate < tradeExchangeRate) return (interimMarket, 0);
+            tradeExchangeRate = postFeeRate;
         } else {
-            tradeExchangeRate = tradeExchangeRate - fee;
+            uint256 postFeeRate = tradeExchangeRate - fee;
+            // This is an underflow on the fee
+            if (postFeeRate > tradeExchangeRate) return (interimMarket, 0);
+            tradeExchangeRate = postFeeRate;
         }
 
         if (tradeExchangeRate < INSTRUMENT_PRECISION) {
@@ -941,7 +1093,7 @@ contract FutureCash is Governed {
         }
 
         // collateral = futureCashAmount / exchangeRate
-        uint128 collateral = uint128(uint256(futureCashAmount.abs()).mul(INSTRUMENT_PRECISION).div(tradeExchangeRate));
+        uint128 collateral = SafeCast.toUint128(uint256(futureCashAmount.abs()).mul(INSTRUMENT_PRECISION).div(tradeExchangeRate));
 
         // Update the markets accordingly.
         if (futureCashAmount > 0) {
@@ -958,7 +1110,12 @@ contract FutureCash is Governed {
         }
 
         // Now calculate the implied rate, this will be used for future rolldown calculations.
-        interimMarket.lastImpliedRate = _getImpliedRate(interimMarket, timeToMaturity);
+        uint32 impliedRate;
+        (impliedRate, success) = _getImpliedRate(interimMarket, timeToMaturity);
+
+        if (!success) return (interimMarket, 0);
+
+        interimMarket.lastImpliedRate = impliedRate;
 
         return (interimMarket, collateral);
     }
@@ -970,38 +1127,52 @@ contract FutureCash is Governed {
      * lastImpliedRate = (exchangeRate' - 1) * (PERIOD_SIZE / timeToMaturity')
      *      (calculated when the last trade in the market was made)
      * timeToMaturity = maturity - currentBlockTime
+     * @return the new rate anchor and a boolean that signifies success
      */
-    function _getNewRateAnchor(Market memory market, uint32 timeToMaturity) internal view returns (uint32) {
-        int256 rateDifference = (int256(_getImpliedRate(market, timeToMaturity)).sub(market.lastImpliedRate))
+    function _getNewRateAnchor(Market memory market, uint32 timeToMaturity) internal view returns (uint32, bool) {
+        (uint32 impliedRate, bool success) = _getImpliedRate(market, timeToMaturity);
+
+        if (!success) return (0, false);
+
+        int256 rateDifference = int256(impliedRate)
+            .sub(market.lastImpliedRate)
             .mul(timeToMaturity)
             .div(G_PERIOD_SIZE);
+        int256 newRateAnchor = int256(market.rateAnchor).sub(rateDifference);
 
-        return uint32(int256(market.rateAnchor).sub(rateDifference));
+        if (newRateAnchor < 0 || newRateAnchor > Common.MAX_UINT_32) return (0, false);
+
+        return (uint32(newRateAnchor), true);
     }
 
     /**
      * This is the implied rate calculated after a trade is made or when liquidity is added to the pool initially.
+     * @return the implied rate and a bool that is true on success
      */
-    function _getImpliedRate(Market memory market, uint32 timeToMaturity) internal view returns (uint32) {
-        return
-            uint32(
-                // It is impossible for the final exchange rate to go negative (i.e. below 1)
-                uint256(_getExchangeRate(market, timeToMaturity, 0) - INSTRUMENT_PRECISION).mul(G_PERIOD_SIZE).div(
-                    timeToMaturity
-                )
-            );
+    function _getImpliedRate(Market memory market, uint32 timeToMaturity) internal view returns (uint32, bool) {
+        (uint32 exchangeRate, bool success) = _getExchangeRate(market, timeToMaturity, 0);
+
+        if (!success) return (0, false);
+        if (exchangeRate < INSTRUMENT_PRECISION) return (0, false);
+
+        uint256 rate = uint256(exchangeRate - INSTRUMENT_PRECISION)
+            .mul(G_PERIOD_SIZE)
+            .div(timeToMaturity);
+
+        if (rate > Common.MAX_UINT_32) return (0, false);
+
+        return (uint32(rate), true);
     }
 
     /**
      * @notice This function reverts if the implied rate is negative.
      */
     function _getImpliedRateRequire(Market memory market, uint32 timeToMaturity) internal view returns (uint32) {
-        return
-            uint32(
-                uint256(_getExchangeRate(market, timeToMaturity, 0)).sub(INSTRUMENT_PRECISION).mul(G_PERIOD_SIZE).div(
-                    timeToMaturity
-                )
-            );
+        (uint32 impliedRate, bool success) = _getImpliedRate(market, timeToMaturity);
+
+        require(success, $$(ErrorCode(RATE_OVERFLOW)));
+
+        return impliedRate;
     }
 
     function _calculateImpliedRate(
@@ -1010,7 +1181,7 @@ contract FutureCash is Governed {
         uint32 timeToMaturity
     ) internal view returns (uint32) {
         uint256 exchangeRate = uint256(futureCash).mul(INSTRUMENT_PRECISION).div(collateral);
-        return uint32(exchangeRate.sub(INSTRUMENT_PRECISION).mul(G_PERIOD_SIZE).div(timeToMaturity));
+        return SafeCast.toUint32(exchangeRate.sub(INSTRUMENT_PRECISION).mul(G_PERIOD_SIZE).div(timeToMaturity));
     }
 
     /**
@@ -1026,10 +1197,10 @@ contract FutureCash is Governed {
         Market memory market,
         uint32 timeToMaturity,
         int256 futureCashAmount
-    ) internal view returns (uint32) {
+    ) internal view returns (uint32, bool) {
         // These two conditions will result in divide by zero errors.
         if (market.totalFutureCash.add(market.totalCollateral) == 0 || market.totalCollateral == 0) {
-            return 0;
+            return (0, false);
         }
 
         // This will always be positive, we do a check beforehand in _tradeCalculation
@@ -1040,24 +1211,24 @@ contract FutureCash is Governed {
         // proportion' = proportion / (1 - proportion)
         proportion = proportion.mul(Common.DECIMALS).div(uint256(Common.DECIMALS).sub(proportion));
 
-        // The rate scalar will increase towards maturity, this will lower the impact of changes
-        // to the proportion as we get towards maturity.
-        int64 rateScalar = int64(uint256(market.rateScalar).mul(G_PERIOD_SIZE).div(timeToMaturity));
-
         // (1 / scalar) * ln(proportion') + anchor_rate
         (int64 abdkResult, bool success) = _abdkMath(proportion);
 
-        if (!success) return 0;
+        if (!success) return (0, false);
+
+        // The rate scalar will increase towards maturity, this will lower the impact of changes
+        // to the proportion as we get towards maturity.
+        uint256 rateScalar = uint256(market.rateScalar).mul(G_PERIOD_SIZE).div(timeToMaturity);
+        if (rateScalar > Common.MAX_UINT_32) return (0, false);
 
         // This is ln(1e18), subtract this to scale proportion back
-        // TODO: rateScalar and rateAnchor math must not lose precision?
-        int64 rate = (((abdkResult - LN_1E18) / rateScalar) + market.rateAnchor);
+        int64 rate = (((abdkResult - LN_1E18) / int64(rateScalar)) + market.rateAnchor);
 
         // These checks simply prevent math errors, not negative interest rates.
-        if (rate < 0 || rate > 0xffffffff) {
-            return 0;
+        if (rate < 0) {
+            return (0, false);
         } else {
-            return uint32(rate);
+            return (uint32(rate), true);
         }
     }
 
@@ -1078,7 +1249,7 @@ contract FutureCash is Governed {
             return (0, false);
         }
 
-        // Must to int128 conversion after the overflow checks above.
+        // Will pass int128 conversion after the overflow checks above.
         return (ABDKMath64x64.toInt(int128(result)), true);
     }
 }

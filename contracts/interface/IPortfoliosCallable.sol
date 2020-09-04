@@ -10,19 +10,21 @@ interface IPortfoliosCallable {
 
     function getFutureCashGroups(uint8[] calldata groupIds) external view returns (Common.FutureCashGroup[] memory);
 
-    function settleAccount(address account) external;
+    function settleMaturedAssets(address account) external;
 
-    function settleAccountBatch(address[] calldata account) external;
+    function settleMaturedAssetsBatch(address[] calldata account) external;
 
-    function upsertAccountAsset(address account, Common.Asset calldata assets) external;
+    function upsertAccountAsset(address account, Common.Asset calldata assets, bool checkFreeCollateral) external;
 
-    function upsertAccountAssetBatch(address account, Common.Asset[] calldata assets) external;
+    function upsertAccountAssetBatch(address account, Common.Asset[] calldata assets, bool checkFreeCollateral) external;
 
-    function freeCollateral(address account) external returns (int256, uint128[] memory);
+    function mintFutureCashPair(address payer, address receiver, uint8 futureCashGroupId, uint32 maturity, uint128 notional) external;
 
-    function freeCollateralNoEmit(address account) external returns (int256, uint128[] memory);
+    function freeCollateral(address account) external returns (int256, int256[] memory, int256[] memory);
 
-    function freeCollateralView(address account) external view returns (int256, uint128[] memory);
+    function freeCollateralNoEmit(address account) external returns (int256, int256[] memory, int256[] memory);
+
+    function freeCollateralView(address account) external view returns (int256, int256[] memory, int256[] memory);
 
     function setNumCurrencies(uint16 numCurrencies) external;
 
@@ -32,8 +34,7 @@ interface IPortfoliosCallable {
         bytes1 swapType,
         uint8 futureCashGroupId,
         uint16 instrumentId,
-        uint32 startTime,
-        uint32 duration,
+        uint32 maturity,
         uint128 value
     ) external;
 
@@ -42,8 +43,7 @@ interface IPortfoliosCallable {
         bytes1 swapType,
         uint8 futureCashGroupId,
         uint16 instrumentId,
-        uint32 startTime,
-        uint32 duration
+        uint32 maturity
     ) external view returns (Common.Asset memory, uint256);
 
     function raiseCollateralViaLiquidityToken(
@@ -53,12 +53,6 @@ interface IPortfoliosCallable {
     ) external returns (uint128);
 
     function raiseCollateralViaCashReceiver(
-        address account,
-        uint16 currency,
-        uint128 amount
-    ) external returns (uint128);
-
-    function repayCashPayer(
         address account,
         uint16 currency,
         uint128 amount

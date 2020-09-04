@@ -20,6 +20,9 @@ contract PortfoliosStorage {
 
     // Number of currency groups, set by the Escrow account.
     uint16 public G_NUM_CURRENCIES;
+    // This is the max number of assets that can be in a portfolio. This is to prevent idiosyncratic assets from
+    // building up in portfolios such that they can't be liquidated due to gas cost restrictions.
+    uint256 public G_MAX_ASSETS;
 
     /****** Governance Parameters ******/
 

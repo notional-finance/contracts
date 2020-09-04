@@ -1,13 +1,14 @@
 import { Wallet } from "ethers";
 import { JsonRpcProvider } from "ethers/providers";
 import { SwapnetDeployer } from "./SwapnetDeployer";
-import { WeiPerEther } from "ethers/constants";
 import { BigNumber, parseEther } from "ethers/utils";
 import { config } from "dotenv";
 import Debug from "debug";
 
 const log = Debug("swapnet:deploy");
 const envPath = `${process.env.DOTENV_CONFIG_PATH}`;
+const ONE_MONTH = 2592000;
+const BASIS_POINT = 1e5;
 log(`Loading enviromnent from ${envPath} from ${process.cwd()}`);
 config({ path: envPath });
 
@@ -37,40 +38,56 @@ async function main() {
         owner,
         prereqs.registry.address,
         prereqs.weth.address,
-        prereqs.uniswapRouter.address
+        parseEther("1.06"),
+        parseEther("1.02"),
+        parseEther("0.80"),
+        parseEther("1.01"),
     );
 
     // Deploy mock currencies and markets, don't do this if it is mainnet
     let currencyId = process.env.CURRENCY_ID !== undefined ? parseInt(process.env.CURRENCY_ID) : 0;
     if (process.env.DEPLOY_MOCK === "true") {
         let obj = await swapnet.deployMockCurrency(
-            prereqs.uniswapFactory,
-            prereqs.uniswapRouter,
             parseEther("0.01"), // ETH/MOCK exchange rate
-            parseEther("1.30"), // Haircut
-            true
+            parseEther("1.40")  // Haircut
         );
         currencyId = obj.currencyId;
     }
 
-    const numPeriods = process.env.NUM_PERIODS !== undefined ? parseInt(process.env.NUM_PERIODS) : 4;
-    const periodSize = process.env.PERIOD_SIZE !== undefined ? parseInt(process.env.PERIOD_SIZE) : 40;
-    const maxTradeSize = WeiPerEther.mul(
-        process.env.MAX_TRADE_SIZE !== undefined ? parseInt(process.env.MAX_TRADE_SIZE) : 10_000
-    );
-    const liquidityFee = new BigNumber(
-        process.env.LIQUIDITY_FEE !== undefined ? parseInt(process.env.LIQUIDITY_FEE) : 0
-    );
-    const transactionFee = new BigNumber(
-        process.env.TRANSACTION_FEE !== undefined ? parseInt(process.env.TRANSACTION_FEE) : 0
-    );
     await swapnet.deployFutureCashMarket(
         currencyId,
-        numPeriods,
-        periodSize,
-        maxTradeSize,
-        liquidityFee,
-        transactionFee
+        1,
+        ONE_MONTH,
+        parseEther("1000"),
+        new BigNumber(2.5 * BASIS_POINT),
+        new BigNumber(0),
+        1e9,
+        1_007_974_140,
+        85
+    );
+
+    await swapnet.deployFutureCashMarket(
+        currencyId,
+        1,
+        ONE_MONTH * 3,
+        parseEther("1000"),
+        new BigNumber(2.5 * BASIS_POINT * 3),
+        new BigNumber(0),
+        1e9,
+        1_024_113_689,
+        85
+    );
+
+    await swapnet.deployFutureCashMarket(
+        currencyId,
+        1,
+        ONE_MONTH * 6,
+        parseEther("1000"),
+        new BigNumber(2.5 * BASIS_POINT * 6),
+        new BigNumber(0),
+        1e9,
+        1_048_808_848,
+        85
     );
 
     await swapnet.saveAddresses(process.env.CONTRACTS_FILE as string);

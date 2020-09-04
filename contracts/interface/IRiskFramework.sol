@@ -5,7 +5,6 @@ import "../utils/Common.sol";
 
 /**
  * @title Swapnet risk and valuation framework
- * Note: The ERC-165 identifier for this interface is <TODO>
  */
 interface IRiskFramework /* is IERC165 */ {
 

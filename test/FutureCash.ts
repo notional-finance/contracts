@@ -19,23 +19,21 @@ import { Escrow } from "../typechain/Escrow";
 import { Portfolios } from "../typechain/Portfolios";
 import { TestUtils, BLOCK_TIME_LIMIT } from "./testUtils";
 import { parseEther } from "ethers/utils";
-import { Iweth } from '../typechain/Iweth';
 
 chai.use(solidity);
 const { expect } = chai;
+const MIN_IMPLIED_RATE = 0;
 
 describe("Future Cash", () => {
     let dai: ERC20;
     let owner: Wallet;
     let wallet: Wallet;
     let wallet2: Wallet;
-    let rateAnchor: number;
     let futureCash: FutureCash;
     let escrow: Escrow;
     let portfolios: Portfolios;
     let t: TestUtils;
     let maturities: number[];
-    let weth: Iweth;
 
     beforeEach(async () => {
         owner = wallets[0];
@@ -47,7 +45,6 @@ describe("Future Cash", () => {
         futureCash = objs.futureCash;
         escrow = objs.escrow;
         portfolios = objs.portfolios;
-        weth = objs.weth;
 
         await dai.transfer(wallet.address, WeiPerEther.mul(10_000));
         await dai.transfer(wallet2.address, WeiPerEther.mul(10_000));
@@ -56,22 +53,18 @@ describe("Future Cash", () => {
         await dai.connect(wallet).approve(escrow.address, WeiPerEther.mul(100_000_000));
         await dai.connect(wallet2).approve(escrow.address, WeiPerEther.mul(100_000_000));
 
-        rateAnchor = 1_050_000_000;
-        await futureCash.setRateFactors(rateAnchor, 100);
-
         // Set the blockheight to the beginning of the next period
         maturities = await futureCash.getActiveMaturities();
         await fastForwardToMaturity(provider, maturities[1]);
         maturities = await futureCash.getActiveMaturities();
 
-        t = new TestUtils(escrow, futureCash, portfolios, dai, owner, objs.chainlink, objs.weth);
+        t = new TestUtils(escrow, futureCash, portfolios, dai, owner, objs.chainlink, objs.weth, CURRENCY.DAI);
     });
 
     afterEach(async () => {
         expect(await t.checkEthBalanceIntegrity([owner, wallet, wallet2])).to.be.true;
         expect(await t.checkBalanceIntegrity([owner, wallet, wallet2])).to.be.true;
-        expect(await t.checkCashIntegrity([owner, wallet, wallet2])).to.be.true;
-        expect(await t.checkMarketIntegrity([owner, wallet, wallet2])).to.be.true;
+        expect(await t.checkMarketIntegrity([owner, wallet, wallet2], maturities)).to.be.true;
     });
 
     describe("adding liquidity tokens", async () => {
@@ -103,7 +96,20 @@ describe("Future Cash", () => {
             expect(await t.isCollateralized(owner)).to.be.true;
 
             expect(await t.hasLiquidityToken(wallet, maturities[0], WeiPerEther.mul(5), WeiPerEther.mul(10)));
-            expect(await escrow.currencyBalances(dai.address, owner.address)).to.equal(WeiPerEther.mul(25));
+            expect(await escrow.cashBalances(CURRENCY.DAI, owner.address)).to.equal(WeiPerEther.mul(25));
+        });
+
+        it("initializing liquidity will set the rate anchor to a normalized value", async () => {
+            expect(await futureCash.G_RATE_ANCHOR()).to.equal(1_100_000_000);
+
+            await escrow.deposit(dai.address, WeiPerEther.mul(30));
+            await futureCash.addLiquidity(maturities[0], WeiPerEther.mul(5), WeiPerEther.mul(10), 0, 100_000_000, BLOCK_TIME_LIMIT);
+            const blockTime = (await provider.getBlock("latest")).timestamp;
+            const timeToMaturity = maturities[0] - blockTime;
+            const rateAnchor = Math.trunc((1_100_000_000 - 1e9) * (timeToMaturity / 31536000) + 1e9);
+            
+            const market = await futureCash.getMarket(maturities[0]);
+            expect(market.rateAnchor).to.equal(rateAnchor);
         });
 
         it("should allow adding liquidity even after all liquidity has been removed", async () => {
@@ -136,7 +142,7 @@ describe("Future Cash", () => {
             await expect(
                 futureCash
                     .connect(wallet)
-                    .addLiquidity(maturities[0], parseEther("100"), parseEther("100"), 0, 50_000_000, BLOCK_TIME_LIMIT)
+                    .addLiquidity(maturities[0], parseEther("100"), parseEther("100"), 0, 5_000_000, BLOCK_TIME_LIMIT)
             ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.OUT_OF_IMPLIED_RATE_BOUNDS));
         });
 
@@ -162,7 +168,7 @@ describe("Future Cash", () => {
             await escrow.deposit(dai.address, WeiPerEther.mul(30));
             await expect(
                 futureCash.addLiquidity(maturities[0], WeiPerEther.mul(10), WeiPerEther.div(1_000), 0, 100_000_000, BLOCK_TIME_LIMIT)
-            ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.UINT256_SUBTRACTION_UNDERFLOW));
+            ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.RATE_OVERFLOW));
         });
 
         it("should not allow users to add liquidity to invalid periods", async () => {
@@ -198,7 +204,7 @@ describe("Future Cash", () => {
                 futureCash.takeCollateral(maturities[0], WeiPerEther.mul(100), BLOCK_TIME_LIMIT, 60_000_000)
             ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.EXCHANGE_RATE_UNDERFLOW));
             await expect(
-                futureCash.takeFutureCash(maturities[0], WeiPerEther.mul(100), BLOCK_TIME_LIMIT, 40_000_000)
+                futureCash.takeFutureCash(maturities[0], WeiPerEther.mul(100), BLOCK_TIME_LIMIT, MIN_IMPLIED_RATE)
             ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.EXCHANGE_RATE_UNDERFLOW));
         });
 
@@ -273,7 +279,7 @@ describe("Future Cash", () => {
                 .takeCollateral(maturities[0], WeiPerEther.mul(25), BLOCK_TIME_LIMIT, 60_000_000);
 
             expect(await t.hasCashPayer(wallet, maturities[0], WeiPerEther.mul(25))).to.be.true;
-            expect(await escrow.currencyBalances(dai.address, wallet.address)).to.equal(daiBalance);
+            expect(await escrow.cashBalances(CURRENCY.DAI, wallet.address)).to.equal(daiBalance);
 
             const freeCollateralAfter = (await portfolios.freeCollateralView(wallet.address))[0];
             expect(freeCollateral.sub(freeCollateralAfter)).to.be.above(0);
@@ -323,10 +329,9 @@ describe("Future Cash", () => {
             await escrow.connect(wallet).deposit(dai.address, WeiPerEther.mul(100));
             await futureCash
                 .connect(wallet)
-                .takeFutureCash(maturities[0], WeiPerEther.mul(100), BLOCK_TIME_LIMIT, 40_000_000);
+                .takeFutureCash(maturities[0], WeiPerEther.mul(100), BLOCK_TIME_LIMIT, MIN_IMPLIED_RATE);
 
             expect(await t.hasCashReceiver(wallet, maturities[0], WeiPerEther.mul(100))).to.be.true;
-            expect((await portfolios.freeCollateralView(wallet.address))[0]).to.equal(0);
         });
 
         it("should not allow users to take future cash for dai if they do not have collateral", async () => {
@@ -335,7 +340,7 @@ describe("Future Cash", () => {
             await expect(
                 futureCash
                     .connect(wallet)
-                    .takeFutureCash(maturities[0], WeiPerEther.mul(25), BLOCK_TIME_LIMIT, 40_000_000)
+                    .takeFutureCash(maturities[0], WeiPerEther.mul(25), BLOCK_TIME_LIMIT, MIN_IMPLIED_RATE)
             ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INSUFFICIENT_BALANCE));
         });
 
@@ -348,7 +353,7 @@ describe("Future Cash", () => {
             await expect(
                 futureCash
                     .connect(wallet)
-                    .takeFutureCash(maturities[0], WeiPerEther.mul(25), BLOCK_TIME_LIMIT, 40_000_000)
+                    .takeFutureCash(maturities[0], WeiPerEther.mul(25), BLOCK_TIME_LIMIT, MIN_IMPLIED_RATE)
             ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.MARKET_INACTIVE));
         });
 
@@ -360,7 +365,7 @@ describe("Future Cash", () => {
             await expect(
                 futureCash
                     .connect(wallet)
-                    .takeFutureCash(maturities[0], WeiPerEther.mul(105), BLOCK_TIME_LIMIT, 40_000_000)
+                    .takeFutureCash(maturities[0], WeiPerEther.mul(105), BLOCK_TIME_LIMIT, MIN_IMPLIED_RATE)
             ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.TRADE_FAILED_TOO_LARGE));
         });
     });
@@ -369,20 +374,21 @@ describe("Future Cash", () => {
     it("should settle accounts to cash", async () => {
         await t.setupLiquidity();
 
-        await escrow.connect(wallet2).depositEth({ value: WeiPerEther.mul(5) });
+        await escrow.connect(wallet2).depositEth({ value: WeiPerEther.mul(8) });
         await futureCash
             .connect(wallet2)
             .takeCollateral(maturities[0], WeiPerEther.mul(500), BLOCK_TIME_LIMIT, 60_000_000);
+        await escrow.connect(wallet2).withdraw(dai.address, await escrow.cashBalances(CURRENCY.DAI, wallet2.address));
 
         await escrow.connect(wallet).deposit(dai.address, WeiPerEther.mul(100));
         await futureCash
             .connect(wallet)
-            .takeFutureCash(maturities[0], WeiPerEther.mul(100), BLOCK_TIME_LIMIT, 40_000_000);
+            .takeFutureCash(maturities[0], WeiPerEther.mul(100), BLOCK_TIME_LIMIT, MIN_IMPLIED_RATE);
 
         await fastForwardToMaturity(provider, maturities[1]);
 
-        await portfolios.settleAccount(wallet.address);
-        await portfolios.settleAccountBatch([wallet2.address, owner.address]);
+        await portfolios.settleMaturedAssets(wallet.address);
+        await portfolios.settleMaturedAssetsBatch([wallet2.address, owner.address]);
 
         expect(await portfolios.getAssets(owner.address)).to.have.lengthOf(0);
         expect(await portfolios.getAssets(wallet.address)).to.have.lengthOf(0);
@@ -391,20 +397,19 @@ describe("Future Cash", () => {
         // Liquidity provider has earned some interest on liquidity
         expect(
             (await escrow.cashBalances(CURRENCY.DAI, owner.address)).add(
-                await escrow.currencyBalances(dai.address, owner.address)
+                await escrow.cashBalances(CURRENCY.DAI, owner.address)
             )
         ).to.be.above(WeiPerEther.mul(10_000));
-        expect(await escrow.currencyBalances(weth.address, owner.address)).to.equal(0);
+        expect(await escrow.cashBalances(CURRENCY.ETH, owner.address)).to.equal(0);
 
         // This is the negative balance owed as a fixed rate loan ("takeCollateral")
         expect(await escrow.cashBalances(CURRENCY.DAI, wallet2.address)).to.equal(WeiPerEther.mul(-500));
-        expect(await escrow.currencyBalances(weth.address, wallet2.address)).to.equal(WeiPerEther.mul(5));
+        expect(await escrow.cashBalances(CURRENCY.ETH, wallet2.address)).to.equal(WeiPerEther.mul(8));
 
         // This is the lending amount, should be above what they put in
-        expect(await escrow.cashBalances(CURRENCY.DAI, wallet.address)).to.equal(WeiPerEther.mul(100));
+        expect(await escrow.cashBalances(CURRENCY.DAI, wallet.address)).to.be.above(WeiPerEther.mul(100));
         // There is some residual left in dai balances.
-        expect(await escrow.currencyBalances(dai.address, wallet.address)).to.be.above(0);
-        expect(await escrow.currencyBalances(weth.address, wallet.address)).to.equal(0);
+        expect(await escrow.cashBalances(CURRENCY.ETH, wallet.address)).to.equal(0);
     });
 
     // price methods //
@@ -452,7 +457,7 @@ describe("Future Cash", () => {
             // This should be impliedRateBefore < impliedRateAfter < tradeExchangeRate
             expect(impliedRateBefore).to.be.below(impliedRateAfter);
             expect(impliedRateAfter).to.be.below(tradeImpliedRate);
-            expect(await escrow.currencyBalances(dai.address, wallet.address)).to.equal(
+            expect(await escrow.cashBalances(CURRENCY.DAI, wallet.address)).to.equal(
                 WeiPerEther.mul(1000).add(cash)
             );
         });
@@ -473,9 +478,9 @@ describe("Future Cash", () => {
 
             await futureCash
                 .connect(wallet)
-                .takeFutureCash(maturities[0], WeiPerEther.mul(200), BLOCK_TIME_LIMIT, 40_000_000);
+                .takeFutureCash(maturities[0], WeiPerEther.mul(200), BLOCK_TIME_LIMIT, 5_000_000);
 
-            expect(await escrow.currencyBalances(dai.address, wallet.address)).to.equal(
+            expect(await escrow.cashBalances(CURRENCY.DAI, wallet.address)).to.equal(
                 WeiPerEther.mul(1000).sub(cash)
             );
 
@@ -530,7 +535,7 @@ describe("Future Cash", () => {
             await expect(
                 futureCash
                     .connect(wallet)
-                    .takeFutureCash(maturities[0], WeiPerEther.mul(100), BLOCK_TIME_LIMIT, 40_000_000)
+                    .takeFutureCash(maturities[0], WeiPerEther.mul(100), BLOCK_TIME_LIMIT, MIN_IMPLIED_RATE)
             ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.TRADE_FAILED_LACK_OF_LIQUIDITY));
         });
 
@@ -554,7 +559,7 @@ describe("Future Cash", () => {
             await expect(
                 futureCash
                     .connect(wallet)
-                    .takeFutureCash(maturities[0], WeiPerEther.mul(200), block.timestamp - 1, 40_000_000)
+                    .takeFutureCash(maturities[0], WeiPerEther.mul(200), block.timestamp - 1, MIN_IMPLIED_RATE)
             ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.TRADE_FAILED_MAX_TIME));
         });
 
@@ -565,7 +570,7 @@ describe("Future Cash", () => {
             await expect(
                 futureCash
                     .connect(wallet)
-                    .takeCollateral(maturities[0], WeiPerEther.mul(200), BLOCK_TIME_LIMIT, 40_000_000)
+                    .takeCollateral(maturities[0], WeiPerEther.mul(200), BLOCK_TIME_LIMIT, 8_000_000)
             ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.TRADE_FAILED_SLIPPAGE));
         });
 
@@ -585,7 +590,7 @@ describe("Future Cash", () => {
         });
 
         it("returns market rates", async () => {
-            await t.setupLiquidity(owner, 0.5, WeiPerEther.mul(10), [0, 1, 2]);
+            await t.setupLiquidity(owner, 0.5, WeiPerEther.mul(10), [0, 1, 2, 3]);
             expect(await futureCash.getMarketRates()).to.have.lengthOf(4);
         });
     });
@@ -597,11 +602,11 @@ describe("Future Cash", () => {
 
             await t.setupLiquidity();
             // No fees for liquidity
-            expect(await escrow.currencyBalances(dai.address, wallet2.address)).to.equal(0);
+            expect(await escrow.cashBalances(CURRENCY.DAI, wallet2.address)).to.equal(0);
 
             await futureCash.removeLiquidity(maturities[0], WeiPerEther.mul(5000), BLOCK_TIME_LIMIT);
             // No fees for liquidity
-            expect(await escrow.currencyBalances(dai.address, wallet2.address)).to.equal(0);
+            expect(await escrow.cashBalances(CURRENCY.DAI, wallet2.address)).to.equal(0);
         });
 
         it("should allow transaction fees to be set and accrue to reserves for cash receiver", async () => {
@@ -613,9 +618,10 @@ describe("Future Cash", () => {
 
             await futureCash.connect(wallet).takeFutureCash(maturities[0], WeiPerEther.mul(100), BLOCK_TIME_LIMIT, 0);
             const collateralAmount = WeiPerEther.mul(100).sub(
-                await escrow.currencyBalances(dai.address, wallet.address)
+                await escrow.cashBalances(CURRENCY.DAI, wallet.address)
             );
-            expect(await escrow.currencyBalances(dai.address, wallet2.address)).to.equal(
+            expect(await escrow.cashBalances(CURRENCY.DAI, wallet2.address)).to.be.above(0);
+            expect(await escrow.cashBalances(CURRENCY.DAI, wallet2.address)).to.be.below(
                 collateralAmount.mul(10_000).div(WeiPerEther)
             );
         });
@@ -627,7 +633,8 @@ describe("Future Cash", () => {
             await t.setupLiquidity();
             const [, collateral] = await t.borrowAndWithdraw(wallet, WeiPerEther.mul(100), 1.5, 0, 70_000_000);
 
-            expect(await escrow.currencyBalances(dai.address, wallet2.address)).to.equal(
+            expect(await escrow.cashBalances(CURRENCY.DAI, wallet2.address)).to.be.above(0);
+            expect(await escrow.cashBalances(CURRENCY.DAI, wallet2.address)).to.be.below(
                 collateral.mul(10_000).div(WeiPerEther)
             );
         });

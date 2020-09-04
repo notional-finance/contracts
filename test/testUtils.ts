@@ -8,6 +8,9 @@ import { WeiPerEther } from "ethers/constants";
 import { BigNumber, parseEther } from "ethers/utils";
 import { provider, CURRENCY, fastForwardToMaturity } from "./fixtures";
 import {Iweth as IWETH} from "../typechain/Iweth";
+import { debug } from 'debug';
+
+const log = debug("testutils");
 
 // This will stop working in 2033 :)
 export const BLOCK_TIME_LIMIT = 2_000_000_000;
@@ -26,7 +29,8 @@ export class TestUtils {
         public dai: ERC20,
         public owner: Wallet,
         public chainlink: MockAggregator,
-        public weth: IWETH
+        public weth: IWETH,
+        public currencyId: number
     ) {}
 
     public async setupLiquidity(
@@ -54,7 +58,7 @@ export class TestUtils {
         impliedRateLimit = IMPLIED_RATE_LIMIT
     ) {
         const exchangeRate = await this.chainlink.latestAnswer();
-        const haircut = (await this.escrow.getExchangeRate(this.dai.address, this.weth.address)).haircut;
+        const haircut = (await this.escrow.getExchangeRate(CURRENCY.DAI, CURRENCY.ETH)).haircut;
         const maturities = await this.futureCash.getActiveMaturities();
 
         const ethAmount = borrowFutureCash
@@ -66,11 +70,11 @@ export class TestUtils {
             .div(WeiPerEther);
 
         await this.escrow.connect(wallet).depositEth({value: ethAmount});
-        const beforeAmount = await this.escrow.currencyBalances(this.dai.address, wallet.address);
+        const beforeAmount = await this.escrow.cashBalances(this.currencyId, wallet.address);
         await this.futureCash
             .connect(wallet)
             .takeCollateral(maturities[maturityOffset], borrowFutureCash, BLOCK_TIME_LIMIT, impliedRateLimit);
-        const collateralAmount = (await this.escrow.currencyBalances(this.dai.address, wallet.address)).sub(
+        const collateralAmount = (await this.escrow.cashBalances(this.currencyId, wallet.address)).sub(
             beforeAmount
         );
 
@@ -82,6 +86,7 @@ export class TestUtils {
 
     public async isCollateralized(account: Wallet) {
         const fc = await this.portfolios.freeCollateralView(account.address);
+        log(`Free Collateral: ${fc}`)
         return fc[0].gte(0);
     }
 
@@ -89,45 +94,41 @@ export class TestUtils {
         const totalEthBalance = await this.weth.balanceOf(this.escrow.address);
         let escrowEthBalance = new BigNumber(0);
         for (let a of accounts) {
-            escrowEthBalance = escrowEthBalance.add(await this.escrow.currencyBalances(this.weth.address, a.address));
+            escrowEthBalance = escrowEthBalance.add(await this.escrow.cashBalances(CURRENCY.ETH, a.address));
         }
+
+        log(`Eth Balance Integrity: ${escrowEthBalance}, ${totalEthBalance}`);
 
         return escrowEthBalance.eq(totalEthBalance);
     }
 
     public async checkBalanceIntegrity(accounts: Wallet[], additionalMarket?: string) {
+        await this.portfolios.settleMaturedAssetsBatch(accounts.map((a) => a.address));
+
         const totalDaiBalance = await this.dai.balanceOf(this.escrow.address);
+        log(`Total Dai Balance: ${totalDaiBalance}`)
         let escrowDaiBalance = new BigNumber(0);
         for (let a of accounts) {
-            escrowDaiBalance = escrowDaiBalance.add(await this.escrow.currencyBalances(this.dai.address, a.address));
+            log(`Cash Balance: ${a.address}: ${await this.escrow.cashBalances(this.currencyId, a.address)}`)
+            escrowDaiBalance = escrowDaiBalance.add(await this.escrow.cashBalances(this.currencyId, a.address));
         }
+
+        log(`Future Cash Market: ${await this.escrow.cashBalances(this.currencyId, this.futureCash.address)}`)
         escrowDaiBalance = escrowDaiBalance.add(
-            await this.escrow.currencyBalances(this.dai.address, this.futureCash.address)
+            await this.escrow.cashBalances(this.currencyId, this.futureCash.address)
         );
 
         if (additionalMarket !== undefined) {
             escrowDaiBalance = escrowDaiBalance.add(
-                await this.escrow.currencyBalances(this.dai.address, additionalMarket)
+                await this.escrow.cashBalances(this.currencyId, additionalMarket)
             );
         }
 
+        log(`Balance Integrity: ${totalDaiBalance}, ${escrowDaiBalance}`);
         return totalDaiBalance.eq(escrowDaiBalance);
     }
 
-    public async checkCashIntegrity(accounts: Wallet[], currencyId = CURRENCY.DAI) {
-        const accountAddresses = accounts.map(w => w.address);
-        await this.portfolios.settleAccountBatch(accountAddresses);
-
-        let totalCashBalance = new BigNumber(0);
-        for (let a of accountAddresses) {
-            totalCashBalance = totalCashBalance.add(await this.escrow.cashBalances(currencyId, a));
-        }
-
-        return totalCashBalance.eq(0);
-    }
-
-    public async checkMarketIntegrity(accounts: Wallet[]) {
-        const maturities = await this.futureCash.getActiveMaturities();
+    public async checkMarketIntegrity(accounts: Wallet[], maturities: number[]) {
         const markets = await Promise.all(
             maturities.map(m => {
                 return this.futureCash.markets(m);
@@ -137,9 +138,10 @@ export class TestUtils {
         const aggregateCollateral = markets.reduce((val, market) => {
             return val.add(market.totalCollateral);
         }, new BigNumber(0));
-        const marketBalance = await this.escrow.currencyBalances(this.dai.address, this.futureCash.address);
+        const marketBalance = await this.escrow.cashBalances(this.currencyId, this.futureCash.address);
 
         if (!aggregateCollateral.eq(marketBalance)) {
+            log(`market integrity check, collateral: ${aggregateCollateral}, ${marketBalance}`);
             return false;
         }
 
@@ -159,7 +161,7 @@ export class TestUtils {
 
         for (let i = 0; i < maturities.length; i++) {
             const totalCash = allAssets.reduce((totalCash, asset) => {
-                if (asset.startTime + asset.duration === maturities[i]) {
+                if (asset.maturity === maturities[i]) {
                     if (asset.swapType === SwapType.CASH_RECEIVER) {
                         totalCash = totalCash.add(asset.notional);
                     } else if (asset.swapType === SwapType.CASH_PAYER) {
@@ -170,7 +172,7 @@ export class TestUtils {
             }, new BigNumber(0));
 
             const totalTokens = allAssets.reduce((totalTokens, asset) => {
-                if (asset.startTime + asset.duration === maturities[i]) {
+                if (asset.maturity === maturities[i]) {
                     if (asset.swapType === SwapType.LIQUIDITY_TOKEN) {
                         totalTokens = totalTokens.add(asset.notional);
                     }
@@ -180,10 +182,12 @@ export class TestUtils {
 
             // Cash must always net out to zero
             if (!totalCash.add(markets[i].totalFutureCash).eq(0)) {
+                log(`market integrity check, net cash: ${totalCash}, ${markets[i].totalFutureCash}`);
                 return false;
             }
 
             if (!totalTokens.eq(markets[i].totalLiquidity)) {
+                log(`market integrity check, liquidity: ${totalTokens}, ${markets[i].totalLiquidity}`);
                 return false;
             }
         }
@@ -198,7 +202,7 @@ export class TestUtils {
         const p = await this.portfolios.getAssets(account.address);
 
         for (let t of p) {
-            if (t.startTime + t.duration == maturity && t.swapType == swapType) {
+            if (t.maturity == maturity && t.swapType == swapType) {
                 if (notional !== undefined) {
                     return notional.eq(t.notional);
                 } else {
@@ -232,12 +236,11 @@ export class TestUtils {
         const maturities = await this.futureCash.getActiveMaturities();
         await fastForwardToMaturity(provider, maturities[0]);
         const addresses = accounts.map(a => a.address);
-        await this.portfolios.settleAccountBatch(addresses);
+        await this.portfolios.settleMaturedAssetsBatch(addresses);
     }
 
     public async settleCashBalance(
         payer: Wallet,
-        receiver: Wallet,
         balance?: BigNumber,
         operator?: Wallet,
         currencyId = CURRENCY.DAI,
@@ -250,22 +253,16 @@ export class TestUtils {
             operator = this.escrow.signer as Wallet;
         }
         const payerCashBalanceBefore = await this.escrow.cashBalances(currencyId, payer.address);
-        const receiverCashBalanceBefore = await this.escrow.cashBalances(currencyId, receiver.address);
-        const receiverCurrencyBefore = await this.escrow.currencyBalances(this.dai.address, receiver.address);
 
         await this.escrow
             .connect(operator)
-            .settleCashBalance(currencyId, depositCurrencyId, payer.address, receiver.address, balance);
+            .settleCashBalance(currencyId, depositCurrencyId, payer.address, balance);
 
         const payerCashBalanceAfter = await this.escrow.cashBalances(currencyId, payer.address);
-        const receiverCashBalanceAfter = await this.escrow.cashBalances(currencyId, receiver.address);
-        const receiverCurrencyAfter = await this.escrow.currencyBalances(this.dai.address, receiver.address);
 
+        log(`Settle Cash Balance: ${payerCashBalanceBefore}, ${payerCashBalanceAfter}`)
         return [
-            payerCashBalanceAfter.sub(payerCashBalanceBefore).eq(balance) &&
-                receiverCashBalanceBefore.sub(receiverCashBalanceAfter).eq(balance) &&
-                receiverCurrencyAfter.sub(receiverCurrencyBefore).eq(balance),
-            balance
+            payerCashBalanceAfter.sub(payerCashBalanceBefore).eq(balance)
         ];
     }
 
@@ -284,7 +281,7 @@ export class TestUtils {
         await this.escrow.connect(wallet).deposit(this.dai.address, futureCashAmount);
         await this.futureCash
             .connect(wallet)
-            .takeFutureCash(maturities[1], futureCashAmount, BLOCK_TIME_LIMIT, 20_000_000);
+            .takeFutureCash(maturities[1], futureCashAmount, BLOCK_TIME_LIMIT, 0);
 
         await this.chainlink.setAnswer(WeiPerEther);
         await this.escrow.liquidate(wallet.address, CURRENCY.DAI, CURRENCY.ETH);
