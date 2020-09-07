@@ -10,7 +10,7 @@ import {
     fastForwardToTime
 } from "./fixtures";
 import { Wallet } from "ethers";
-import { WeiPerEther, AddressZero } from "ethers/constants";
+import { WeiPerEther } from "ethers/constants";
 
 import { Erc20 as ERC20 } from "../typechain/Erc20";
 import { FutureCash } from "../typechain/FutureCash";
@@ -172,7 +172,7 @@ describe("Future Cash", () => {
         });
 
         it("should not allow users to add liquidity to invalid periods", async () => {
-            await portfolios.updateFutureCashGroup(1, 0, 20, 1e9, CURRENCY.DAI, futureCash.address, AddressZero);
+            await portfolios.updateFutureCashGroup(1, 0, 20, 1e9, CURRENCY.DAI, futureCash.address);
             await escrow.deposit(dai.address, WeiPerEther.mul(30));
             await expect(
                 futureCash.addLiquidity(maturities[0], WeiPerEther.mul(10), WeiPerEther.mul(10), 0, 100_000_000, BLOCK_TIME_LIMIT)
@@ -298,7 +298,7 @@ describe("Future Cash", () => {
         it.skip("should not allow users to take dai for future cash on an invalid maturity", async () => {
             await t.setupLiquidity();
 
-            await portfolios.updateFutureCashGroup(1, 0, 20, 1e9, 2, futureCash.address, AddressZero);
+            await portfolios.updateFutureCashGroup(1, 0, 20, 1e9, 2, futureCash.address);
 
             await escrow.connect(wallet).depositEth({ value: WeiPerEther });
             await expect(
@@ -347,7 +347,7 @@ describe("Future Cash", () => {
         it.skip("should not allow users to take future cash for dai on an invalid maturity", async () => {
             await t.setupLiquidity();
 
-            await portfolios.updateFutureCashGroup(1, 0, 20, 1e9, 2, futureCash.address, AddressZero);
+            await portfolios.updateFutureCashGroup(1, 0, 20, 1e9, 2, futureCash.address);
 
             await escrow.connect(wallet).deposit(dai.address, WeiPerEther.mul(25));
             await expect(
@@ -505,7 +505,7 @@ describe("Future Cash", () => {
 
             // The rate will be calculated at the next block...
             const blockTime = await (await provider.getBlock("latest")).timestamp;
-            const rateMantissa = await futureCash.INSTRUMENT_PRECISION();
+            const rateMantissa = 1e9;
             const periodSize = await futureCash.G_PERIOD_SIZE();
             const lastImpliedRate = (await futureCash.markets(maturities[0])).lastImpliedRate;
             const spotRate = (await futureCash.getRate(maturities[0]))[0];

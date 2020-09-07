@@ -3,7 +3,6 @@ pragma experimental ABIEncoderV2;
 
 import "../interface/IEscrowCallable.sol";
 import "../interface/IPortfoliosCallable.sol";
-import "../interface/IRiskFramework.sol";
 
 import "../upgradeable/Ownable.sol";
 import "../upgradeable/Initializable.sol";
@@ -25,7 +24,6 @@ contract Governed is OpenZeppelinUpgradesOwnable, Initializable {
 
     enum CoreContracts {
         Escrow,
-        RiskFramework,
         Portfolios,
         ERC1155Token,
         ERC1155Trade
@@ -49,14 +47,6 @@ contract Governed is OpenZeppelinUpgradesOwnable, Initializable {
 
     function Portfolios() internal view returns (IPortfoliosCallable) {
         return IPortfoliosCallable(contracts[uint256(CoreContracts.Portfolios)]);
-    }
-
-    function RiskFramework() internal view returns (IRiskFramework) {
-        return IRiskFramework(contracts[uint256(CoreContracts.RiskFramework)]);
-    }
-
-    function calledByRisk() internal view returns (bool) {
-        return msg.sender == contracts[(uint256(CoreContracts.RiskFramework))];
     }
 
     function calledByEscrow() internal view returns (bool) {

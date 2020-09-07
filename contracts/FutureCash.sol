@@ -69,8 +69,7 @@ contract FutureCash is Governed {
 
     // These next parameters are set by the Portfolios contract and are immutable, except for G_NUM_PERIODS
     uint8 public FUTURE_CASH_GROUP;
-    uint16 public INSTRUMENT;
-    uint32 public INSTRUMENT_PRECISION;
+    uint32 internal constant INSTRUMENT_PRECISION = 1e9;
     uint32 public G_PERIOD_SIZE;
     uint32 public G_NUM_PERIODS;
 
@@ -110,11 +109,9 @@ contract FutureCash is Governed {
         // These values cannot be reset once set.
         if (FUTURE_CASH_GROUP == 0) {
             FUTURE_CASH_GROUP = futureCashGroupId;
-            INSTRUMENT = instrumentId;
         }
 
         require(precision == 1e9, $$(ErrorCode(INVALID_INSTRUMENT_PRECISION)));
-        INSTRUMENT_PRECISION = precision;
         G_PERIOD_SIZE = periodSize;
         G_NUM_PERIODS = numPeriods;
     }
@@ -317,7 +314,7 @@ contract FutureCash is Governed {
     ) internal returns (Common.Asset[] memory) {
         _isValidBlock(maturity, maxTime);
         uint32 timeToMaturity = maturity - uint32(block.timestamp);
-        Market storage market = markets[maturity];
+        Market memory market = markets[maturity];
         // We call settle here instead of at the end of the function because if we have matured liquidity
         // tokens this will put collateral back into our portfolio so that we can add it back into the markets.
         Portfolios().settleMaturedAssets(account);
@@ -382,6 +379,8 @@ contract FutureCash is Governed {
 
         }
 
+        markets[maturity] = market;
+
         // Move the collateral into the contract's collateral balances account. This must happen before the trade
         // is placed so that the free collateral check is correct.
         Escrow().depositIntoMarket(account, FUTURE_CASH_GROUP, collateral, 0);
@@ -392,20 +391,20 @@ contract FutureCash is Governed {
         // This is the liquidity token
         assets[0] = Common.Asset(
             FUTURE_CASH_GROUP,
-            INSTRUMENT,
+            0,
             maturity,
             Common.getLiquidityToken(),
-            INSTRUMENT_PRECISION,
+            0,
             liquidityTokenAmount
         );
 
         // This is the CASH_PAYER
         assets[1] = Common.Asset(
             FUTURE_CASH_GROUP,
-            INSTRUMENT,
+            0,
             maturity,
             Common.getCashPayer(),
-            INSTRUMENT_PRECISION,
+            0,
             futureCash
         );
 
@@ -480,7 +479,7 @@ contract FutureCash is Governed {
         require(blockTime <= maxTime, $$(ErrorCode(TRADE_FAILED_MAX_TIME)));
         require(blockTime < maturity, $$(ErrorCode(MARKET_INACTIVE)));
 
-        Market storage market = markets[maturity];
+        Market memory market = markets[maturity];
 
         // Here we calculate the amount of current cash that the liquidity token represents.
         uint128 collateral = SafeCast.toUint128(uint256(market.totalCollateral).mul(amount).div(market.totalLiquidity));
@@ -494,6 +493,8 @@ contract FutureCash is Governed {
         // figure when calculating futureCash and collateral.
         market.totalLiquidity = market.totalLiquidity.sub(amount);
 
+        markets[maturity] = market;
+
         // Move the collateral from the contract's collateral balances account back to the sender. This must happen
         // before the free collateral check in the Portfolio call below.
         Escrow().withdrawFromMarket(account, FUTURE_CASH_GROUP, collateral, 0);
@@ -502,21 +503,21 @@ contract FutureCash is Governed {
         // This will remove the liquidity tokens
         assets[0] = Common.Asset(
             FUTURE_CASH_GROUP,
-            INSTRUMENT,
+            0,
             maturity,
             // We mark this as a "PAYER" liquidity token so the portfolio reduces the balance
             Common.makeCounterparty(Common.getLiquidityToken()),
-            INSTRUMENT_PRECISION,
+            0,
             amount
         );
 
         // This is the CASH_RECEIVER
         assets[1] = Common.Asset(
             FUTURE_CASH_GROUP,
-            INSTRUMENT,
+            0,
             maturity,
             Common.getCashReceiver(),
-            INSTRUMENT_PRECISION,
+            0,
             futureCashAmount
         );
 
@@ -560,7 +561,7 @@ contract FutureCash is Governed {
      * @return the amount of collateral and future cash
      */
     function _settleLiquidityToken(uint128 tokenAmount, uint32 maturity) internal returns (uint128, uint128) {
-        Market storage market = markets[maturity];
+        Market memory market = markets[maturity];
 
         // Here we calculate the amount of collateral that the liquidity token represents.
         uint128 collateral = SafeCast.toUint128(uint256(market.totalCollateral).mul(tokenAmount).div(market.totalLiquidity));
@@ -573,6 +574,8 @@ contract FutureCash is Governed {
         // We do this calculation after the previous two so that we do not mess with the totalLiquidity
         // figure when calculating futureCash and collateral.
         market.totalLiquidity = market.totalLiquidity.sub(tokenAmount);
+
+        markets[maturity] = market;
 
         return (collateral, futureCash);
     }
@@ -703,10 +706,10 @@ contract FutureCash is Governed {
         // The sender now has an obligation to pay cash at maturity.
         Common.Asset memory asset = Common.Asset(
             FUTURE_CASH_GROUP,
-            INSTRUMENT,
+            0,
             maturity,
             Common.getCashPayer(),
-            INSTRUMENT_PRECISION,
+            0,
             futureCashAmount
         );
 
@@ -835,10 +838,10 @@ contract FutureCash is Governed {
 
         Common.Asset memory asset = Common.Asset(
             FUTURE_CASH_GROUP,
-            INSTRUMENT,
+            0,
             maturity,
             Common.getCashReceiver(),
-            INSTRUMENT_PRECISION,
+            0,
             futureCashAmount
         );
 
@@ -1015,11 +1018,7 @@ contract FutureCash is Governed {
 
         // Collateral value of 0 signifies a failed trade
         if (collateral > 0) {
-            Market storage market = markets[maturity];
-            market.totalFutureCash = interimMarket.totalFutureCash;
-            market.totalCollateral = interimMarket.totalCollateral;
-            market.lastImpliedRate = interimMarket.lastImpliedRate;
-            market.rateAnchor = interimMarket.rateAnchor;
+            markets[maturity] = interimMarket;
         }
 
         return collateral;

@@ -31,7 +31,9 @@ pkill -f ganache-cli
 # Rebuild docker image
 tag=`git rev-parse --short HEAD`
 docker build -t notional/sandbox:$tag .
+docker tag notional/sandbox:$tag notional/sandbox:latest
 docker push notional/sandbox:$tag
+docker push notional/sandbox:latest
 
 # docker tag swapnet-lite-sandbox:$tag docker.pkg.github.com/jeffywu/swapnet-lite/swapnet-lite-sandbox:$tag
 # docker tag swapnet-lite-sandbox:$tag docker.pkg.github.com/jeffywu/swapnet-lite/swapnet-lite-sandbox:latest

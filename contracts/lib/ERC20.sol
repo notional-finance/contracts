@@ -8,7 +8,7 @@ import "./SafeMath.sol";
 contract ERC20 is IERC20, OpenZeppelinUpgradesOwnable {
     using SafeMath for uint256;
 
-    uint256 public constant FAUCET_AMOUNT = 1e18 * 100;
+    uint256 public constant FAUCET_AMOUNT = 1e18 * 100000;
     uint256 private _totalSupply = 10000000000000000000000000000000000;
     mapping(address => uint256) private _balances;
     mapping(address => mapping(address => uint256)) private _allowances;
@@ -33,7 +33,11 @@ contract ERC20 is IERC20, OpenZeppelinUpgradesOwnable {
     event Approval(address indexed owner, address indexed spender, uint256 value);
 
     function name() external override view returns (string memory) {
-        return "Test Dai";
+        return "Dai";
+    }
+
+    function symbol() external override view returns (string memory) {
+        return "DAI";
     }
 
     function decimals() external override view returns (uint8) {

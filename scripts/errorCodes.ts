@@ -52,6 +52,7 @@ export const ErrorCodes = {
     INVALID_INSTRUMENT_PRECISION: '51',
     RAISING_LIQUIDITY_TOKEN_BALANCE_ERROR: '52',
     INVALID_ASSET_BATCH: '53',
+    ASSET_NOT_FOUND: '54',
 
     INT256_ADDITION_OVERFLOW: '100',
     INT256_MULTIPLICATION_OVERFLOW: '101',
@@ -93,7 +94,7 @@ export const ErrorCodes = {
 export class ErrorDecoder {
     public static codeMap: Map<string, string>;
 
-    private static reasonRegex = new RegExp('VM Exception while processing transaction: revert (?<code>.+)$');
+    private static reasonRegex = /VM Exception while processing transaction: revert (.+)$/;
 
     private static loadCodeMap() {
         this.codeMap = new Map<string, string>();
@@ -113,8 +114,8 @@ export class ErrorDecoder {
         const code = reason.toString().match(this.reasonRegex);
         if (code == null) {
             return reason;
-        } else if (this.codeMap.has(code.groups.code)) {
-            return this.codeMap.get(code.groups.code);
+        } else if (code[1] != null) {
+            return code[1];
         } else {
             return reason;
         }

@@ -7,6 +7,7 @@ import "./utils/Governed.sol";
 import "./lib/SafeMath.sol";
 import "./lib/SafeInt256.sol";
 import "./lib/SafeUInt128.sol";
+import "./utils/RiskFramework.sol";
 
 import "./interface/IRateOracle.sol";
 import "./interface/IPortfoliosCallable.sol";
@@ -61,6 +62,12 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
     event SetMaxAssets(uint256 maxAssets);
 
     /**
+     * @notice Notice for setting haircut amount for liquidity tokens
+     * @param liquidityHaircut amount of haircut applied to liquidity token claims 
+     */
+    event SetLiquidityHaircut(uint128 liquidityHaircut);
+
+    /**
      * @dev skip
      * @param directory holds contract addresses for dependencies
      * @param numCurrencies initializes the number of currencies listed on the escrow contract
@@ -78,6 +85,19 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
     }
 
     /****** Governance Parameters ******/
+
+    /**
+     * @notice Sets the haircut amount for liquidity token claims, this is set to a percentage
+     * less than 1e18, for example, a 5% haircut will be set to 0.95e18.
+     * @dev governance
+     * @param haircut amount of negative haircut applied to debt
+     */
+    function setHaircut(uint128 haircut) external onlyOwner {
+        G_LIQUIDITY_HAIRCUT = haircut;
+        Escrow().setLiquidityHaircut(haircut);
+
+        emit SetLiquidityHaircut(haircut);
+    }
 
     /**
      * @dev skip
@@ -115,8 +135,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
         uint32 periodSize,
         uint32 precision,
         uint16 currency,
-        address futureCashMarket,
-        address riskFormula
+        address futureCashMarket
     ) external onlyOwner {
         require(currentFutureCashGroupId <= MAX_FUTURE_CASH_GROUPS, $$(ErrorCode(OVER_FUTURE_CASH_GROUP_LIMIT)));
         require(Escrow().isValidCurrency(currency), $$(ErrorCode(INVALID_CURRENCY)));
@@ -127,8 +146,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
             periodSize,
             precision,
             futureCashMarket,
-            currency,
-            riskFormula
+            currency
         );
 
         if (futureCashMarket == address(0)) {
@@ -160,8 +178,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
         uint32 periodSize,
         uint32 precision,
         uint16 currency,
-        address futureCashMarket,
-        address riskFormula
+        address futureCashMarket
     ) external onlyOwner {
         require(
             futureCashGroupId != 0 && futureCashGroupId <= currentFutureCashGroupId,
@@ -175,7 +192,6 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
         if (i.precision != precision) i.precision = precision;
         if (i.currency != currency) i.currency = currency;
         if (i.futureCashMarket != futureCashMarket) i.futureCashMarket = futureCashMarket;
-        if (i.riskFormula != riskFormula) i.riskFormula = riskFormula;
 
         // The future cash is set to 0 for discount rate oracles and there is no max rate as well.
         IRateOracle(futureCashMarket).setParameters(futureCashGroupId, 0, precision, periodSize, numPeriods, 0);
@@ -248,12 +264,12 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
     ) public override view returns (Common.Asset memory, uint256) {
         Common.Asset[] storage portfolio = _accountAssets[account];
         (
-            Common.Asset memory asset,
-            uint256 index, /* bool */
-
+            bool found, uint256 index, /* uint128 */, /* bool */ 
         ) = _searchAsset(portfolio, swapType, futureCashGroupId, instrumentId, maturity, false);
 
-        return (asset, index);
+        if (!found) return (NULL_ASSET, index);
+
+        return (portfolio[index], index);
     }
 
     /**
@@ -269,6 +285,15 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
         settleMaturedAssets(account);
 
         return freeCollateralView(account);
+    }
+
+    function freeCollateralAggregateOnly(address account) public override returns (int256) {
+        // This will emit an event, which is the correct action here.
+        settleMaturedAssets(account);
+        
+        (int256 fc, /* int256[] memory */, /* int256[] memory */) = freeCollateralView(account);
+
+        return fc;
     }
 
     /**
@@ -294,13 +319,21 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
      * @return (net free collateral position, an array of the net currency available)
      */
     function freeCollateralView(address account) public override view returns (int256, int256[] memory, int256[] memory) {
-        Common.Asset[] memory portfolio = _accountAssets[account];
         int256[] memory balances = Escrow().getBalances(account);
+        return _freeCollateral(account, balances);
+    }
+
+    function _freeCollateral(address account, int256[] memory balances) internal view returns (int256, int256[] memory, int256[] memory) {
+        Common.Asset[] memory portfolio = _accountAssets[account];
         int256[] memory npv = new int256[](balances.length);
 
         if (portfolio.length > 0) {
             // This returns the net requirement in each currency held by the portfolio.
-            Common.Requirement[] memory requirements = RiskFramework().getRequirement(portfolio);
+            Common.Requirement[] memory requirements = RiskFramework.getRequirement(
+                portfolio,
+                G_LIQUIDITY_HAIRCUT,
+                address(this)
+            );
 
             for (uint256 i; i < requirements.length; i++) {
                 uint256 currency = uint256(requirements[i].currency);
@@ -346,7 +379,6 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
         if (checkFreeCollateral) {
             (
                 int256 fc, /* int256[] memory */, /* int256[] memory */
-
             ) = freeCollateral(account);
             require(fc >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL)));
         }
@@ -419,16 +451,17 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
 
         Common.Asset[] storage fromPortfolio = _accountAssets[from];
         (
-            Common.Asset storage asset,
-            uint256 index, /* bool */
-
+            bool found, uint256 index, /* uint128 */, /* bool */
         ) = _searchAsset(fromPortfolio, swapType, futureCashGroupId, instrumentId, maturity, false);
-        _reduceAsset(fromPortfolio, asset, index, value);
+        require(found, $$(ErrorCode(ASSET_NOT_FOUND)));
+
+        uint32 rate = fromPortfolio[index].rate;
+        _reduceAsset(fromPortfolio, fromPortfolio[index], index, value);
 
         Common.Asset[] storage toPortfolio = _accountAssets[to];
         _upsertAsset(
             toPortfolio,
-            Common.Asset(futureCashGroupId, instrumentId, maturity, swapType, asset.rate, value)
+            Common.Asset(futureCashGroupId, instrumentId, maturity, swapType, rate, value)
         );
 
         // All transfers of assets must pass a free collateral check.
@@ -548,31 +581,35 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
         // This is only used when merging the account's portfolio for updating cash balances in escrow. We
         // keep this here so that we can do a single function call to settle all the cash in Escrow.
         int256[] memory settledCash = new int256[](uint256(G_NUM_CURRENCIES + 1));
+        uint256 length = portfolio.length;
 
         // Loop through the portfolio and find the assets that have matured.
-        for (uint256 i; i < portfolio.length; i++) {
+        for (uint256 i; i < length; i++) {
             if (portfolio[i].maturity <= blockTime) {
+                Common.Asset memory asset = portfolio[i];
                 // Here we are dealing with a matured asset. We get the appropriate currency for
                 // the instrument. We may want to cache this somehow, but in all likelihood there
                 // will not be multiple matured assets in the same future cash group.
-                uint16 currency = futureCashGroups[portfolio[i].futureCashGroupId].currency;
+                Common.FutureCashGroup memory fcg = futureCashGroups[asset.futureCashGroupId];
+                uint16 currency = fcg.currency;
 
-                if (Common.isCashPayer(portfolio[i].swapType)) {
+                // TODO: put swap type on stack
+                if (Common.isCashPayer(asset.swapType)) {
                     // If the asset is a payer, we subtract from the cash balance
-                    settledCash[currency] = settledCash[currency].sub(portfolio[i].notional);
-                } else if (Common.isCashReceiver(portfolio[i].swapType)) {
+                    settledCash[currency] = settledCash[currency].sub(asset.notional);
+                } else if (Common.isCashReceiver(asset.swapType)) {
                     // If the asset is a receiver, we add to the cash balance
-                    settledCash[currency] = settledCash[currency].add(portfolio[i].notional);
-                } else if (Common.isLiquidityToken(portfolio[i].swapType)) {
+                    settledCash[currency] = settledCash[currency].add(asset.notional);
+                } else if (Common.isLiquidityToken(asset.swapType)) {
                     // Settling liquidity tokens is a bit more involved since we need to remove
                     // money from the collateral pools. This function returns the amount of future cash
                     // the liquidity token has a claim to.
-                    address futureCashMarket = futureCashGroups[portfolio[i].futureCashGroupId].futureCashMarket;
+                    address futureCashMarket = fcg.futureCashMarket;
                     // This function call will transfer the collateral claim back to the Escrow account.
                     uint128 futureCashAmount = FutureCash(futureCashMarket).settleLiquidityToken(
                         account,
-                        portfolio[i].notional,
-                        portfolio[i].maturity
+                        asset.notional,
+                        asset.maturity
                     );
                     settledCash[currency] = settledCash[currency].add(futureCashAmount);
                 } else {
@@ -583,6 +620,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
                 _removeAsset(portfolio, i);
                 // The portfolio has gotten smaller, so we need to go back to account for the removed asset.
                 i--;
+                length = length == 0 ? 0 : length - 1;
                 didSettle = true;
             }
         }
@@ -816,7 +854,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
      * @param maturity maturity of the asset
      * @param findCounterparty find the counterparty of the asset
      *
-     * @return (storage pointer to the asset, index of asset, is counterparty asset or not)
+     * @return (bool if found, index of asset, notional amount, is counterparty asset or not)
      */
     function _searchAsset(
         Common.Asset[] storage portfolio,
@@ -825,33 +863,27 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
         uint16 instrumentId,
         uint32 maturity,
         bool findCounterparty
-    )
-        internal
-        view
-        returns (
-            Common.Asset storage,
-            uint256,
-            bool
-        )
-    {
-        if (portfolio.length == 0) {
-            return (NULL_ASSET, portfolio.length, false);
+    ) internal view returns (bool, uint256, uint128, bool) {
+        uint256 length = portfolio.length;
+        if (length == 0) {
+            return (false, length, 0, false);
         }
 
-        for (uint256 i; i < portfolio.length; i++) {
+        for (uint256 i; i < length; i++) {
             Common.Asset storage t = portfolio[i];
             if (t.futureCashGroupId != futureCashGroupId) continue;
             if (t.instrumentId != instrumentId) continue;
             if (t.maturity != maturity) continue;
 
-            if (t.swapType == swapType) {
-                return (t, i, false);
-            } else if (findCounterparty && t.swapType == Common.makeCounterparty(swapType)) {
-                return (t, i, true);
+            bytes1 s = t.swapType;
+            if (s == swapType) {
+                return (true, i, t.notional, false);
+            } else if (findCounterparty && s == Common.makeCounterparty(swapType)) {
+                return (true, i, t.notional, true);
             }
         }
 
-        return (NULL_ASSET, portfolio.length, false);
+        return (false, length, 0, false);
     }
 
     /**
@@ -861,7 +893,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
      * @param asset the new asset to add
      */
     function _upsertAsset(Common.Asset[] storage portfolio, Common.Asset memory asset) internal {
-        (Common.Asset storage matchedAsset, uint256 index, bool isCounterparty) = _searchAsset(
+        (bool found, uint256 index, uint128 notional, bool isCounterparty) = _searchAsset(
             portfolio,
             asset.swapType,
             asset.futureCashGroupId,
@@ -870,11 +902,11 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
             true
         );
 
-        if (matchedAsset.swapType == 0x00) {
+        if (!found) {
             // This is the NULL_ASSET so we append. This restriction should never work against extracting
             // cash or liquidation because in those cases we will always be trading offsetting positions
-            // rather than adding new positions.
-            require(portfolio.length <= G_MAX_ASSETS, $$(ErrorCode(PORTFOLIO_TOO_LARGE)));
+            // rather than adding new positions. (Index will return length when asset is not found)
+            require(index <= G_MAX_ASSETS, $$(ErrorCode(PORTFOLIO_TOO_LARGE)));
 
             if (Common.isLiquidityToken(asset.swapType) && Common.isPayer(asset.swapType)) {
                 // You cannot have a payer liquidity token without an existing liquidity token entry in
@@ -886,19 +918,19 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
             portfolio.push(asset);
         } else if (!isCounterparty) {
             // If the asset types match, then just aggregate the notional amounts.
-            matchedAsset.notional = matchedAsset.notional.add(asset.notional);
+            portfolio[index].notional = notional.add(asset.notional);
         } else {
-            if (matchedAsset.notional >= asset.notional) {
+            if (notional >= asset.notional) {
                 // We have enough notional of the asset to reduce or remove the asset.
-                _reduceAsset(portfolio, matchedAsset, index, asset.notional);
+                _reduceAsset(portfolio, portfolio[index], index, asset.notional);
             } else if (Common.isLiquidityToken(asset.swapType)) {
                 // Liquidity tokens cannot go below zero.
                 revert($$(ErrorCode(INSUFFICIENT_BALANCE)));
             } else if (Common.isCash(asset.swapType)) {
                 // Otherwise, we need to flip the sign of the swap and set the notional amount
                 // to the difference.
-                matchedAsset.notional = asset.notional.sub(matchedAsset.notional);
-                matchedAsset.swapType = asset.swapType;
+                portfolio[index].notional = asset.notional.sub(notional);
+                portfolio[index].swapType = asset.swapType;
             }
         }
     }

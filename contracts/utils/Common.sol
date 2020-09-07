@@ -34,8 +34,6 @@ library Common {
         int256 requirement;
         // The net present value of the assets in the portfolio in this currency
         int256 npv;
-        // The cash ladder for this currency
-        int256[] cashLadder;
     }
 
     /**
@@ -77,8 +75,6 @@ library Common {
         address futureCashMarket;
         // The currency group identifier for this future cash group
         uint16 currency;
-        // The address where the risk formula is stored
-        address riskFormula;
     }
 
     /**

@@ -122,7 +122,7 @@ describe("Deposits and Withdraws", () => {
     });
 
     it("does not allow invalid currencies to be listed in future cash markets", async () => {
-        await expect(portfolios.createFutureCashGroup(2, 100, 1e9, 2, AddressZero, AddressZero)).to.be.revertedWith(
+        await expect(portfolios.createFutureCashGroup(2, 100, 1e9, 2, AddressZero)).to.be.revertedWith(
             ErrorDecoder.decodeError(ErrorCodes.INVALID_CURRENCY)
         );
     });

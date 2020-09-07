@@ -29,6 +29,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
     using SafeUInt128 for uint128;
     using SafeMath for uint256;
     using SafeInt256 for int256;
+    using SafeUInt128 for uint128;
 
     uint256 private constant UINT256_MAX = 2**256 - 1;
 
@@ -161,7 +162,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
      * used locally in the settlement and liquidation calculations when we pull local currency liquidity tokens.
      */
     function setLiquidityHaircut(uint128 haircut) external override {
-        require(calledByRisk(), $$(ErrorCode(UNAUTHORIZED_CALLER)));
+        require(calledByPortfolios(), $$(ErrorCode(UNAUTHORIZED_CALLER)));
         G_LIQUIDITY_HAIRCUT = haircut;
     }
 
@@ -656,7 +657,6 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         require(isValidCurrency(depositCurrency), $$(ErrorCode(INVALID_CURRENCY)));
         require(currency != depositCurrency, $$(ErrorCode(INVALID_CURRENCY)));
 
-        Portfolios().settleMaturedAssetsBatch(payers);
         uint128[] memory settledAmounts = new uint128[](values.length);
 
         for (uint256 i; i < payers.length; i++) {
@@ -705,7 +705,6 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         // We must always ensure that accounts are settled when we settle cash balances because
         // matured assets that are not converted to cash may cause the _settleCashBalance function
         // to trip into settling with the reserve account.
-        Portfolios().settleMaturedAssets(payer);
         uint128 settledAmount = _settleCashBalance(currency, depositCurrency, payer, value);
 
         require(_freeCollateral(msg.sender) >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL_FOR_SETTLER)));
@@ -728,8 +727,8 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         if (valueToSettle == 0) return 0;
 
         // This cash account must have enough negative cash to settle against
+        (int256 freeCollateral, int256[] memory netCurrencyAvailable, int256[] memory cashClaims) = Portfolios().freeCollateral(payer);
         require(cashBalances[currency][payer] <= int256(valueToSettle).neg(), $$(ErrorCode(INCORRECT_CASH_BALANCE)));
-        (int256 freeCollateral, int256[] memory netCurrencyAvailable, int256[] memory cashClaims) = Portfolios().freeCollateralView(payer);
 
         uint128 settledAmount;
         if (cashClaims[currency] > 0) {
@@ -984,11 +983,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
      * @return amount of free collateral
      */
     function _freeCollateral(address account) internal returns (int256) {
-        (
-            int256 fc, /* int256[] memory */, /* int256[] memory */
-
-        ) = Portfolios().freeCollateral(account);
-        return fc;
+        return Portfolios().freeCollateralAggregateOnly(account);
     }
 
     /**

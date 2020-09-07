@@ -1,44 +1,22 @@
 pragma solidity ^0.6.0;
 pragma experimental ABIEncoderV2;
 
-import "./lib/SafeInt256.sol";
-import "./lib/SafeMath.sol";
+import "../lib/SafeInt256.sol";
+import "../lib/SafeMath.sol";
 
-import "./utils/Governed.sol";
-import "./utils/Common.sol";
+import "../utils/Governed.sol";
+import "../utils/Common.sol";
+import "../interface/IPortfoliosCallable.sol";
 
-import "./interface/IRiskFramework.sol";
-
-import "./FutureCash.sol";
+import "../FutureCash.sol";
 
 /**
  * @title Risk Framework
  * @notice Calculates the currency requirements for a portfolio.
  */
-contract RiskFramework is IRiskFramework, Governed {
+library RiskFramework {
     using SafeMath for uint256;
     using SafeInt256 for int256;
-
-    uint128 public G_LIQUIDITY_HAIRCUT;
-
-    /**
-     * @notice Notice for setting haircut amount for liquidity tokens
-     * @param liquidityHaircut amount of haircut applied to liquidity token claims 
-     */
-    event SetLiquidityHaircut(uint128 liquidityHaircut);
-
-    /**
-     * @notice Sets the haircut amount for liquidity token claims, this is set to a percentage
-     * less than 1e18, for example, a 5% haircut will be set to 0.95e18.
-     * @dev governance
-     * @param haircut amount of negative haircut applied to debt
-     */
-    function setHaircut(uint128 haircut) external onlyOwner {
-        G_LIQUIDITY_HAIRCUT = haircut;
-        Escrow().setLiquidityHaircut(haircut);
-
-        emit SetLiquidityHaircut(haircut);
-    }
 
     /** The cash ladder for a single instrument or future cash group */
     struct CashLadder {
@@ -55,8 +33,20 @@ contract RiskFramework is IRiskFramework, Governed {
      * @param portfolio a portfolio of assets
      * @return a set of requirements in every future cash group represented by the portfolio
      */
-    function getRequirement(Common.Asset[] memory portfolio) public override view returns (Common.Requirement[] memory) {
-        (CashLadder[] memory ladders, int256[] memory npv) = _getCashLadders(portfolio);
+    function getRequirement(
+        Common.Asset[] memory portfolio,
+        uint128 liquidityHaircut,
+        address Portfolios
+    ) public view returns (Common.Requirement[] memory) {
+        Common._sortPortfolio(portfolio);
+
+        // Each position in this array will hold the value of the portfolio in each maturity.
+        (Common.FutureCashGroup[] memory futureCashGroups, CashLadder[] memory ladders) = _fetchFutureCashGroups(
+            portfolio,
+            IPortfoliosCallable(Portfolios)
+        );
+
+        int256[] memory npv = _getCashLadders(portfolio, futureCashGroups, ladders, liquidityHaircut);
 
         // We now take the per future cash group cash ladder and summarize it into a single requirement. The future
         // cash group requirements will be aggregated into a single currency requirement in the free collateral function
@@ -65,7 +55,6 @@ contract RiskFramework is IRiskFramework, Governed {
         for (uint256 i; i < ladders.length; i++) {
             requirements[i].currency = ladders[i].currency;
             requirements[i].npv = npv[i];
-            requirements[i].cashLadder = ladders[i].cashLadder;
 
             for (uint256 j; j < ladders[i].cashLadder.length; j++) {
                 // Loop through each period in the cash ladder and add negative balances to the required
@@ -85,18 +74,13 @@ contract RiskFramework is IRiskFramework, Governed {
      * @param portfolio a portfolio of assets
      * @return an array of cash ladders and an npv figure for every future cash group
      */
-    function _getCashLadders(Common.Asset[] memory portfolio)
-        internal
-        view
-        returns (CashLadder[] memory, int256[] memory)
-    {
-        Common._sortPortfolio(portfolio);
+    function _getCashLadders(
+        Common.Asset[] memory portfolio,
+        Common.FutureCashGroup[] memory futureCashGroups,
+        CashLadder[] memory ladders,
+        uint128 liquidityHaircut
+    ) internal view returns (int256[] memory) {
         uint32 blockTime = uint32(block.timestamp);
-
-        // Each position in this array will hold the value of the portfolio in each maturity.
-        (Common.FutureCashGroup[] memory futureCashGroups, CashLadder[] memory ladders) = _fetchFutureCashGroups(
-            portfolio
-        );
 
         // This will hold the current collateral balance.
         int256[] memory npv = new int256[](ladders.length);
@@ -114,8 +98,8 @@ contract RiskFramework is IRiskFramework, Governed {
             (int256 cashAmount, int256 npvAmount) = _calculateAssetValue(
                 portfolio[i],
                 futureCashGroups[groupIndex],
-                portfolio[i].maturity,
-                blockTime
+                blockTime,
+                liquidityHaircut
             );
 
             npv[groupIndex] = npv[groupIndex].add(npvAmount);
@@ -135,21 +119,21 @@ contract RiskFramework is IRiskFramework, Governed {
             }
         }
 
-        return (ladders, npv);
+        return npv;
     }
 
     function _calculateAssetValue(
         Common.Asset memory asset,
         Common.FutureCashGroup memory fg,
-        uint32 maturity,
-        uint32 blockTime
+        uint32 blockTime,
+        uint128 liquidityHaircut
     ) internal view returns (int256, int256) {
         // This is the offset in the cash ladder
         int256 npv;
         int256 futureCash;
 
         if (Common.isLiquidityToken(asset.swapType)) {
-            (npv, futureCash) = _calculateLiquidityTokenClaims(asset, fg.futureCashMarket, maturity, blockTime);
+            (npv, futureCash) = _calculateLiquidityTokenClaims(asset, fg.futureCashMarket, blockTime, liquidityHaircut);
         } else if (Common.isCash(asset.swapType)) {
             futureCash = Common.isPayer(asset.swapType) ? int256(asset.notional).neg() : asset.notional;
         }
@@ -160,28 +144,28 @@ contract RiskFramework is IRiskFramework, Governed {
     function _calculateLiquidityTokenClaims(
         Common.Asset memory asset,
         address futureCashMarket,
-        uint32 maturity,
-        uint32 blockTime
+        uint32 blockTime,
+        uint128 liquidityHaircut
     ) internal view returns (uint128, uint128) {
-        FutureCash.Market memory market = FutureCash(futureCashMarket).getMarket(maturity);
+        FutureCash.Market memory market = FutureCash(futureCashMarket).getMarket(asset.maturity);
 
         uint256 collateralClaim;
         uint256 futureCashClaim;
 
-        if (blockTime < maturity) {
+        if (blockTime < asset.maturity) {
             // We haircut these amounts because it is uncertain how much claim either of these will actually have
             // when it comes to reclaim the liquidity token. For example, there may be less collateral in the pool
             // relative to future cash due to trades that have happened between the initial free collateral check
             // and the liquidation.
             collateralClaim = uint256(market.totalCollateral)
                 .mul(asset.notional)
-                .mul(G_LIQUIDITY_HAIRCUT)
+                .mul(liquidityHaircut)
                 .div(Common.DECIMALS)
                 .div(market.totalLiquidity);
 
             futureCashClaim = uint256(market.totalFutureCash)
                 .mul(asset.notional)
-                .mul(G_LIQUIDITY_HAIRCUT)
+                .mul(liquidityHaircut)
                 .div(Common.DECIMALS)
                 .div(market.totalLiquidity);
         } else {
@@ -197,11 +181,10 @@ contract RiskFramework is IRiskFramework, Governed {
         return (uint128(collateralClaim), uint128(futureCashClaim));
     }
 
-    function _fetchFutureCashGroups(Common.Asset[] memory portfolio)
-        internal
-        view
-        returns (Common.FutureCashGroup[] memory, CashLadder[] memory)
-    {
+    function _fetchFutureCashGroups(
+        Common.Asset[] memory portfolio,
+        IPortfoliosCallable Portfolios
+    ) internal view returns (Common.FutureCashGroup[] memory, CashLadder[] memory) {
         uint8[] memory groupIds = new uint8[](portfolio.length);
         uint256 numGroups;
 
@@ -219,7 +202,7 @@ contract RiskFramework is IRiskFramework, Governed {
             requestGroups[i] = groupIds[i];
         }
 
-        Common.FutureCashGroup[] memory fgs = Portfolios().getFutureCashGroups(requestGroups);
+        Common.FutureCashGroup[] memory fgs = Portfolios.getFutureCashGroups(requestGroups);
 
         CashLadder[] memory ladders = new CashLadder[](fgs.length);
         for (uint256 i; i < ladders.length; i++) {

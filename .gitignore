@@ -8,3 +8,5 @@ sandbox/build
 !.env.local
 coverage
 coverage.json
+gasprofile/.cid
+gasprofile/gaslog.csv

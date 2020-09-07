@@ -73,7 +73,7 @@ contract ERC1155Trade is ERC1155Base {
         if (deposits.length > 0 || msg.value != 0) Escrow().depositsOnBehalf{value: msg.value}(account, deposits);
         if (trades.length > 0) _batchTrade(account, trades);
 
-        (int256 fc, /* int256[] memory */, /* int256[] memory */) = Portfolios().freeCollateral(account);
+        int256 fc = Portfolios().freeCollateralAggregateOnly(account);
         require(fc >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL)));
 
         emit BatchOperation(account, msg.sender);
@@ -123,7 +123,7 @@ contract ERC1155Trade is ERC1155Base {
             Escrow().withdrawsOnBehalf(account, withdraws);
         }
 
-        (int256 fc, /* int256[] memory */, /* int256[] memory */) = Portfolios().freeCollateral(account);
+        int256 fc = Portfolios().freeCollateralAggregateOnly(account);
         require(fc >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL)));
 
         emit BatchOperation(account, msg.sender);

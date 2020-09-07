@@ -81,8 +81,9 @@ module.exports = {
         target: "ethers-v4"
     },
     gasReporter: {
-        url: "http://localhost:9545",
-        enabled: process.env.REPORT_GAS ? true : false
+        enabled: process.env.REPORT_GAS ? true : false,
+        outputFile: "gas-report.txt",
+        noColors: true
     },
     solpp: {
         defs: ErrorCodes

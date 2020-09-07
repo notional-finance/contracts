@@ -26,6 +26,8 @@ interface IPortfoliosCallable {
 
     function freeCollateralView(address account) external view returns (int256, int256[] memory, int256[] memory);
 
+    function freeCollateralAggregateOnly(address account) external returns (int256);
+
     function setNumCurrencies(uint16 numCurrencies) external;
 
     function transferAccountAsset(

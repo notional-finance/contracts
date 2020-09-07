@@ -886,7 +886,7 @@ describe("ERC1155 Token", () => {
             )
 
             // Creates an idiosyncratic future cash group with a max period size of 1 year.
-            await portfolios.createFutureCashGroup(1, 31_536_000, 1e9, 1, AddressZero, AddressZero);
+            await portfolios.createFutureCashGroup(1, 31_536_000, 1e9, 1, AddressZero);
 
             cashPayerIdiosyncraticAssetId = await erc1155trade["encodeAssetId(uint8,uint16,uint32,bytes1)"](
                 2, 0, maturities[0] + 100, SwapType.CASH_PAYER

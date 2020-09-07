@@ -2,7 +2,7 @@ import chai from "chai";
 import { solidity } from "ethereum-waffle";
 import { fixture, wallets, fixtureLoader, provider, CURRENCY, fastForwardToMaturity } from "./fixtures";
 import { Wallet } from "ethers";
-import { WeiPerEther, AddressZero } from "ethers/constants";
+import { WeiPerEther } from "ethers/constants";
 
 import { Erc20 as ERC20 } from "../typechain/Erc20";
 import { FutureCash } from "../typechain/FutureCash";
@@ -11,7 +11,6 @@ import { Escrow } from "../typechain/Escrow";
 import { Portfolios } from "../typechain/Portfolios";
 import { TestUtils, BLOCK_TIME_LIMIT } from "./testUtils";
 import { parseEther, BigNumber } from 'ethers/utils';
-import { RiskFramework } from '../typechain/RiskFramework';
 import { Iweth } from '../typechain/Iweth';
 
 chai.use(solidity);
@@ -27,7 +26,6 @@ describe("Portfolio", () => {
     let escrow: Escrow;
     let portfolios: Portfolios;
     let t: TestUtils;
-    let risk: RiskFramework;
     let maturities: number[];
     let weth: Iweth;
 
@@ -41,7 +39,6 @@ describe("Portfolio", () => {
         futureCash = objs.futureCash;
         escrow = objs.escrow;
         portfolios = objs.portfolios;
-        risk = objs.swapnet.risk;
         weth = objs.weth;
 
         await dai.transfer(wallet.address, WeiPerEther.mul(10_000));
@@ -88,23 +85,22 @@ describe("Portfolio", () => {
 
     it("does not allow future cash groups with invalid currencies", async () => {
         await expect(
-            portfolios.createFutureCashGroup(2, 40, 1e9, 3, futureCash.address, AddressZero)
+            portfolios.createFutureCashGroup(2, 40, 1e9, 3, futureCash.address)
         ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INVALID_CURRENCY));
     });
 
     it("allows future cash groups to be updated", async () => {
         await expect(
-            portfolios.updateFutureCashGroup(1, 0, 1000, 1e8, CURRENCY.DAI, futureCash.address, owner.address)
+            portfolios.updateFutureCashGroup(1, 0, 1000, 1e8, CURRENCY.DAI, futureCash.address)
         ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INVALID_INSTRUMENT_PRECISION));
 
-        await portfolios.updateFutureCashGroup(1, 0, 1000, 1e9, CURRENCY.DAI, futureCash.address, owner.address);
+        await portfolios.updateFutureCashGroup(1, 0, 1000, 1e9, CURRENCY.DAI, futureCash.address);
         expect(await portfolios.getFutureCashGroup(1)).to.eql([
             0,
             1000,
             1e9,
             futureCash.address,
-            CURRENCY.DAI,
-            owner.address
+            CURRENCY.DAI
         ]);
     });
 
@@ -127,7 +123,7 @@ describe("Portfolio", () => {
 
         beforeEach(async () => { 
             await t.setupLiquidity(owner, 0.5, parseEther("10000"), [0, 1, 2]);
-            await risk.setHaircut(WeiPerEther);
+            await portfolios.setHaircut(WeiPerEther);
         })
 
         it("cash = 0, npv = 0, requirement = 100 | available = -100", async () => {

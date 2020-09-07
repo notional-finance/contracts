@@ -62,31 +62,19 @@ async function main() {
         new BigNumber(2.5 * BASIS_POINT),
         new BigNumber(0),
         1e9,
-        1_007_974_140,
+        1_100_000_000,
         85
     );
 
     await swapnet.deployFutureCashMarket(
         currencyId,
-        1,
-        ONE_MONTH * 3,
+        2,
+        ONE_MONTH * 3 + 3600,
         parseEther("1000"),
         new BigNumber(2.5 * BASIS_POINT * 3),
         new BigNumber(0),
         1e9,
-        1_024_113_689,
-        85
-    );
-
-    await swapnet.deployFutureCashMarket(
-        currencyId,
-        1,
-        ONE_MONTH * 6,
-        parseEther("1000"),
-        new BigNumber(2.5 * BASIS_POINT * 6),
-        new BigNumber(0),
-        1e9,
-        1_048_808_848,
+        1_100_000_000,
         85
     );
 

@@ -362,7 +362,7 @@ describe("Multi Currency", () => {
 
         await escrow.connect(wallet).withdraw(weth.address, parseEther("3.3325"));
         await chainlink[1].setAnswer(parseEther("0.0108"));
-        await swapnet.risk.setHaircut(parseEther("0.7"));
+        await portfolios.setHaircut(parseEther("0.7"));
 
         const fcBefore = await portfolios.freeCollateralView(wallet.address);
         await escrow.connect(wallet2).liquidate(wallet.address, CURRENCY.USDC, CURRENCY.DAI)
