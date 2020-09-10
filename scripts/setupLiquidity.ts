@@ -12,9 +12,10 @@ import { Erc20 } from '../typechain/Erc20';
 import { parseEther } from 'ethers/utils';
 import defaultAccounts from "../test/defaultAccounts.json";
 import { Iweth } from '../typechain/Iweth';
+import { MaxUint256 } from 'ethers/constants';
 
 
-const log = Debug("deploy:setupLocal");
+const log = Debug("deploy:liquidity");
 const envPath = `${process.env.DOTENV_CONFIG_PATH}`
 log(`Loading enviromnent from ${envPath} from ${process.cwd()}`);
 config({path: envPath});
@@ -27,11 +28,11 @@ async function main() {
     process.env.TESTNET_PRIVATE_KEY as string,
     provider
   );
-  const swapnet = await SwapnetDeployer.restoreFromFile(path.join(__dirname, "../local.json"), account);
+  const swapnet = await SwapnetDeployer.restoreFromFile(path.join(__dirname, "../" + process.env.CONTRACTS_FILE as string), account);
   const daiToken = new Contract(await swapnet.escrow.currencyIdToAddress(1), ERC20Artifact.abi, account) as Erc20;
 
-  await daiToken.approve(swapnet.escrow.address, parseEther("10000000"));
-  await swapnet.escrow.deposit(daiToken.address, parseEther("6000000"));
+  await txMined(daiToken.approve(swapnet.escrow.address, MaxUint256));
+  await txMined(swapnet.escrow.deposit(daiToken.address, parseEther("6000000")));
   log("Adding $2M liquidity to 1M Dai market");
   await initializeLiquidity(1, swapnet, account, 0);
   log("Adding $2M liquidity to 3M Dai market");
@@ -39,11 +40,14 @@ async function main() {
   log("Adding $2M liquidity to 6M Dai market");
   await initializeLiquidity(2, swapnet, account, 1);
 
-  log("Adding ETH into WETH for Wallet 2");
-  const testAccount = new Wallet(defaultAccounts[1].secretKey, provider);
-  const wethAddress = await swapnet.escrow.WETH();
-  const wethToken = new Contract(wethAddress, WETHArtifact.abi, testAccount) as Iweth;
-  await wethToken.connect(testAccount).deposit({value: parseEther("5000")});
+  const chainId = process.env.DEPLOY_CHAIN_ID as string;
+  if (chainId == "1337") {
+    log("Adding ETH into WETH for Wallet 2");
+    const testAccount = new Wallet(defaultAccounts[1].secretKey, provider);
+    const wethAddress = await swapnet.escrow.WETH();
+    const wethToken = new Contract(wethAddress, WETHArtifact.abi, testAccount) as Iweth;
+    await txMined(wethToken.connect(testAccount).deposit({value: parseEther("5000")}));
+  }
 }
 
 async function initializeLiquidity(futureCashGroup: number, swapnet: SwapnetDeployer, account: Wallet, offset: number) {

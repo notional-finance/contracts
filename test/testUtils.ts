@@ -2,15 +2,15 @@ import { Escrow } from "../typechain/Escrow";
 import { FutureCash } from "../typechain/FutureCash";
 import { Portfolios } from "../typechain/Portfolios";
 import { Wallet } from "ethers";
-import { MockAggregator } from "../typechain/MockAggregator";
-import { Erc20 as ERC20 } from "../typechain/Erc20";
+import { MockAggregator } from "../mocks/MockAggregator";
+import {Ierc20 as ERC20} from "../typechain/Ierc20";
 import { WeiPerEther } from "ethers/constants";
 import { BigNumber, parseEther } from "ethers/utils";
 import { provider, CURRENCY, fastForwardToMaturity } from "./fixtures";
 import {Iweth as IWETH} from "../typechain/Iweth";
 import { debug } from 'debug';
 
-const log = debug("testutils");
+const log = debug("test:testutils");
 
 // This will stop working in 2033 :)
 export const BLOCK_TIME_LIMIT = 2_000_000_000;
@@ -26,7 +26,7 @@ export class TestUtils {
         public escrow: Escrow,
         public futureCash: FutureCash,
         public portfolios: Portfolios,
-        public dai: ERC20,
+        public token: ERC20,
         public owner: Wallet,
         public chainlink: MockAggregator,
         public weth: IWETH,
@@ -43,7 +43,7 @@ export class TestUtils {
         const futureCashAmount = collateralAmount.mul(targetProportion / (1 - targetProportion));
 
         for (let m of maturityOffsets) {
-            await this.escrow.connect(lp).deposit(this.dai.address, collateralAmount);
+            await this.escrow.connect(lp).deposit(this.token.address, collateralAmount);
             await this.futureCash
                 .connect(lp)
                 .addLiquidity(maturities[m], collateralAmount, futureCashAmount, 0, 100_000_000, BLOCK_TIME_LIMIT);
@@ -58,16 +58,21 @@ export class TestUtils {
         impliedRateLimit = IMPLIED_RATE_LIMIT
     ) {
         const exchangeRate = await this.chainlink.latestAnswer();
-        const haircut = (await this.escrow.getExchangeRate(CURRENCY.DAI, CURRENCY.ETH)).haircut;
+        const erObj = (await this.escrow.getExchangeRate(this.currencyId, CURRENCY.ETH));
+        const tokenDecimals = (await this.escrow.currencyIdToDecimals(this.currencyId));
         const maturities = await this.futureCash.getActiveMaturities();
 
         const ethAmount = borrowFutureCash
             .mul(exchangeRate)
+            .mul(erObj.haircut)
+            .div(erObj.rateDecimals)
             .div(WeiPerEther)
-            .mul(haircut)
-            .div(WeiPerEther)
+            .mul(WeiPerEther)
+            .div(tokenDecimals)
             .mul(parseEther(collateralRatio.toString()))
             .div(WeiPerEther);
+
+        log(`Borrowing ${borrowFutureCash.toString()} for ${ethAmount} ETH at maturity ${maturities[maturityOffset]}`);
 
         await this.escrow.connect(wallet).depositEth({value: ethAmount});
         const beforeAmount = await this.escrow.cashBalances(this.currencyId, wallet.address);
@@ -79,7 +84,7 @@ export class TestUtils {
         );
 
         // Remove the dai so only the ETH is collateralizing the CASH_PAYER
-        await this.escrow.connect(wallet).withdraw(this.dai.address, collateralAmount);
+        await this.escrow.connect(wallet).withdraw(this.token.address, collateralAmount);
 
         return [ethAmount, collateralAmount];
     }
@@ -105,7 +110,7 @@ export class TestUtils {
     public async checkBalanceIntegrity(accounts: Wallet[], additionalMarket?: string) {
         await this.portfolios.settleMaturedAssetsBatch(accounts.map((a) => a.address));
 
-        const totalDaiBalance = await this.dai.balanceOf(this.escrow.address);
+        const totalDaiBalance = await this.token.balanceOf(this.escrow.address);
         log(`Total Dai Balance: ${totalDaiBalance}`)
         let escrowDaiBalance = new BigNumber(0);
         for (let a of accounts) {
@@ -273,12 +278,12 @@ export class TestUtils {
         futureCashAmount: BigNumber
     ) {
         await this.escrow.setReserveAccount(reserve.address);
-        await this.escrow.connect(reserve).deposit(this.dai.address, WeiPerEther.mul(1000));
+        await this.escrow.connect(reserve).deposit(this.token.address, WeiPerEther.mul(1000));
 
         const maturities = await this.futureCash.getActiveMaturities();
         await this.borrowAndWithdraw(wallet, borrowAmount);
 
-        await this.escrow.connect(wallet).deposit(this.dai.address, futureCashAmount);
+        await this.escrow.connect(wallet).deposit(this.token.address, futureCashAmount);
         await this.futureCash
             .connect(wallet)
             .takeFutureCash(maturities[1], futureCashAmount, BLOCK_TIME_LIMIT, 0);

@@ -6,8 +6,8 @@ import { WeiPerEther, AddressZero } from "ethers/constants";
 
 import ERC777Artifact from "../mocks/ERC777.json";
 import MockUSDC from "../mocks/MockUSDC.json";
-import MockAggregatorArtifact from "../build/MockAggregator.json";
-import {Erc20 as ERC20} from "../typechain/Erc20";
+import MockAggregatorArtifact from "../mocks/MockAggregator.json";
+import {Ierc20 as ERC20} from "../typechain/Ierc20";
 import {Iweth as IWETH} from "../typechain/Iweth";
 import {FutureCash} from "../typechain/FutureCash";
 import {ErrorDecoder, ErrorCodes} from "../scripts/errorCodes";
@@ -16,7 +16,7 @@ import {Portfolios} from "../typechain/Portfolios";
 import {TestUtils} from "./testUtils";
 import {parseEther, BigNumber} from "ethers/utils";
 import {Ierc1820Registry as IERC1820Registry} from "../typechain/Ierc1820Registry";
-import {MockAggregator} from "../typechain/MockAggregator";
+import {MockAggregator} from "../mocks/MockAggregator";
 
 chai.use(solidity);
 const { expect } = chai;

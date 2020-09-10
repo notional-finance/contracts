@@ -1,14 +1,16 @@
 pragma solidity ^0.6.0;
 
+// import "../contracts/interface/IERC20.sol";
+// import "../contracts/upgradeable/Ownable.sol";
+// import "../contracts/lib/SafeMath.sol";
 import "../interface/IERC20.sol";
 import "../upgradeable/Ownable.sol";
-import "./SafeMath.sol";
+import "../lib/SafeMath.sol";
 
-
-contract ERC20 is IERC20, OpenZeppelinUpgradesOwnable {
+contract MockWBTC is IERC20, OpenZeppelinUpgradesOwnable {
     using SafeMath for uint256;
 
-    uint256 public constant FAUCET_AMOUNT = 1e18 * 100;
+    uint256 public constant FAUCET_AMOUNT = 1e8 * 100;
     uint256 private _totalSupply = 10000000000000000000000000000000000;
     mapping(address => uint256) private _balances;
     mapping(address => mapping(address => uint256)) private _allowances;
@@ -33,11 +35,15 @@ contract ERC20 is IERC20, OpenZeppelinUpgradesOwnable {
     event Approval(address indexed owner, address indexed spender, uint256 value);
 
     function name() external override view returns (string memory) {
-        return "Test Dai";
+        return "Wrapped BTC";
+    }
+
+    function symbol() external override view returns (string memory) {
+        return "WBTC";
     }
 
     function decimals() external override view returns (uint8) {
-        return 18;
+        return 8;
     }
 
     /**
@@ -136,7 +142,6 @@ contract ERC20 is IERC20, OpenZeppelinUpgradesOwnable {
         require(sender != address(0), "ERC20: transfer from zero address");
         require(recipient != address(0), "ERC20: send to zero address");
 
-        // TODO: there is something wrong with this ERC20 contract and the interaction with uniswap
         _balances[sender] = _balances[sender].sub(amount, "ERC20: transfer exceeds balance");
         _balances[recipient] = _balances[recipient].add(amount);
         emit Transfer(sender, recipient, _balances[sender]);

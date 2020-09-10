@@ -387,9 +387,9 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
     }
 
     function _deposit(address to, address token, uint128 amount) internal {
-        uint16 currencyGroupId = addressToCurrencyId[token];
+        uint16 currencyId = addressToCurrencyId[token];
         TokenOptions memory tokenOptions = tokenOptions[token];
-        if (currencyGroupId == 0 && token != WETH && !tokenOptions.isERC777) {
+        if (currencyId == 0 && token != WETH && !tokenOptions.isERC777) {
             revert($$(ErrorCode(INVALID_CURRENCY)));
         }
 
@@ -401,13 +401,13 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
             uint256 postTransferBalance = IERC20(token).balanceOf(address(this));
 
             amount = SafeCast.toUint128(postTransferBalance.sub(preTransferBalance));
-            cashBalances[currencyGroupId][to] = cashBalances[currencyGroupId][to].add(amount);
+            cashBalances[currencyId][to] = cashBalances[currencyId][to].add(amount);
         } else {
             SafeERC20.safeTransferFrom(IERC20(token), to, address(this), amount);
-            cashBalances[currencyGroupId][to] = cashBalances[currencyGroupId][to].add(amount);
+            cashBalances[currencyId][to] = cashBalances[currencyId][to].add(amount);
         }
 
-        emit Deposit(currencyGroupId, to, amount);
+        emit Deposit(currencyId, to, amount);
     }
 
     /**
@@ -430,13 +430,13 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         uint128 amount,
         bool checkFC
     ) internal {
-        uint16 currencyGroupId = addressToCurrencyId[token];
+        uint16 currencyId = addressToCurrencyId[token];
         require(token != address(0), $$(ErrorCode(INVALID_CURRENCY)));
 
         if (checkFC) Portfolios().settleMaturedAssets(from);
 
-        int256 balance = cashBalances[currencyGroupId][from];
-        cashBalances[currencyGroupId][from] = balance.subNoNeg(amount);
+        int256 balance = cashBalances[currencyId][from];
+        cashBalances[currencyId][from] = balance.subNoNeg(amount);
 
         // We're checking this after the withdraw has been done on currency balances. We skip this check
         // for batch withdraws when we check once after everything is completed.
@@ -451,7 +451,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
             SafeERC20.safeTransfer(IERC20(token), to, amount);
         }
 
-        emit Withdraw(currencyGroupId, to, amount);
+        emit Withdraw(currencyId, to, amount);
     }
 
     /**
@@ -510,11 +510,11 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         bytes calldata, /*userData*/
         bytes calldata /*operatorData*/
     ) external override {
-        uint16 currencyGroupId = addressToCurrencyId[msg.sender];
-        require(currencyGroupId != 0, $$(ErrorCode(INVALID_CURRENCY)));
-        cashBalances[currencyGroupId][from] = cashBalances[currencyGroupId][from].add(SafeCast.toUint128(amount));
+        uint16 currencyId = addressToCurrencyId[msg.sender];
+        require(currencyId != 0, $$(ErrorCode(INVALID_CURRENCY)));
+        cashBalances[currencyId][from] = cashBalances[currencyId][from].add(SafeCast.toUint128(amount));
 
-        emit Deposit(currencyGroupId, from, amount);
+        emit Deposit(currencyId, from, amount);
     }
 
     /********** Withdraw / Deposit Methods ***********/
@@ -888,7 +888,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         uint16 depositCurrency,
         int256 postHaircutCashClaim,
         int256[] memory netCurrencyAvailable,
-        bool liquidate
+        bool isLiquidate
     ) internal returns (uint128) {
         Liquidation.DepositCurrencyParameters memory parameters;
         Liquidation.RateParameters memory rateParameters;
@@ -899,7 +899,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
                 depositCurrency,
                 postHaircutCashClaim,
                 netCurrencyAvailable[depositCurrency],
-                liquidate ? G_LIQUIDATION_DISCOUNT : G_SETTLEMENT_DISCOUNT,
+                isLiquidate ? G_LIQUIDATION_DISCOUNT : G_SETTLEMENT_DISCOUNT,
                 G_LIQUIDITY_HAIRCUT,
                 Portfolios()
             );
@@ -919,7 +919,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         uint128 localCurrencyPurchased;
         uint128 depositCurrencySold;
 
-        if (liquidate) {
+        if (isLiquidate) {
             uint128 localCurrencyHaircut = exchangeRateOracles[localCurrency][0].haircut;
             ( localCurrencyPurchased, depositCurrencySold, payerBalance ) = Liquidation.liquidate(
                 payer,

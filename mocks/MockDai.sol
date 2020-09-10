@@ -1,14 +1,16 @@
 pragma solidity ^0.6.0;
 
+// import "../contracts/interface/IERC20.sol";
+// import "../contracts/upgradeable/Ownable.sol";
+// import "../contracts/lib/SafeMath.sol";
 import "../interface/IERC20.sol";
 import "../upgradeable/Ownable.sol";
-import "./SafeMath.sol";
+import "../lib/SafeMath.sol";
 
-
-contract ERC20 is IERC20, OpenZeppelinUpgradesOwnable {
+contract MockDai is IERC20, OpenZeppelinUpgradesOwnable {
     using SafeMath for uint256;
 
-    uint256 public constant FAUCET_AMOUNT = 1e18 * 100000;
+    uint256 public constant FAUCET_AMOUNT = 1e18 * 100;
     uint256 private _totalSupply = 10000000000000000000000000000000000;
     mapping(address => uint256) private _balances;
     mapping(address => mapping(address => uint256)) private _allowances;

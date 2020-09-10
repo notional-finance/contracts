@@ -12,7 +12,7 @@ import {
 import { Wallet } from "ethers";
 import { WeiPerEther } from "ethers/constants";
 
-import { Erc20 as ERC20 } from "../typechain/Erc20";
+import {Ierc20 as ERC20} from "../typechain/Ierc20";
 import { FutureCash } from "../typechain/FutureCash";
 import { ErrorDecoder, ErrorCodes } from "../scripts/errorCodes";
 import { Escrow } from "../typechain/Escrow";

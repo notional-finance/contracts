@@ -91,14 +91,13 @@ contract FutureCash is Governed {
      * @notice Sets governance parameters on the rate oracle.
      * @dev skip
      * @param futureCashGroupId this cannot change once set
-     * @param instrumentId cannot change once set
      * @param precision will only take effect on a new period
      * @param periodSize will take effect immediately, must be careful
      * @param numPeriods will take effect immediately, makers can create new markets
      */
     function setParameters(
         uint8 futureCashGroupId,
-        uint16 instrumentId,
+        uint16 /* instrumentId */,
         uint32 precision,
         uint32 periodSize,
         uint32 numPeriods,

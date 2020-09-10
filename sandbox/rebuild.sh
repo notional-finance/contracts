@@ -23,7 +23,7 @@ node ../../../node_modules/ganache-cli/cli.js \
     --mnemonic "myth like bonus scare over problem client lizard pioneer submit female collect" &
 
 DEBUG=* DOTENV_CONFIG_PATH=../.env.local ts-node ../scripts/deploy.ts
-DEBUG=* DOTENV_CONFIG_PATH=../.env.local ts-node ../scripts/setupLocal.ts
+DEBUG=* DOTENV_CONFIG_PATH=../.env.local ts-node ../scripts/setupLiquidity.ts
 
 # Stop ganache-cli
 pkill -f ganache-cli

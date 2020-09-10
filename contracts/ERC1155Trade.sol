@@ -18,6 +18,10 @@ import "./FutureCash.sol";
 contract ERC1155Trade is ERC1155Base {
     address public BRIDGE_PROXY;
 
+    constructor(address directory) public {
+        Governed.initialize(directory);
+    }
+
     struct TradeRecord {
         uint16 currencyId;
         Common.TradeType tradeType;

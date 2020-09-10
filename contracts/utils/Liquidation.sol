@@ -42,13 +42,26 @@ library Liquidation {
         uint256 depositDecimals;
     }
 
+    /**
+     * @notice Given an account that has liquidity tokens denominated in the currency, liquidates only enough to
+     * recollateralize the account.
+     * @param account to liquidate
+     * @param parameters paramaters required to complete the calculations
+     * @return (localCurrencyCredit to the account, localCurrencySold by the liquidator, localCurrencyRequired after action, localCurrencyNetAvailable
+     * after the action)
+     */
     function liquidateLocalLiquidityTokens(
         address account,
         LocalTokenParameters memory parameters
     ) public returns (uint128, int256, uint128, int256) {
+        // The amount of local currency that will be credited back to the account
         uint128 localCurrencyCredit;
+        // The amount of local currency the liquidator has "sold". This will be negative because they will
+        // receive the incentive amount. The reason for the inverted logic here is for the second step of liquidation
+        // where local currency is traded and the liquidator will have their account debited.
         int256 localCurrencySold;
 
+        // Calculate amount of liquidity tokens to withdraw and do the action.
         (uint128 cashClaimWithdrawn, uint128 localCurrencyRaised) = Liquidation._localLiquidityTokenTrade(
             account,
             parameters.localCurrency,
@@ -58,6 +71,7 @@ library Liquidation {
             parameters.Portfolios
         );
 
+        // Calculates relevant parameters post trade.
         (
             localCurrencySold,
             localCurrencyCredit,
@@ -74,6 +88,95 @@ library Liquidation {
         return (localCurrencyCredit, localCurrencySold, parameters.localCurrencyRequired, parameters.localCurrencyNetAvailable);
     }
 
+    /** @notice Trades liquidity tokens in order to attempt to raise `localCurrencyRequired` */
+    function _localLiquidityTokenTrade(
+        address account,
+        uint16 currency,
+        uint128 localCurrencyRequired,
+        uint128 liquidityHaircut,
+        uint128 liquidityRepoIncentive,
+        IPortfoliosCallable Portfolios
+    ) internal returns (uint128, uint128) {
+        // We can only recollateralize the local currency using the part of the liquidity token that
+        // between the pre-haircut cash claim and the post-haircut cash claim.
+        // cashClaim - cashClaim * haircut = required * (1 + incentive)
+        // cashClaim * (1 - haircut) = required * (1 + incentive)
+        // cashClaim = required * (1 + incentive) / (1 - haircut)
+        uint128 cashClaimsToTrade = SafeCast.toUint128(
+            uint256(localCurrencyRequired)
+                .mul(liquidityRepoIncentive)
+                .div(Common.DECIMALS.sub(liquidityHaircut))
+        );
+
+        uint128 remainder = Portfolios.raiseCollateralViaLiquidityToken(
+            account,
+            currency,
+            cashClaimsToTrade
+        );
+
+        uint128 localCurrencyRaised;
+        uint128 cashClaimWithdrawn = cashClaimsToTrade.sub(remainder);
+        if (remainder > 0) {
+            // cashClaim = required * (1 + incentive) / (1 - haircut)
+            // (cashClaim - remainder) = (required - delta) * (1 + incentive) / (1 - haircut)
+            // cashClaimWithdrawn = (required - delta) * (1 + incentive) / (1 - haircut)
+            // cashClaimWithdrawn * (1 - haircut) = (required - delta) * (1 + incentive)
+            // cashClaimWithdrawn * (1 - haircut) / (1 + incentive) = (required - delta) = localCurrencyRaised
+            localCurrencyRaised = SafeCast.toUint128(
+                uint256(cashClaimWithdrawn)
+                    .mul(Common.DECIMALS.sub(liquidityHaircut))
+                    .div(liquidityRepoIncentive)
+            );
+        } else {
+            localCurrencyRaised = localCurrencyRequired;
+        }
+
+        return (cashClaimWithdrawn, localCurrencyRaised);
+    }
+
+    function _calculatePostTradeFactors(
+        uint128 cashClaimWithdrawn,
+        int256 netCurrencyAvailable,
+        uint128 localCurrencyRequired,
+        uint128 localCurrencyRaised,
+        uint128 liquidityHaircut
+    ) internal pure returns (int256, uint128, int256, uint128) {
+        // This is the portion of the cashClaimWithdrawn that is available to recollateralize the account.
+        // cashClaimWithdrawn = value * (1 + incentive) / (1 - haircut)
+        // cashClaimWithdrawn * (1 - haircut) = value * (1 + incentive)
+        uint128 haircutClaimAmount = SafeCast.toUint128(
+            uint256(cashClaimWithdrawn)
+                .mul(Common.DECIMALS.sub(liquidityHaircut))
+                .div(Common.DECIMALS)
+        );
+
+
+        // This is the incentive paid to the liquidator for extracting liquidity tokens.
+        uint128 incentive = haircutClaimAmount.sub(localCurrencyRaised);
+
+        return (
+            // This is negative because we use it to offset what the liquidator may deposit into the account
+            int256(incentive).neg(),
+            // This is what will be credited back to the account
+            cashClaimWithdrawn.sub(incentive),
+            // The haircutClaimAmount - incentive is added to netCurrencyAvailable because it is now recollateralizing the account. This
+            // is used in the next step to guard against raising too much local currency (to the point where netCurrencyAvailable is positive)
+            // such that additional local currency does not actually help the account's free collateral position.
+            netCurrencyAvailable.add(haircutClaimAmount).sub(incentive),
+            // The new local currency required is what we required before minus the amount we added to netCurrencyAvailable to
+            // recollateralize the account in the previous step.
+            localCurrencyRequired.add(incentive).sub(haircutClaimAmount)
+        );
+    }
+
+    /**
+     * @notice Trades local currency for deposit currency for a payer in order to recollateralize the account.
+     * @param payer account that is being liquidated
+     * @param payerBalance payer's deposit currency account balance
+     * @param localCurrencyHaircut the haircut given to a local currency
+     * @param param deposit currency parameters
+     * @param rateParam deposit currency exchange rate parameters
+     */
     function liquidate(
         address payer,
         int256 payerBalance,
@@ -81,6 +184,8 @@ library Liquidation {
         DepositCurrencyParameters memory param,
         RateParameters memory rateParam
     ) public returns (uint128, uint128, int256) {
+        require(param.localCurrencyAvailable < 0, $$(ErrorCode(INSUFFICIENT_LOCAL_CURRENCY_DEBT)));
+
         param.localCurrencyRequired = _calculateLocalCurrencyToTrade(
             param.localCurrencyRequired,
             param.discountFactor,
@@ -94,6 +199,46 @@ library Liquidation {
             param,
             rateParam
         );
+    }
+
+    function _calculateLocalCurrencyToTrade(
+        uint128 localCurrencyRequired,
+        uint128 liquidationDiscount,
+        uint128 localCurrencyHaircut,
+        uint128 maxLocalCurrencyDebt
+    ) internal pure returns (uint128) {
+        // We calculate the max amount of local currency that the liquidator can trade for here. We set it to the min of the
+        // netCurrencyAvailable and the localCurrencyToTrade figure calculated below. The math for this figure is as follows:
+
+        // The benefit given to free collateral in local currency terms:
+        //   localCurrencyBenefit = localCurrencyToTrade * localCurrencyHaircut
+        // NOTE: this only holds true while maxLocalCurrencyDebt <= 0
+
+        // The penalty for trading deposit currency in local currency terms:
+        //   localCurrencyPenalty = depositCurrencyPurchased * exchangeRate[depositCurrency][localCurrency]
+        //
+        //  netLocalCurrencyBenefit = localCurrencyBenefit - localCurrencyPenalty
+        //
+        // depositCurrencyPurchased = localCurrencyToTrade * exchangeRate[localCurrency][depositCurrency] * liquidationDiscount
+        // localCurrencyPenalty = localCurrencyToTrade * exchangeRate[localCurrency][depositCurrency] * exchangeRate[depositCurrency][localCurrency] * liquidationDiscount
+        // localCurrencyPenalty = localCurrencyToTrade * liquidationDiscount
+        // netLocalCurrencyBenefit =  localCurrencyToTrade * localCurrencyHaircut - localCurrencyToTrade * liquidationDiscount
+        // netLocalCurrencyBenefit =  localCurrencyToTrade * (localCurrencyHaircut - liquidationDiscount)
+        // localCurrencyToTrade =  netLocalCurrencyBenefit / (haircut - discount)
+        //
+        // localCurrencyRequired is netLocalCurrencyBenefit after removing liquidity tokens
+        // localCurrencyToTrade =  localCurrencyRequired / (haircut - discount)
+
+        uint128 localCurrencyToTrade = SafeCast.toUint128(
+            uint256(localCurrencyRequired)
+                .mul(Common.DECIMALS)
+                .div(localCurrencyHaircut.sub(liquidationDiscount))
+        );
+
+        // We do not trade past the amount of local currency debt the account has or this benefit will not longer be effective.
+        localCurrencyToTrade = maxLocalCurrencyDebt < localCurrencyToTrade ? maxLocalCurrencyDebt : localCurrencyToTrade;
+
+        return localCurrencyToTrade;
     }
 
     function settle(
@@ -149,136 +294,19 @@ library Liquidation {
         return (localToPurchase, depositToSell, newPayerBalance);
     }
 
-    function _localLiquidityTokenTrade(
-        address account,
-        uint16 currency,
-        uint128 localCurrencyRequired,
-        uint128 liquidityHaircut,
-        uint128 liquidityRepoIncentive,
-        IPortfoliosCallable Portfolios
-    ) internal returns (uint128, uint128) {
-        // We can only recollateralize the local currency using the part of the liquidity token that
-        // between the pre-haircut cash claim and the post-haircut cash claim.
-        // cashClaim - cashClaim * haircut = required * (1 + incentive)
-        // cashClaim * (1 - haircut) = required * (1 + incentive)
-        // cashClaim = required * (1 + incentive) / (1 - haircut)
-        uint128 cashClaimsToTrade = SafeCast.toUint128(
-            uint256(localCurrencyRequired)
-                .mul(liquidityRepoIncentive)
-                .div(Common.DECIMALS.sub(liquidityHaircut))
-        );
-
-        uint128 remainder = Portfolios.raiseCollateralViaLiquidityToken(
-            account,
-            currency,
-            cashClaimsToTrade
-        );
-
-        uint128 localCurrencyRaised;
-        uint128 cashClaimWithdrawn = cashClaimsToTrade.sub(remainder);
-        if (remainder > 0) {
-            // cashClaim = required * (1 + incentive) / (1 - haircut)
-            // (cashClaim - remainder) = (required - delta) * (1 + incentive) / (1 - haircut)
-            // cashClaimWithdrawn = (required - delta) * (1 + incentive) / (1 - haircut)
-            // cashClaimWithdrawn * (1 - haircut) = (required - delta) * (1 + incentive)
-            // cashClaimWithdrawn * (1 - haircut) / (1 + incentive) = (required - delta) = localCurrencyRaised
-            localCurrencyRaised = SafeCast.toUint128(
-                uint256(cashClaimWithdrawn)
-                    .mul(Common.DECIMALS.sub(liquidityHaircut))
-                    .div(liquidityRepoIncentive)
-            );
-        } else {
-            localCurrencyRaised = localCurrencyRequired;
-        }
-
-        return (cashClaimWithdrawn, localCurrencyRaised);
-    }
-
-    function _calculatePostTradeFactors(
-        uint128 cashClaimWithdrawn,
-        int256 netCurrencyAvailable,
-        uint128 localCurrencyRequired,
-        uint128 localCurrencyRaised,
-        uint128 liquidityHaircut
-    ) internal pure returns (int256, uint128, int256, uint128) {
-        // This is the portion of the cashClaimWithdrawn that is available to recollateralize the account.
-        // cashClaimWithdrawn = value * (1 + incentive) / (1 - haircut)
-        uint128 haircutClaimAmount = SafeCast.toUint128(
-            uint256(cashClaimWithdrawn)
-                .mul(Common.DECIMALS.sub(liquidityHaircut))
-                .div(Common.DECIMALS)
-        );
-
-
-        // This is the incentive paid to the liquidator for extracting liquidity tokens.
-        uint128 incentive = haircutClaimAmount.sub(localCurrencyRaised);
-
-        return (
-            // This is negative because we use it to offset what the liquidator may deposit into the account
-            int256(incentive).neg(),
-            // This is what will be credited back to the account
-            cashClaimWithdrawn.sub(incentive),
-            // The haircutClaimAmount - incentive is added to netCurrencyAvailable because it is now recollateralizing the account. This
-            // is used in the next step to guard against raising too much local currency (to the point where netCurrencyAvailable is positive)
-            // such that additional local currency does not actually help the account's free collateral position.
-            netCurrencyAvailable.add(haircutClaimAmount).sub(incentive),
-            // The new local currency required is what we required before minus the amount we added to netCurrencyAvailable to
-            // recollateralize the account in the previous step.
-            localCurrencyRequired.add(incentive).sub(haircutClaimAmount)
-        );
-    }
-
-    function _calculateLocalCurrencyToTrade(
-        uint128 localCurrencyRequired,
-        uint128 liquidationDiscount,
-        uint128 localCurrencyHaircut,
-        uint128 maxLocalCurrencyDebt
-    ) internal pure returns (uint128) {
-        // We calculate the max amount of local currency that the liquidator can trade for here. We set it to the min of the
-        // netCurrencyAvailable and the localCurrencyToTrade figure calculated below. The math for this figure is as follows:
-
-        // The benefit given to free collateral in local currency terms:
-        //   localCurrencyBenefit = localCurrencyToTrade * localCurrencyHaircut
-        // NOTE: this only holds true while maxLocalCurrencyDebt <= 0
-
-        // The penalty for trading deposit currency in local currency terms:
-        //   localCurrencyPenalty = depositCurrencyPurchased * exchangeRate[depositCurrency][localCurrency]
-        //
-        //  netLocalCurrencyBenefit = localCurrencyBenefit - localCurrencyPenalty
-        //
-        // depositCurrencyPurchased = localCurrencyToTrade * exchangeRate[localCurrency][depositCurrency] * liquidationDiscount
-        // localCurrencyPenalty = localCurrencyToTrade * exchangeRate[localCurrency][depositCurrency] * exchangeRate[depositCurrency][localCurrency] * liquidationDiscount
-        // localCurrencyPenalty = localCurrencyToTrade * liquidationDiscount
-        // netLocalCurrencyBenefit =  localCurrencyToTrade * localCurrencyHaircut - localCurrencyToTrade * liquidationDiscount
-        // netLocalCurrencyBenefit =  localCurrencyToTrade * (localCurrencyHaircut - liquidationDiscount)
-        // localCurrencyToTrade =  netLocalCurrencyBenefit / (haircut - discount)
-        //
-        // localCurrencyRequired is netLocalCurrencyBenefit after removing liquidity tokens
-        // localCurrencyToTrade =  localCurrencyRequired / (haircut - discount)
-
-        uint128 localCurrencyToTrade = SafeCast.toUint128(
-            uint256(localCurrencyRequired)
-                .mul(Common.DECIMALS)
-                .div(localCurrencyHaircut.sub(liquidationDiscount))
-        );
-
-        // We do not trade past the amount of local currency debt the account has or this benefit will not longer be effective.
-        localCurrencyToTrade = maxLocalCurrencyDebt < localCurrencyToTrade ? maxLocalCurrencyDebt : localCurrencyToTrade;
-
-        return localCurrencyToTrade;
-    }
-
     function _calculateLiquidityTokenHaircut(
         int256 postHaircutCashClaim,
         uint128 liquidityHaircut
     ) internal pure returns (uint128) {
         require(postHaircutCashClaim >= 0);
         // liquidityTokenHaircut = cashClaim / haircut - cashClaim
-        //                       = cashClaim * (1  / haircut - 1)
+        uint256 x = uint256(postHaircutCashClaim);
+
         return SafeCast.toUint128(
-            uint256(postHaircutCashClaim)
-                .mul((Common.DECIMALS.mul(Common.DECIMALS)).div(liquidityHaircut)
-                        .sub(Common.DECIMALS))
+            uint256(x)
+                .mul(Common.DECIMALS)
+                .div(liquidityHaircut)
+                .sub(x)
         );
     }
 
@@ -357,14 +385,21 @@ library Liquidation {
                     .div(Common.DECIMALS.sub(param.liquidityHaircut))
             );
 
-            // In this case we partially settle the depositToSell amount
-            localToPurchase = SafeCast.toUint128(
-                uint256(depositToSell)
-                    .mul(rateParam.rateDecimals)
-                    // Discount factor uses 1e18 as its decimal precision
-                    .mul(Common.DECIMALS)
-                    .div(rateParam.rate)
+            // In this case we partially settle the depositToSell amount.
+            // depositDecimals * rateDecimals * 1e18 * localDecimals
+            //         / (rateDecimals * 1e18 * depositDecimals) = localDecimals
+            uint256 x = uint256(depositToSell)
+                .mul(rateParam.rateDecimals)
+                // Discount factor uses 1e18 as its decimal precision
+                .mul(Common.DECIMALS);
+
+            x = x
+                .mul(rateParam.localDecimals)
+                .div(rateParam.rate);
+
+            localToPurchase = SafeCast.toUint128(x
                     .div(param.discountFactor)
+                    .div(rateParam.depositDecimals)
             );
         }
 
@@ -415,10 +450,17 @@ library Liquidation {
             balance = balance.sub(depositToSell);
             creditBalance = true;
         } else {
-            // Override the amountToRaise variable here because we will always spend the entire balance and raise
-            // the remaining amount.
-            amountToRaise = uint128(int256(depositToSell).sub(balance));
-            balance = 0;
+            // If amountToRaise is greater than (depositToSell - balance) this means that we're tapping into the
+            // haircut claim amount. We need to credit back the difference to the account to ensure that the collateral
+            // position does not get worse
+            uint128 tmp = uint128(int256(depositToSell).sub(balance));
+            if (amountToRaise > tmp) {
+                balance = int256(amountToRaise).sub(tmp);
+            } else {
+                amountToRaise = tmp;
+                balance = 0;
+            }
+
             creditBalance = false;
         }
 

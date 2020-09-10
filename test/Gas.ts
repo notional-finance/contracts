@@ -2,7 +2,7 @@ import { fixture, wallets, fixtureLoader, provider, fastForwardToMaturity } from
 import { Wallet } from "ethers";
 import { WeiPerEther } from "ethers/constants";
 
-import {Erc20 as ERC20} from "../typechain/Erc20";
+import {Ierc20 as ERC20} from "../typechain/Ierc20";
 import {FutureCash} from "../typechain/FutureCash";
 import {Escrow} from "../typechain/Escrow";
 import { parseEther } from 'ethers/utils';

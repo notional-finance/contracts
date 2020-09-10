@@ -10,6 +10,8 @@ import "../interface/IPortfoliosCallable.sol";
 
 import "../FutureCash.sol";
 
+import "@openzeppelin/contracts/utils/SafeCast.sol";
+
 /**
  * @title Risk Framework
  * @notice Calculates the currency requirements for a portfolio.
@@ -178,7 +180,7 @@ library RiskFramework {
                 .div(market.totalLiquidity);
         }
 
-        return (uint128(collateralClaim), uint128(futureCashClaim));
+        return (SafeCast.toUint128(collateralClaim), SafeCast.toUint128(futureCashClaim));
     }
 
     function _fetchFutureCashGroups(

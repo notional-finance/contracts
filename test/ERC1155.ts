@@ -4,7 +4,7 @@ import { fixture, wallets, fixtureLoader, provider, fastForwardToMaturity, CURRE
 import { Wallet } from "ethers";
 import { WeiPerEther, AddressZero } from "ethers/constants";
 
-import { Erc20 as ERC20 } from "../typechain/Erc20";
+import { Ierc20 as ERC20 } from "../typechain/Ierc20";
 import { FutureCash } from "../typechain/FutureCash";
 import { ErrorDecoder, ErrorCodes } from "../scripts/errorCodes";
 import { Escrow } from "../typechain/Escrow";
@@ -15,7 +15,7 @@ import { BigNumber, parseEther, defaultAbiCoder } from "ethers/utils";
 
 import ERC1155MockReceiverArtifact from "../mocks/ERC1155MockReceiver.json";
 import { Iweth } from '../typechain/Iweth';
-import { MockAggregator } from '../typechain/MockAggregator';
+import { MockAggregator } from '../mocks/MockAggregator';
 import { Erc1155Trade } from '../typechain/Erc1155Trade';
 
 chai.use(solidity);

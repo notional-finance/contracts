@@ -12,12 +12,12 @@ import {
 import { Wallet } from "ethers";
 import { WeiPerEther } from "ethers/constants";
 
-import { Erc20 as ERC20 } from "../typechain/Erc20";
+import {Ierc20 as ERC20} from "../typechain/Ierc20";
 import { FutureCash } from "../typechain/FutureCash";
 import { ErrorDecoder, ErrorCodes } from "../scripts/errorCodes";
 import { Escrow } from "../typechain/Escrow";
 import { Portfolios } from "../typechain/Portfolios";
-import { MockAggregator } from "../typechain/MockAggregator";
+import { MockAggregator } from "../mocks/MockAggregator";
 import { TestUtils, BLOCK_TIME_LIMIT } from "./testUtils";
 import { parseEther } from "ethers/utils";
 
@@ -216,7 +216,7 @@ describe("Liquidation", () => {
             expect(await t.isCollateralized(wallet)).to.be.false;
         });
 
-        it("[6] should settle cash between accounts when eth must be sold via a third party settler", async () => {
+        it("[6] should settle cash between accounts when eth must be sold", async () => {
             await escrow.connect(wallet2).deposit(dai.address, WeiPerEther.mul(1000));
             const [ethAmount] = await t.borrowAndWithdraw(wallet, WeiPerEther.mul(100), 1.5);
 
@@ -225,11 +225,13 @@ describe("Liquidation", () => {
             const [isSettled] = await t.settleCashBalance(wallet, WeiPerEther.mul(100), wallet2);
             expect(isSettled).to.be.true;
 
-            // Purchased 100 Dai at a price of 1.05 ETH
+            // Purchased 100 Dai at a price of 1.02 ETH
+            const settleDiscount = await escrow.G_SETTLEMENT_DISCOUNT();
+            const ethPurchased = parseEther("1").mul(settleDiscount).div(WeiPerEther);
             expect(await escrow.cashBalances(CURRENCY.ETH, wallet.address)).to.equal(
-                ethAmount.sub(parseEther("1.05"))
+                ethAmount.sub(ethPurchased)
             );
-            expect(await escrow.cashBalances(CURRENCY.ETH, wallet2.address)).to.equal(parseEther("1.05"));
+            expect(await escrow.cashBalances(CURRENCY.ETH, wallet2.address)).to.equal(ethPurchased);
 
             // 100 Dai has been transfered to the owner wallet in exchange for ETH.
             expect(await escrow.cashBalances(CURRENCY.DAI, wallet2.address)).to.equal(WeiPerEther.mul(900));
@@ -386,9 +388,9 @@ describe("Liquidation", () => {
                 .div(WeiPerEther)
                 .div(WeiPerEther);
 
-            // We ignore the last unit of precision here.
-            expect(ethBalanceBefore.sub(ethBalanceAfter).div(10)).to.equal(ethPurchased.div(10));
-            expect(fcBefore[1][1].abs().sub(fcAfter[1][1].abs()).div(10)).to.equal(daiPurchased.div(10));
+            // We ignore the last two units of precision here.
+            expect(ethBalanceBefore.sub(ethBalanceAfter).div(100)).to.equal(ethPurchased.div(100));
+            expect(fcBefore[1][1].abs().sub(fcAfter[1][1].abs()).div(100)).to.equal(daiPurchased.div(100));
         });
 
         it("[3] should account for dai when partially liquidating an account", async () => {

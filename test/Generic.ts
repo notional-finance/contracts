@@ -4,7 +4,7 @@ import { fixture, wallets, fixtureLoader, provider, fastForwardToMaturity } from
 import { Wallet, ethers } from "ethers";
 import { WeiPerEther, AddressZero } from "ethers/constants";
 
-import { Erc20 as ERC20 } from "../typechain/Erc20";
+import {Ierc20 as ERC20} from "../typechain/Ierc20";
 import { FutureCash } from "../typechain/FutureCash";
 import { ProxyAdmin } from "../typechain/ProxyAdmin";
 import FutureCashArtifact from "../build/FutureCash.json";

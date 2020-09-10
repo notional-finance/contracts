@@ -1,9 +1,11 @@
 pragma solidity ^0.6.0;
 
+// import "../contracts/interface/IERC20.sol";
+// import "../contracts/upgradeable/Ownable.sol";
+// import "../contracts/lib/SafeMath.sol";
 import "../interface/IERC20.sol";
 import "../upgradeable/Ownable.sol";
-import "./SafeMath.sol";
-
+import "../lib/SafeMath.sol";
 
 contract MockUSDC is IERC20, OpenZeppelinUpgradesOwnable {
     using SafeMath for uint256;
@@ -33,7 +35,11 @@ contract MockUSDC is IERC20, OpenZeppelinUpgradesOwnable {
     event Approval(address indexed owner, address indexed spender, uint256 value);
 
     function name() external override view returns (string memory) {
-        return "Mock USDC";
+        return "USDC";
+    }
+
+    function symbol() external override view returns (string memory) {
+        return "USDC";
     }
 
     function decimals() external override view returns (uint8) {
