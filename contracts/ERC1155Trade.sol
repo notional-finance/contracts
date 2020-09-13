@@ -25,7 +25,7 @@ contract ERC1155Trade is ERC1155Base {
     struct TradeRecord {
         uint16 currencyId;
         Common.TradeType tradeType;
-        uint128 collateral;
+        uint128 cash;
     }
 
     /**
@@ -51,7 +51,7 @@ contract ERC1155Trade is ERC1155Base {
      * - UNAUTHORIZED_CALLER: operator is not authorized for the account
      * - INVALID_CURRENCY: currency specified in deposits is invalid
      * - MARKET_INACTIVE: maturity is not a valid one
-     * - INSUFFICIENT_BALANCE: insufficient collateral balance (or token balance when removing liquidity)
+     * - INSUFFICIENT_BALANCE: insufficient cash balance (or token balance when removing liquidity)
      * - INSUFFICIENT_FREE_COLLATERAL: account does not have enough free collateral to place the trade
      * - OVER_MAX_FUTURE_CASH: [addLiquidity] future cash amount required exceeds supplied maxFutureCash
      * - OUT_OF_IMPLIED_RATE_BOUNDS: [addLiquidity] depositing collateral would require more future cash than specified
@@ -90,7 +90,7 @@ contract ERC1155Trade is ERC1155Base {
      * - UNAUTHORIZED_CALLER: operator is not authorized for the account
      * - INVALID_CURRENCY: currency specified in deposits is invalid
      * - MARKET_INACTIVE: maturity is not a valid one
-     * - INSUFFICIENT_BALANCE: insufficient collateral balance (or token balance when removing liquidity)
+     * - INSUFFICIENT_BALANCE: insufficient cash balance (or token balance when removing liquidity)
      * - INSUFFICIENT_FREE_COLLATERAL: account does not have enough free collateral to place the trade
      * - OVER_MAX_FUTURE_CASH: [addLiquidity] future cash amount required exceeds supplied maxFutureCash
      * - OUT_OF_IMPLIED_RATE_BOUNDS: [addLiquidity] depositing collateral would require more future cash than specified
@@ -218,7 +218,7 @@ contract ERC1155Trade is ERC1155Base {
 
                 tradeRecord[i].currencyId = fcg.currency;
                 tradeRecord[i].tradeType = Common.TradeType.TakeCollateral;
-                tradeRecord[i].collateral = fc.takeCollateralOnBehalf(account, trades[i].maturity, trades[i].amount, maxRate);
+                tradeRecord[i].cash = fc.takeCollateralOnBehalf(account, trades[i].maturity, trades[i].amount, maxRate);
             } else if (trades[i].tradeType == Common.TradeType.TakeFutureCash) {
                 uint32 minRate;
                 if (trades[i].slippageData.length == 32) {
@@ -227,7 +227,7 @@ contract ERC1155Trade is ERC1155Base {
 
                 tradeRecord[i].currencyId = fcg.currency;
                 tradeRecord[i].tradeType = Common.TradeType.TakeFutureCash;
-                tradeRecord[i].collateral = fc.takeFutureCashOnBehalf(account, trades[i].maturity, trades[i].amount, minRate);
+                tradeRecord[i].cash = fc.takeFutureCashOnBehalf(account, trades[i].maturity, trades[i].amount, minRate);
             } else if (trades[i].tradeType == Common.TradeType.AddLiquidity) {
                 uint32 minRate;
                 uint32 maxRate;
@@ -242,15 +242,15 @@ contract ERC1155Trade is ERC1155Base {
                     maxFutureCash = Common.MAX_UINT_128;
                 }
 
-                // Add Liquidity always adds the specified amount of collateral or it fails out so we don't create a trade
-                // record here.
+                // Add Liquidity always adds the specified amount of cash or it fails out.
                 tradeRecord[i].currencyId = fcg.currency;
                 tradeRecord[i].tradeType = Common.TradeType.AddLiquidity;
+                tradeRecord[i].cash = trades[i].amount;
                 fc.addLiquidityOnBehalf(account, trades[i].maturity, trades[i].amount, maxFutureCash, minRate, maxRate);
             } else if (trades[i].tradeType == Common.TradeType.RemoveLiquidity) {
                 tradeRecord[i].currencyId = fcg.currency;
                 tradeRecord[i].tradeType = Common.TradeType.RemoveLiquidity;
-                tradeRecord[i].collateral = fc.removeLiquidityOnBehalf(account, trades[i].maturity, trades[i].amount);
+                tradeRecord[i].cash = fc.removeLiquidityOnBehalf(account, trades[i].maturity, trades[i].amount);
             }
         }
 
@@ -297,11 +297,12 @@ contract ERC1155Trade is ERC1155Base {
             if (tradeRecord[i].tradeType == Common.TradeType.TakeCollateral
                 || tradeRecord[i].tradeType == Common.TradeType.RemoveLiquidity) {
                 // This is the amount of collateral that was taken from the market
-                withdrawAmount = withdrawAmount + tradeRecord[i].collateral;
-            } else if (tradeRecord[i].tradeType == Common.TradeType.TakeFutureCash) {
+                withdrawAmount = withdrawAmount + tradeRecord[i].cash;
+            } else if (tradeRecord[i].tradeType == Common.TradeType.TakeFutureCash
+                || tradeRecord[i].tradeType == Common.TradeType.AddLiquidity) {
                 // This is the residual from the deposit that was not put into the market. We floor this value at
                 // zero to avoid an overflow.
-                depositResidual = depositResidual < tradeRecord[i].collateral ? 0 : depositResidual - tradeRecord[i].collateral;
+                depositResidual = depositResidual < tradeRecord[i].cash ? 0 : depositResidual - tradeRecord[i].cash;
             }
         }
 

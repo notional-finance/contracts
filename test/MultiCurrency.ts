@@ -310,7 +310,6 @@ describe("Multi Currency", () => {
     it("does not allow a liquidator to purchase more collateral than available", async () => {
         await tDai.setupLiquidity();
         await tUSDC.setupLiquidity(owner, 0.5, new BigNumber(10000e6), [0]);
-        await escrow.connect(wallet2).deposit(token[1].address, new BigNumber(1000e6));
 
         await tDai.borrowAndWithdraw(wallet, parseEther("100"), 1.05, 0, 100_000_000);
         await tUSDC.borrowAndWithdraw(wallet, new BigNumber(100e6), 1.05, 0, 100_000_000);
@@ -334,7 +333,6 @@ describe("Multi Currency", () => {
     it("does not allow a liquidator to purchase more collateral than necessary to recollateralize", async () => {
         await tDai.setupLiquidity();
         await tUSDC.setupLiquidity(owner, 0.5, new BigNumber(10000e6), [0]);
-        await escrow.connect(wallet2).deposit(token[1].address, new BigNumber(1000e6));
 
         await tDai.borrowAndWithdraw(wallet, parseEther("100"), 1.05, 0, 100_000_000);
         await tUSDC.borrowAndWithdraw(wallet, new BigNumber(100e6), 1.05, 0, 100_000_000);
@@ -357,7 +355,6 @@ describe("Multi Currency", () => {
     it("removes liquidity tokens in the deposit currency in order to liquidate", async () => {
         await tDai.setupLiquidity();
         await tUSDC.setupLiquidity(owner, 0.5, new BigNumber(10000e6), [0]);
-        await escrow.connect(wallet2).deposit(token[1].address, new BigNumber(1000e6));
 
         await tDai.borrowAndWithdraw(wallet, parseEther("100"), 1.05, 0, 100_000_000);
         await tUSDC.borrowAndWithdraw(wallet, new BigNumber(100e6), 1.05, 0, 100_000_000);
@@ -377,7 +374,6 @@ describe("Multi Currency", () => {
     it("accounts for the haircut amount when purchasing deposit currencies", async () => {
         await tDai.setupLiquidity();
         await tUSDC.setupLiquidity(owner, 0.5, new BigNumber(10000e6), [0]);
-        await escrow.connect(wallet2).deposit(token[1].address, new BigNumber(1000e6));
 
         await tDai.borrowAndWithdraw(wallet, parseEther("150"), 1.05, 0, 100_000_000);
         await tUSDC.borrowAndWithdraw(wallet, new BigNumber(100e6), 1.05, 0, 100_000_000);
@@ -397,7 +393,7 @@ describe("Multi Currency", () => {
     it("removes liquidity tokens partially in order to recollateralize an account", async () => {
         await tDai.setupLiquidity();
         await tUSDC.setupLiquidity(owner, 0.5, new BigNumber(10000e6), [0]);
-        await escrow.connect(wallet2).deposit(token[0].address, parseEther("1000"));
+        const liquidatorDaiBefore = await token[0].balanceOf(wallet2.address);
 
         await tDai.borrowAndWithdraw(wallet, parseEther("100"), 1.05, 0, 100_000_000);
         await escrow.connect(wallet).deposit(token[0].address, parseEther("100"));
@@ -407,11 +403,10 @@ describe("Multi Currency", () => {
         await chainlink[0].setAnswer(parseEther("0.012"));
 
         const ethBalanceBefore = await escrow.cashBalances(CURRENCY.ETH, wallet.address);
-        const liquidatorDaiBefore = await escrow.cashBalances(CURRENCY.DAI, wallet2.address);
 
         // This account is now undercollateralized slightly and the liquidity tokens will recapitalize it
         await escrow.connect(wallet2).liquidate(wallet.address, CURRENCY.DAI, CURRENCY.ETH)
-        const liquidatorDaiAfter = await escrow.cashBalances(CURRENCY.DAI, wallet2.address);
+        const liquidatorDaiAfter = await token[0].balanceOf(wallet2.address);
 
         // ETH balances have not changed.
         expect(await escrow.cashBalances(CURRENCY.ETH, wallet.address)).to.equal(ethBalanceBefore);
@@ -424,7 +419,7 @@ describe("Multi Currency", () => {
     it("removes liquidity tokens in full in order to recollateralize an account", async () => {
         await tDai.setupLiquidity();
         await tUSDC.setupLiquidity(owner, 0.5, new BigNumber(10000e6), [0]);
-        await escrow.connect(wallet2).deposit(token[0].address, parseEther("1000"));
+        const liquidatorDaiBefore = await token[0].balanceOf(wallet2.address);
 
         await tDai.borrowAndWithdraw(wallet, parseEther("100"), 1.05, 0, 100_000_000);
         await escrow.connect(wallet).deposit(token[0].address, parseEther("10"));
@@ -432,10 +427,9 @@ describe("Multi Currency", () => {
 
         await chainlink[0].setAnswer(parseEther("0.012"));
 
-        const liquidatorDaiBefore = await escrow.cashBalances(CURRENCY.DAI, wallet2.address);
         const accountDaiBefore = await escrow.cashBalances(CURRENCY.DAI, wallet.address);
         await escrow.connect(wallet2).liquidate(wallet.address, CURRENCY.DAI, CURRENCY.ETH)
-        const liquidatorDaiAfter = await escrow.cashBalances(CURRENCY.DAI, wallet2.address);
+        const liquidatorDaiAfter = await token[0].balanceOf(wallet2.address);
         const accountDaiAfter = await escrow.cashBalances(CURRENCY.DAI, wallet.address);
 
         // The difference in the delta is how much cashClaim the liquidity tokens had

@@ -29,7 +29,6 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
     using SafeUInt128 for uint128;
     using SafeMath for uint256;
     using SafeInt256 for int256;
-    using SafeUInt128 for uint128;
 
     uint256 private constant UINT256_MAX = 2**256 - 1;
 
@@ -386,28 +385,40 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         _deposit(msg.sender, token, amount);
     }
 
-    function _deposit(address to, address token, uint128 amount) internal {
+    function _deposit(address from, address token, uint128 amount) internal {
         uint16 currencyId = addressToCurrencyId[token];
-        TokenOptions memory tokenOptions = tokenOptions[token];
-        if (currencyId == 0 && token != WETH && !tokenOptions.isERC777) {
+        if ((currencyId == 0 && token != WETH)) {
             revert($$(ErrorCode(INVALID_CURRENCY)));
         }
 
-        if (tokenOptions.hasTransferFee) {
+        TokenOptions memory options = tokenOptions[token];
+        amount = _tokenDeposit(token, from, amount, options);
+        cashBalances[currencyId][from] = cashBalances[currencyId][from].add(amount);
+
+        emit Deposit(currencyId, from, amount);
+    }
+
+    function _tokenDeposit(
+        address token,
+        address from,
+        uint128 amount,
+        TokenOptions memory options
+    ) internal returns (uint128) {
+        if (options.hasTransferFee) {
             // If there is a transfer fee we check the pre and post transfer balance to ensure that we increment
             // the balance by the correct amount after transfer.
             uint256 preTransferBalance = IERC20(token).balanceOf(address(this));
-            SafeERC20.safeTransferFrom(IERC20(token), to, address(this), amount);
+            SafeERC20.safeTransferFrom(IERC20(token), from, address(this), amount);
             uint256 postTransferBalance = IERC20(token).balanceOf(address(this));
 
             amount = SafeCast.toUint128(postTransferBalance.sub(preTransferBalance));
-            cashBalances[currencyId][to] = cashBalances[currencyId][to].add(amount);
-        } else {
-            SafeERC20.safeTransferFrom(IERC20(token), to, address(this), amount);
-            cashBalances[currencyId][to] = cashBalances[currencyId][to].add(amount);
+        } else if (options.isERC777) {
+            IERC777(token).operatorSend(from, address(this), amount, "0x", "0x");
+        }else {
+            SafeERC20.safeTransferFrom(IERC20(token), from, address(this), amount);
         }
-
-        emit Deposit(currencyId, to, amount);
+        
+        return amount;
     }
 
     /**
@@ -433,6 +444,8 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         uint16 currencyId = addressToCurrencyId[token];
         require(token != address(0), $$(ErrorCode(INVALID_CURRENCY)));
 
+        // We settle matured assets before withdraw in case there are matured cash receiver or liquidity
+        // token assets
         if (checkFC) Portfolios().settleMaturedAssets(from);
 
         int256 balance = cashBalances[currencyId][from];
@@ -445,13 +458,21 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
             require(fc >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL)));
         }
 
+        _tokenWithdraw(token, to, amount);
+
+        emit Withdraw(currencyId, to, amount);
+    }
+
+    function _tokenWithdraw(
+        address token,
+        address to,
+        uint128 amount
+    ) internal {
         if (tokenOptions[token].isERC777) {
             IERC777(token).send(to, amount, "0x");
         } else {
             SafeERC20.safeTransfer(IERC20(token), to, amount);
         }
-
-        emit Withdraw(currencyId, to, amount);
     }
 
     /**
@@ -643,33 +664,42 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
      * additional collateral in a different currency if they are collateralized
      *  - INSUFFICIENT_FREE_COLLATERAL_SETTLER: calling account to settle cash does not have sufficient free collateral
      * after settling payers and receivers
-     * @param currency the currency group to settle
+     * @param localCurrency the currency that the payer's debts are denominated in
+     * @param collateralCurrency the collateral to settle the debts against
      * @param payers the party that has a negative cash balance and will transfer collateral to the receiver
      * @param values the amount of collateral to transfer
      */
     function settleCashBalanceBatch(
-        uint16 currency,
-        uint16 depositCurrency,
+        uint16 localCurrency,
+        uint16 collateralCurrency,
         address[] calldata payers,
         uint128[] calldata values
     ) external {
-        require(isValidCurrency(currency), $$(ErrorCode(INVALID_CURRENCY)));
-        require(isValidCurrency(depositCurrency), $$(ErrorCode(INVALID_CURRENCY)));
-        require(currency != depositCurrency, $$(ErrorCode(INVALID_CURRENCY)));
+        _validateCurrencies(localCurrency, collateralCurrency);
 
         uint128[] memory settledAmounts = new uint128[](values.length);
+        uint128 totalCollateral;
+        uint128 totalLocal;
 
         for (uint256 i; i < payers.length; i++) {
-            settledAmounts[i] = _settleCashBalance(
-                currency,
-                depositCurrency,
+            uint128 local;
+            uint128 collateral;
+            (settledAmounts[i], local, collateral) = _settleCashBalance(
+                localCurrency,
+                collateralCurrency,
                 payers[i],
                 values[i]
             );
+
+            totalCollateral = totalCollateral.add(collateral);
+            totalLocal = totalLocal.add(local);
+
+            // Net out cash balances, the payer no longer owes this cash.
+            cashBalances[localCurrency][payers[i]] = cashBalances[localCurrency][payers[i]].add(settledAmounts[i]);
         }
 
-        require(_freeCollateral(msg.sender) >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL_FOR_SETTLER)));
-        emit SettleCashBatch(currency, depositCurrency, payers, settledAmounts);
+        _finishLiquidateSettle(localCurrency, collateralCurrency, totalLocal, totalCollateral);
+        emit SettleCashBatch(localCurrency, collateralCurrency, payers, settledAmounts);
     }
 
     /**
@@ -686,45 +716,42 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
      *  - INSUFFICIENT_COLLATERAL_BALANCE: account does not hold enough collateral to settle, they will have
      *  - INSUFFICIENT_FREE_COLLATERAL_SETTLER: calling account to settle cash does not have sufficient free collateral
      * after settling payers and receivers
-     * additional collateral in a different currency if they are collateralized
-     * @param currency the currency group to settle
-     * @param depositCurrency the deposit currency to sell to cover
+     * @param localCurrency the currency that the payer's debts are denominated in
+     * @param collateralCurrency the collateral to settle the debts against
      * @param payer the party that has a negative cash balance and will transfer collateral to the receiver
      * @param value the amount of collateral to transfer
      */
     function settleCashBalance(
-        uint16 currency,
-        uint16 depositCurrency,
+        uint16 localCurrency,
+        uint16 collateralCurrency,
         address payer,
         uint128 value
     ) external {
-        require(isValidCurrency(currency), $$(ErrorCode(INVALID_CURRENCY)));
-        require(isValidCurrency(depositCurrency), $$(ErrorCode(INVALID_CURRENCY)));
-        require(currency != depositCurrency, $$(ErrorCode(INVALID_CURRENCY)));
+        _validateCurrencies(localCurrency, collateralCurrency);
 
-        // We must always ensure that accounts are settled when we settle cash balances because
-        // matured assets that are not converted to cash may cause the _settleCashBalance function
-        // to trip into settling with the reserve account.
-        uint128 settledAmount = _settleCashBalance(currency, depositCurrency, payer, value);
+        (uint128 settledAmount, uint128 totalLocal, uint128 totalCollateral) = _settleCashBalance(localCurrency, collateralCurrency, payer, value);
 
-        require(_freeCollateral(msg.sender) >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL_FOR_SETTLER)));
-        emit SettleCash(currency, depositCurrency, payer, settledAmount);
+        // Net out cash balances, the payer no longer owes this cash.
+        cashBalances[localCurrency][payer] = cashBalances[localCurrency][payer].add(settledAmount);
+
+        _finishLiquidateSettle(localCurrency, collateralCurrency, totalLocal, totalCollateral);
+        emit SettleCash(localCurrency, collateralCurrency, payer, settledAmount);
     }
 
     /**
      * @notice Settles the cash balance between the payer and the receiver.
      * @param currency the currency group to settle
-     * @param depositCurrency the deposit currency to sell to cover
+     * @param collateralCurrency the collateral currency to sell to cover
      * @param payer the party that has a negative cash balance and will transfer collateral to the receiver
      * @param valueToSettle the amount of collateral to transfer
      */
     function _settleCashBalance(
         uint16 currency,
-        uint16 depositCurrency,
+        uint16 collateralCurrency,
         address payer,
         uint128 valueToSettle
-    ) internal returns (uint128) {
-        if (valueToSettle == 0) return 0;
+    ) internal returns (uint128, uint128, uint128) {
+        if (valueToSettle == 0) return (0, 0, 0);
 
         // This cash account must have enough negative cash to settle against
         (int256 freeCollateral, int256[] memory netCurrencyAvailable, int256[] memory cashClaims) = Portfolios().freeCollateral(payer);
@@ -743,18 +770,19 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
             settledAmount = valueToSettle.sub(remainder);
         }
 
+        uint128 localCurrencyPurchased;
+        uint128 collateralSold;
         if (valueToSettle > settledAmount) {
             if (freeCollateral >= 0) {
-                uint128 localCurrencyPurchased = _purchaseDeposit(
+                (localCurrencyPurchased, collateralSold) = _purchaseCollateral(
                     payer,
                     currency,
                     valueToSettle - settledAmount,
-                    depositCurrency,
-                    cashClaims[depositCurrency],
+                    collateralCurrency,
+                    cashClaims,
                     netCurrencyAvailable,
                     false
                 );
-                cashBalances[currency][msg.sender] = cashBalances[currency][msg.sender].subNoNeg(localCurrencyPurchased);
                 settledAmount = settledAmount.add(localCurrencyPurchased);
             } else if (!_hasCollateral(payer)) {
                 settledAmount = settledAmount.add(
@@ -767,10 +795,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
             }
         }
 
-        // Net out cash balances, the payer no longer owes this cash.
-        cashBalances[currency][payer] = cashBalances[currency][payer].add(settledAmount);
-
-        return settledAmount;
+        return (settledAmount, localCurrencyPurchased, collateralSold);
     }
 
     /**
@@ -780,24 +805,30 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
      *  - INSUFFICIENT_FREE_COLLATERAL_LIQUIDATOR: liquidator does not have sufficient free collateral after liquidating
      * accounts
      * @param accounts the account to liquidate
-     * @param currency the currency that is undercollateralized
-     * @param depositCurrency the deposit currency to exchange for `currency`
+     * @param localCurrency the currency that is undercollateralized
+     * @param collateralCurrency the collateral currency to exchange for `currency`
      */
     function liquidateBatch(
         address[] calldata accounts,
-        uint16 currency,
-        uint16 depositCurrency
+        uint16 localCurrency,
+        uint16 collateralCurrency
     ) external {
-        require(isValidCurrency(depositCurrency), $$(ErrorCode(INVALID_CURRENCY)));
-        require(currency != depositCurrency, $$(ErrorCode(INVALID_CURRENCY)));
+        _validateCurrencies(localCurrency, collateralCurrency);
+
         uint128[] memory amountLiquidated = new uint128[](accounts.length);
+        int256 totalLocal;
+        uint128 totalCollateral;
 
         for (uint256 i; i < accounts.length; i++) {
-            amountLiquidated[i] = _liquidate(accounts[i], currency, depositCurrency);
+            int256 local;
+            uint128 collateral;
+            (amountLiquidated[i], local, collateral) = _liquidate(accounts[i], localCurrency, collateralCurrency);
+            totalLocal = totalLocal.add(local);
+            totalCollateral = totalCollateral.add(collateral);
         }
 
-        require(_freeCollateral(msg.sender) >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL_FOR_LIQUIDATOR)));
-        emit LiquidateBatch(currency, depositCurrency, accounts, amountLiquidated);
+        _finishLiquidateSettle(localCurrency, collateralCurrency, totalLocal, totalCollateral);
+        emit LiquidateBatch(localCurrency, collateralCurrency, accounts, amountLiquidated);
     }
 
     /**
@@ -807,98 +838,133 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
      *  - INSUFFICIENT_FREE_COLLATERAL_LIQUIDATOR: liquidator does not have sufficient free collateral after liquidating
      * accounts
      *  - CANNOT_LIQUIDATE_TO_WORSE_FREE_COLLATERAL: we cannot liquidate an account and have it end up in a worse free
-     *  collateral position than when it started. This is possible if depositCurrency has a larger haircut than currency.
+     *  collateral position than when it started. This is possible if collateralCurrency has a larger haircut than currency.
      * @param account the account to liquidate
-     * @param currency the currency that is undercollateralized
-     * @param depositCurrency the deposit currency to exchange for `currency`
+     * @param localCurrency the currency that is undercollateralized
+     * @param collateralCurrency the collateral currency to exchange for `currency`
      */
     function liquidate(
         address account,
-        uint16 currency,
-        uint16 depositCurrency
+        uint16 localCurrency,
+        uint16 collateralCurrency
     ) external {
-        require(isValidCurrency(depositCurrency), $$(ErrorCode(INVALID_CURRENCY)));
-        require(currency != depositCurrency, $$(ErrorCode(INVALID_CURRENCY)));
+        _validateCurrencies(localCurrency, collateralCurrency);
+        (uint128 amountLiquidated, int256 totalLocal, uint128 totalCollateral) = _liquidate(account, localCurrency, collateralCurrency);
 
-        uint128 amountLiquidated = _liquidate(account, currency, depositCurrency);
+        _finishLiquidateSettle(localCurrency, collateralCurrency, totalLocal, totalCollateral);
+        emit Liquidate(localCurrency, collateralCurrency, account, amountLiquidated);
+    }
 
-        require(_freeCollateral(msg.sender) >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL_FOR_LIQUIDATOR)));
-        emit Liquidate(currency, depositCurrency, account, amountLiquidated);
+    function _finishLiquidateSettle(
+        uint16 localCurrency,
+        uint16 collateralCurrency,
+        int256 totalLocal,
+        uint128 totalCollateral
+    ) internal {
+        address localToken = currencyIdToAddress[localCurrency];
+        if (totalLocal > 0) {
+            TokenOptions memory options = tokenOptions[localToken];
+            if (options.hasTransferFee) {
+                // If the token has transfer fees then we cannot use _tokenDeposit to get an accurate amount of local
+                // currency. The liquidator must have a sufficient balance inside the system.
+                cashBalances[localCurrency][msg.sender] = cashBalances[localCurrency][msg.sender].subNoNeg(totalLocal);
+            } else {
+                _tokenDeposit(localToken, msg.sender, uint128(totalLocal), options);
+            }
+        } else {
+            _tokenWithdraw(localToken, msg.sender, uint128(totalLocal.neg()));
+        }
+
+        _tokenWithdraw(currencyIdToAddress[collateralCurrency], msg.sender, totalCollateral);
     }
 
     function _liquidate(
         address account,
         uint16 localCurrency,
-        uint16 depositCurrency
-    ) internal returns (uint128) {
+        uint16 collateralCurrency
+    ) internal returns (uint128, int256, uint128) {
         require(account != msg.sender, $$(ErrorCode(CANNOT_LIQUIDATE_SELF)));
         (int256 fc, int256[] memory netCurrencyAvailable, int256[] memory cashClaims) = Portfolios().freeCollateralNoEmit(account);
+
+        // 0: localCurrencyRequired
+        // 1: localCurrencyCredit
+        // 2: collateralSold
+        // 3: localCurrencyPurchased
+        uint128[] memory vars = new uint128[](4);
 
         require(fc < 0,  $$(ErrorCode(CANNOT_LIQUIDATE_SUFFICIENT_COLLATERAL)));
 
         // This is the amount in local currency that we need to raise in order to bring the account back into collateralization.
-        uint128 localCurrencyRequired = uint128(_convertETHTo(localCurrency, fc.neg()));
+        // localCurrencyRequired
+        vars[0] = uint128(_convertETHTo(localCurrency, fc.neg()));
 
-        uint128 localCurrencyCredit;
         int256 localCurrencySold;
         if (cashClaims[localCurrency] > 0) {
+            // More stack shennanigans to get this function call through
+            int256 x = netCurrencyAvailable[localCurrency];
             (
-                localCurrencyCredit,
+                vars[1], // localCurrencyCredit
                 localCurrencySold,
-                localCurrencyRequired,
-                netCurrencyAvailable[localCurrency]
+                vars[0], // localCurrencyRequired
+                x // netCurrencyAvailable[localCurrency]
             ) = Liquidation.liquidateLocalLiquidityTokens(
                 account,
                 Liquidation.LocalTokenParameters(
                     localCurrency,
-                    localCurrencyRequired,
+                    vars[0], // localCurrencyRequired
                     G_LIQUIDITY_HAIRCUT,
                     G_LIQUIDITY_TOKEN_REPO_INCENTIVE,
-                    netCurrencyAvailable[localCurrency],
+                    x, // netCurrencyAvailable[localCurrency],
                     Portfolios()
                 )
             );
+            netCurrencyAvailable[localCurrency] = x;
         }
 
-        if (localCurrencyRequired > 0 && netCurrencyAvailable[localCurrency] < 0) {
-            uint128 localCurrencyPurchased = _purchaseDeposit(
+        // if (localCurrencyRequired > 0 ...
+        if (vars[0] > 0 && netCurrencyAvailable[localCurrency] < 0) {
+            // (localCurrencyPurchased, collateralSold)
+            (vars[3], vars[2]) = _purchaseCollateral(
                 account,
                 localCurrency,
-                localCurrencyRequired,
-                depositCurrency,
-                cashClaims[depositCurrency],
+                vars[0], // localCurrencyRequired
+                collateralCurrency,
+                cashClaims,
                 netCurrencyAvailable,
                 true
             );
 
-            localCurrencyCredit = localCurrencyCredit.add(localCurrencyPurchased);
-            localCurrencySold = localCurrencySold.add(localCurrencyPurchased);
+            // localCurrencyCredit = localCurrencyCredit.add(localCurrencyPurchased)
+            vars[1] = vars[1].add(vars[3]);
+            // ... .add(localCurrencyPurchased)
+            localCurrencySold = localCurrencySold.add(vars[3]);
         }
 
-        cashBalances[localCurrency][msg.sender] = cashBalances[localCurrency][msg.sender].subNoNeg(localCurrencySold);
-        cashBalances[localCurrency][account] = cashBalances[localCurrency][account].add(localCurrencyCredit);
+        // ... .add(localCurrencyCredit)
+        cashBalances[localCurrency][account] = cashBalances[localCurrency][account].add(vars[1]);
 
-        return localCurrencyCredit;
+        // return (localCurrencyCredit, localCurrencySold, collateralSold)
+        return (vars[1], localCurrencySold, vars[2]);
     }
 
-    function _purchaseDeposit(
+    function _purchaseCollateral(
         address payer,
         uint16 localCurrency,
         uint128 localCurrencyRequired,
-        uint16 depositCurrency,
-        int256 postHaircutCashClaim,
+        uint16 collateralCurrency,
+        int256[] memory postHaircutCashClaim,
         int256[] memory netCurrencyAvailable,
         bool isLiquidate
-    ) internal returns (uint128) {
+    ) internal returns (uint128, uint128) {
         Liquidation.DepositCurrencyParameters memory parameters;
         Liquidation.RateParameters memory rateParameters;
         if (true) {
             parameters = Liquidation.DepositCurrencyParameters(
                 localCurrencyRequired,
                 netCurrencyAvailable[localCurrency],
-                depositCurrency,
-                postHaircutCashClaim,
-                netCurrencyAvailable[depositCurrency],
+                collateralCurrency,
+                postHaircutCashClaim[collateralCurrency],
+                netCurrencyAvailable[collateralCurrency],
                 isLiquidate ? G_LIQUIDATION_DISCOUNT : G_SETTLEMENT_DISCOUNT,
                 G_LIQUIDITY_HAIRCUT,
                 Portfolios()
@@ -906,22 +972,24 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         }
 
         if (true) {
-            (uint256 rate, uint256 rateDecimals) = _exchangeRate(localCurrency, depositCurrency);
+            (uint256 rate, uint256 rateDecimals) = _exchangeRate(localCurrency, collateralCurrency);
             rateParameters = Liquidation.RateParameters(
                 rate,
                 rateDecimals,
                 currencyIdToDecimals[localCurrency],
-                currencyIdToDecimals[depositCurrency]
+                currencyIdToDecimals[collateralCurrency]
             );
         }
 
-        int256 payerBalance = cashBalances[depositCurrency][payer];
-        uint128 localCurrencyPurchased;
-        uint128 depositCurrencySold;
+        int256 payerBalance = cashBalances[collateralCurrency][payer];
+        // 0: localCurrencyPurchased;
+        // 1: collateralCurrencySold;
+        uint128[] memory vars = new uint128[](2);
 
         if (isLiquidate) {
             uint128 localCurrencyHaircut = exchangeRateOracles[localCurrency][0].haircut;
-            ( localCurrencyPurchased, depositCurrencySold, payerBalance ) = Liquidation.liquidate(
+            // (localCurrencyPurchased, collateralCurrencySold, ...)
+            ( vars[0], vars[1], payerBalance ) = Liquidation.liquidate(
                 payer,
                 payerBalance,
                 localCurrencyHaircut,
@@ -929,7 +997,8 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
                 rateParameters
             );
         } else {
-            ( localCurrencyPurchased, depositCurrencySold, payerBalance ) = Liquidation.settle(
+            // (localCurrencyPurchased, collateralCurrencySold, ...)
+            ( vars[0], vars[1], payerBalance ) = Liquidation.settle(
                 payer,
                 payerBalance,
                 parameters,
@@ -937,15 +1006,23 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
             );
         }
 
-        cashBalances[depositCurrency][payer] = payerBalance;
-        cashBalances[depositCurrency][msg.sender] = cashBalances[depositCurrency][msg.sender].add(depositCurrencySold);
-
-        return localCurrencyPurchased;
+        cashBalances[collateralCurrency][payer] = payerBalance;
+        // (localCurrencyPurchased, collateralCurrencySold)
+        return (vars[0], vars[1]);
     }
 
     /********** Settle Cash / Liquidation *************/
 
     /********** Internal Methods *********************/
+
+    function _validateCurrencies(
+        uint16 localCurrency,
+        uint16 collateralCurrency
+    ) internal view {
+        require(isValidCurrency(localCurrency), $$(ErrorCode(INVALID_CURRENCY)));
+        require(isValidCurrency(collateralCurrency), $$(ErrorCode(INVALID_CURRENCY)));
+        require(localCurrency != collateralCurrency, $$(ErrorCode(INVALID_CURRENCY)));
+    }
 
     function _attemptToSettleWithFutureCash(
         address payer,

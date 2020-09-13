@@ -279,7 +279,6 @@ describe("Deposits and Withdraws", () => {
 
         await fastForwardToMaturity(provider, maturities[1]);
 
-        await escrow.connect(wallet3).deposit(dai.address, WeiPerEther.mul(1000));
         await expect(
             escrow
                 .connect(wallet3)
@@ -292,31 +291,22 @@ describe("Deposits and Withdraws", () => {
         ).to.not.be.reverted;
     });
 
-    it("does not allow an undercollateralized account to settle", async () => {
+    it("should not allow settlement if wallet has no balance", async () => {
         await t.setupLiquidity();
-        await t.borrowAndWithdraw(wallet, parseEther("1"));
-        await t.borrowAndWithdraw(wallet2, parseEther("250"));
-        await escrow.connect(wallet2).deposit(dai.address, parseEther("5"));
+        await t.borrowAndWithdraw(wallet, WeiPerEther.mul(100));
+        await t.borrowAndWithdraw(wallet2, WeiPerEther.mul(250));
 
         await fastForwardToMaturity(provider, maturities[1]);
-        await chainlink.setAnswer(parseEther("0.02"));
-
-        expect(await t.isCollateralized(wallet2)).to.be.false;
         await expect(
             escrow
-                .connect(wallet2)
-                .settleCashBalance(CURRENCY.DAI, CURRENCY.ETH, wallet.address, parseEther("1"))
-        ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INSUFFICIENT_FREE_COLLATERAL_FOR_SETTLER));
-        await expect(
-            escrow
-                .connect(wallet2)
+                .connect(wallets[4])
                 .settleCashBalanceBatch(
                     CURRENCY.DAI,
                     CURRENCY.ETH,
-                    [wallet.address],
-                    [parseEther("1")]
+                    [wallet.address, wallet2.address],
+                    [parseEther("100"), parseEther("250")]
                 )
-        ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INSUFFICIENT_FREE_COLLATERAL_FOR_SETTLER));
+        ).to.be.reverted;
     });
 
     it("should not allow someone to liquidate themselves", async () => {
@@ -326,23 +316,6 @@ describe("Deposits and Withdraws", () => {
         await expect(escrow.liquidateBatch([owner.address], CURRENCY.DAI, CURRENCY.ETH)).to.be.revertedWith(
             ErrorDecoder.encodeError(ErrorCodes.CANNOT_LIQUIDATE_SELF)
         );
-    });
-
-    it("does not allow an undercollateralized account to liquidate", async () => {
-        await t.setupLiquidity();
-        await t.borrowAndWithdraw(wallet, parseEther("1"));
-        await t.borrowAndWithdraw(wallet2, parseEther("250"));
-        await escrow.connect(wallet2).deposit(dai.address, parseEther("5"));
-
-        await chainlink.setAnswer(parseEther("0.02"));
-
-        expect(await t.isCollateralized(wallet2)).to.be.false;
-        await expect(escrow.connect(wallet2).liquidate(wallet.address, CURRENCY.DAI, CURRENCY.ETH)).to.be.revertedWith(
-            ErrorDecoder.encodeError(ErrorCodes.INSUFFICIENT_FREE_COLLATERAL_FOR_LIQUIDATOR)
-        );
-        await expect(
-            escrow.connect(wallet2).liquidateBatch([wallet.address], CURRENCY.DAI, CURRENCY.ETH)
-        ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INSUFFICIENT_FREE_COLLATERAL_FOR_LIQUIDATOR));
     });
 
     it("does not allow liquidating with an invalid currency", async () => {
@@ -368,4 +341,18 @@ describe("Deposits and Withdraws", () => {
         await expect(escrow.liquidateBatch([wallet.address, wallet2.address], CURRENCY.DAI, CURRENCY.ETH)).to.not.be
             .reverted;
     });
+
+    it("should not allow liquidation if wallet has no balance", async () => {
+        await t.setupLiquidity();
+        await t.borrowAndWithdraw(wallet, WeiPerEther.mul(100));
+        await t.borrowAndWithdraw(wallet2, WeiPerEther.mul(250));
+
+        await chainlink.setAnswer(WeiPerEther.div(50));
+
+        await escrow.deposit(dai.address, WeiPerEther.mul(1000));
+        await expect(
+            escrow.connect(wallets[4]).liquidateBatch([wallet.address, wallet2.address], CURRENCY.DAI, CURRENCY.ETH)
+        ).to.be.reverted;
+    });
+
 });

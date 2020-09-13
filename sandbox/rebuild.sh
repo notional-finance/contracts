@@ -7,9 +7,7 @@ function cleanup {
 trap cleanup EXIT
 
 # Rebuild artifacts
-if [[ ! -v SKIP_BUILD ]]; then
-    npm run build
-fi
+npm run build
 
 # Remove tmp chaindb if exists
 rm -Rf ./chaindb

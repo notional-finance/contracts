@@ -550,6 +550,23 @@ describe("ERC1155 Token", () => {
             expect(await t.hasLiquidityToken(wallet2, maturities[0], parseEther("100"))).to.be.true;
         });
 
+        it("allows trade [deposit, addLiquidity, withdraw]", async () => {
+            await erc1155trade.connect(wallet2).batchOperationWithdraw(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [{ currencyId: 1, amount: parseEther("100") }],
+                [{ 
+                    tradeType: TradeType.AddLiquidity, 
+                    futureCashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: "0x"
+                }],
+                [{ to: wallet2.address, currencyId: 1, amount: 0 }]
+            );
+            expect(await t.hasLiquidityToken(wallet2, maturities[0], parseEther("100"))).to.be.true;
+        });
+
         it("allows trade [deposit, addLiquidity, slippageData(min/max rate)]", async () => {
             const slippage = defaultAbiCoder.encode(['uint32', 'uint32'], [0, 100_000_000]);
             await erc1155trade.connect(wallet2).batchOperation(

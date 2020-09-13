@@ -99,6 +99,7 @@ export class TestUtils {
         const totalEthBalance = await this.weth.balanceOf(this.escrow.address);
         let escrowEthBalance = new BigNumber(0);
         for (let a of accounts) {
+            log(`Eth Balance: ${a.address}: ${await this.escrow.cashBalances(CURRENCY.ETH, a.address)}`)
             escrowEthBalance = escrowEthBalance.add(await this.escrow.cashBalances(CURRENCY.ETH, a.address));
         }
 
