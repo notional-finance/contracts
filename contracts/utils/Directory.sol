@@ -7,7 +7,7 @@ import "../upgradeable/Initializable.sol";
 
 /**
  * @title Directory
- * Stores the addresses and the dependency map for the entire Swapnet system. Allows
+ * Stores the addresses and the dependency map for the entire Notional system. Allows
  * for the system to upgrade other contracts in the system.
  */
 contract Directory is OpenZeppelinUpgradesOwnable, Initializable {

@@ -7,13 +7,10 @@ import "./utils/ERC1155Base.sol";
 import "./interface/IERC1155.sol";
 import "./interface/IERC1155TokenReceiver.sol";
 
-import "./FutureCash.sol";
+import "./CashMarket.sol";
 
 /**
- * @notice Implements the ERC1155 token standard for transferring future cash tokens within Swapnet. ERC1155 ids
- * encode an identifier that represents assets that are fungible with each other. For example, two future cash tokens
- * that asset in the same market and mature at the same time are fungible with each other and therefore will have the
- * same id. `CASH_PAYER` tokens are not transferrable because they have negative value.
+ * @notice Implements the ERC1155 token standard for trading OTC and batch operations over Notional markets.
  */
 contract ERC1155Trade is ERC1155Base {
     address public BRIDGE_PROXY;
@@ -36,7 +33,7 @@ contract ERC1155Trade is ERC1155Base {
     event BatchOperation(address indexed account, address indexed operator);
 
     /**
-     * @notice Sets the address of the 0x bridgeProxy that is allowed to mint future cash pairs.
+     * @notice Sets the address of the 0x bridgeProxy that is allowed to mint fCash pairs.
      * @dev governance
      * @param bridgeProxy address of the 0x ERC1155AssetProxy
      */
@@ -53,16 +50,16 @@ contract ERC1155Trade is ERC1155Base {
      * - MARKET_INACTIVE: maturity is not a valid one
      * - INSUFFICIENT_BALANCE: insufficient cash balance (or token balance when removing liquidity)
      * - INSUFFICIENT_FREE_COLLATERAL: account does not have enough free collateral to place the trade
-     * - OVER_MAX_FUTURE_CASH: [addLiquidity] future cash amount required exceeds supplied maxFutureCash
-     * - OUT_OF_IMPLIED_RATE_BOUNDS: [addLiquidity] depositing collateral would require more future cash than specified
-     * - TRADE_FAILED_TOO_LARGE: [takeCollateral, takeFutureCash] trade is larger than allowed by the governance settings
-     * - TRADE_FAILED_LACK_OF_LIQUIDITY: [takeCollateral, takeFutureCash] there is insufficient liquidity in this maturity to handle the trade
-     * - TRADE_FAILED_SLIPPAGE: [takeCollateral, takeFutureCash] trade is greater than the max implied rate set
+     * - OVER_MAX_FCASH: [addLiquidity] fCash amount required exceeds supplied maxfCash
+     * - OUT_OF_IMPLIED_RATE_BOUNDS: [addLiquidity] depositing collateral would require more fCash than specified
+     * - TRADE_FAILED_TOO_LARGE: [takeCurrentCash, takefCash] trade is larger than allowed by the governance settings
+     * - TRADE_FAILED_LACK_OF_LIQUIDITY: [takeCurrentCash, takefCash] there is insufficient liquidity in this maturity to handle the trade
+     * - TRADE_FAILED_SLIPPAGE: [takeCurrentCash, takefCash] trade is greater than the max implied rate set
      * @param account account for which the operation will take place
      * @param maxTime after this time the operation will fail
      * @param deposits a list of deposits into the Escrow contract, ERC20 allowance must be in place for the Escrow contract
      * or these deposits will fail.
-     * @param trades a list of trades to place on future cash markets
+     * @param trades a list of trades to place on fCash markets
      */
     function batchOperation(
         address account,
@@ -92,16 +89,16 @@ contract ERC1155Trade is ERC1155Base {
      * - MARKET_INACTIVE: maturity is not a valid one
      * - INSUFFICIENT_BALANCE: insufficient cash balance (or token balance when removing liquidity)
      * - INSUFFICIENT_FREE_COLLATERAL: account does not have enough free collateral to place the trade
-     * - OVER_MAX_FUTURE_CASH: [addLiquidity] future cash amount required exceeds supplied maxFutureCash
-     * - OUT_OF_IMPLIED_RATE_BOUNDS: [addLiquidity] depositing collateral would require more future cash than specified
-     * - TRADE_FAILED_TOO_LARGE: [takeCollateral, takeFutureCash] trade is larger than allowed by the governance settings
-     * - TRADE_FAILED_LACK_OF_LIQUIDITY: [takeCollateral, takeFutureCash] there is insufficient liquidity in this maturity to handle the trade
-     * - TRADE_FAILED_SLIPPAGE: [takeCollateral, takeFutureCash] trade is greater than the max implied rate set
+     * - OVER_MAX_FCASH: [addLiquidity] fCash amount required exceeds supplied maxfCash
+     * - OUT_OF_IMPLIED_RATE_BOUNDS: [addLiquidity] depositing collateral would require more fCash than specified
+     * - TRADE_FAILED_TOO_LARGE: [takeCurrentCash, takefCash] trade is larger than allowed by the governance settings
+     * - TRADE_FAILED_LACK_OF_LIQUIDITY: [takeCurrentCash, takefCash] there is insufficient liquidity in this maturity to handle the trade
+     * - TRADE_FAILED_SLIPPAGE: [takeCurrentCash, takefCash] trade is greater than the max implied rate set
      * @param account account for which the operation will take place
      * @param maxTime after this time the operation will fail
      * @param deposits a list of deposits into the Escrow contract, ERC20 allowance must be in place for the Escrow contract
      * or these deposits will fail.
-     * @param trades a list of trades to place on future cash markets
+     * @param trades a list of trades to place on fCash markets
      * @param withdraws a list of withdraws, if amount is set to zero will attempt to withdraw the account's entire balance
      * of the specified currency. This is useful for borrowing when the exact exchange rate is not known ahead of time.
      */
@@ -166,21 +163,21 @@ contract ERC1155Trade is ERC1155Base {
         Common.Deposit[] memory deposits;
         if (data.length > 0) deposits = abi.decode(data, (Common.Deposit[]));
 
-        bytes1 swapType = Common.getSwapType(id);
-        (uint8 futureCashGroupId, /* uint16 */ , uint32 maturity) = Common.decodeAssetId(id);
+        bytes1 assetType = Common.getAssetType(id);
+        (uint8 cashGroupId, /* uint16 */ , uint32 maturity) = Common.decodeAssetId(id);
 
-        if (Common.isCashPayer(swapType)) {
+        if (Common.isCashPayer(assetType)) {
             // (payer, receiver) = (to, from);
             if (data.length > 0) Escrow().depositsOnBehalf(to, deposits);
 
             // This does a free collateral check inside.
-            Portfolios().mintFutureCashPair(to, from, futureCashGroupId, maturity, uint128(value));
-        } else if (Common.isCashReceiver(swapType)) {
+            Portfolios().mintfCashPair(to, from, cashGroupId, maturity, uint128(value));
+        } else if (Common.isCashReceiver(assetType)) {
             // (payer, receiver) = (from, to);
             if (data.length > 0) Escrow().depositsOnBehalf(from, deposits);
 
             // This does a free collateral check inside.
-            Portfolios().mintFutureCashPair(from, to, futureCashGroupId, maturity, uint128(value));
+            Portfolios().mintfCashPair(from, to, cashGroupId, maturity, uint128(value));
         } else {
             revert($$(ErrorCode(INVALID_SWAP)));
         }
@@ -199,16 +196,16 @@ contract ERC1155Trade is ERC1155Base {
     }
 
     /**
-     * @notice Decodes the slippage data parameter and places trades on the future cash groups
+     * @notice Decodes the slippage data parameter and places trades on the cash groups
      */
     function _batchTrade(address account, Common.Trade[] memory trades) internal returns (TradeRecord[] memory) {
         TradeRecord[] memory tradeRecord = new TradeRecord[](trades.length);
 
         for (uint256 i; i < trades.length; i++) {
-            Common.FutureCashGroup memory fcg = Portfolios().getFutureCashGroup(trades[i].futureCashGroup);
-            FutureCash fc = FutureCash(fcg.futureCashMarket);
+            Common.CashGroup memory fcg = Portfolios().getCashGroup(trades[i].cashGroup);
+            CashMarket fc = CashMarket(fcg.cashMarket);
 
-            if (trades[i].tradeType == Common.TradeType.TakeCollateral) {
+            if (trades[i].tradeType == Common.TradeType.TakeCurrentCash) {
                 uint32 maxRate;
                 if (trades[i].slippageData.length == 32) {
                     maxRate = abi.decode(trades[i].slippageData, (uint32));
@@ -217,36 +214,36 @@ contract ERC1155Trade is ERC1155Base {
                 }
 
                 tradeRecord[i].currencyId = fcg.currency;
-                tradeRecord[i].tradeType = Common.TradeType.TakeCollateral;
-                tradeRecord[i].cash = fc.takeCollateralOnBehalf(account, trades[i].maturity, trades[i].amount, maxRate);
-            } else if (trades[i].tradeType == Common.TradeType.TakeFutureCash) {
+                tradeRecord[i].tradeType = Common.TradeType.TakeCurrentCash;
+                tradeRecord[i].cash = fc.takeCurrentCashOnBehalf(account, trades[i].maturity, trades[i].amount, maxRate);
+            } else if (trades[i].tradeType == Common.TradeType.TakefCash) {
                 uint32 minRate;
                 if (trades[i].slippageData.length == 32) {
                     minRate = abi.decode(trades[i].slippageData, (uint32));
                 }
 
                 tradeRecord[i].currencyId = fcg.currency;
-                tradeRecord[i].tradeType = Common.TradeType.TakeFutureCash;
-                tradeRecord[i].cash = fc.takeFutureCashOnBehalf(account, trades[i].maturity, trades[i].amount, minRate);
+                tradeRecord[i].tradeType = Common.TradeType.TakefCash;
+                tradeRecord[i].cash = fc.takefCashOnBehalf(account, trades[i].maturity, trades[i].amount, minRate);
             } else if (trades[i].tradeType == Common.TradeType.AddLiquidity) {
                 uint32 minRate;
                 uint32 maxRate;
-                uint128 maxFutureCash;
+                uint128 maxfCash;
                 if (trades[i].slippageData.length == 64) {
                     (minRate, maxRate) = abi.decode(trades[i].slippageData, (uint32, uint32));
-                    maxFutureCash = Common.MAX_UINT_128;
+                    maxfCash = Common.MAX_UINT_128;
                 } else if (trades[i].slippageData.length == 96) {
-                    (minRate, maxRate, maxFutureCash) = abi.decode(trades[i].slippageData, (uint32, uint32, uint128));
+                    (minRate, maxRate, maxfCash) = abi.decode(trades[i].slippageData, (uint32, uint32, uint128));
                 } else {
                     maxRate = Common.MAX_UINT_32;
-                    maxFutureCash = Common.MAX_UINT_128;
+                    maxfCash = Common.MAX_UINT_128;
                 }
 
                 // Add Liquidity always adds the specified amount of cash or it fails out.
                 tradeRecord[i].currencyId = fcg.currency;
                 tradeRecord[i].tradeType = Common.TradeType.AddLiquidity;
                 tradeRecord[i].cash = trades[i].amount;
-                fc.addLiquidityOnBehalf(account, trades[i].maturity, trades[i].amount, maxFutureCash, minRate, maxRate);
+                fc.addLiquidityOnBehalf(account, trades[i].maturity, trades[i].amount, maxfCash, minRate, maxRate);
             } else if (trades[i].tradeType == Common.TradeType.RemoveLiquidity) {
                 tradeRecord[i].currencyId = fcg.currency;
                 tradeRecord[i].tradeType = Common.TradeType.RemoveLiquidity;
@@ -294,11 +291,11 @@ contract ERC1155Trade is ERC1155Base {
         for (uint256 i; i < tradeRecord.length; i++) {
             if (tradeRecord[i].currencyId != currencyId) continue;
 
-            if (tradeRecord[i].tradeType == Common.TradeType.TakeCollateral
+            if (tradeRecord[i].tradeType == Common.TradeType.TakeCurrentCash
                 || tradeRecord[i].tradeType == Common.TradeType.RemoveLiquidity) {
                 // This is the amount of collateral that was taken from the market
                 withdrawAmount = withdrawAmount + tradeRecord[i].cash;
-            } else if (tradeRecord[i].tradeType == Common.TradeType.TakeFutureCash
+            } else if (tradeRecord[i].tradeType == Common.TradeType.TakefCash
                 || tradeRecord[i].tradeType == Common.TradeType.AddLiquidity) {
                 // This is the residual from the deposit that was not put into the market. We floor this value at
                 // zero to avoid an overflow.

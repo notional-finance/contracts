@@ -1,7 +1,7 @@
 import {waffle, ethers} from "@nomiclabs/buidler";
 import {createFixtureLoader} from "ethereum-waffle";
 import {Wallet, providers} from "ethers";
-import {SwapnetDeployer} from "../scripts/SwapnetDeployer";
+import {NotionalDeployer} from "../scripts/NotionalDeployer";
 import defaultAccounts from "./defaultAccounts.json";
 import {parseEther, BigNumber} from "ethers/utils";
 import { deployLocal } from '../scripts/deployEnvironment';
@@ -33,7 +33,7 @@ export const CURRENCY = {
 export async function fixture(provider: providers.Provider, [owner]: Wallet[]) {
     log("Starting to load fixtures");
     const environment = await deployLocal(owner);
-    const swapnet = await SwapnetDeployer.deploy(
+    const notional = await NotionalDeployer.deploy(
         environment.deploymentWallet,
         environment,
         new BigNumber(8),
@@ -47,7 +47,7 @@ export async function fixture(provider: providers.Provider, [owner]: Wallet[]) {
 
     // List DAI currency
     log("Listing dai fixture");
-    const currencyId = await swapnet.listCurrency(
+    const currencyId = await notional.listCurrency(
         environment.DAI.address,
         environment.DAIETHOracle,
         parseEther("1.3"),
@@ -57,8 +57,8 @@ export async function fixture(provider: providers.Provider, [owner]: Wallet[]) {
         false 
     )
 
-    log("Deploying test future cash market");
-    const futureCash = await swapnet.deployFutureCashMarket(
+    log("Deploying test cash market");
+    const cashMarket = await notional.deployCashMarket(
         currencyId,
         4,
         2592000,
@@ -71,16 +71,16 @@ export async function fixture(provider: providers.Provider, [owner]: Wallet[]) {
 
     return {
         erc20: environment.DAI,
-        futureCash,
-        escrow: swapnet.escrow,
+        cashMarket,
+        escrow: notional.escrow,
         owner,
         chainlink: environment.DAIETHOracle as unknown as MockAggregator,
-        portfolios: swapnet.portfolios,
-        proxyAdmin: swapnet.proxyAdmin,
-        erc1155: swapnet.erc1155,
+        portfolios: notional.portfolios,
+        proxyAdmin: notional.proxyAdmin,
+        erc1155: notional.erc1155,
         registry: environment.ERC1820,
-        directory: swapnet.directory,
-        swapnet: swapnet,
+        directory: notional.directory,
+        notional: notional,
         weth: environment.WETH,
         environment: environment
     };

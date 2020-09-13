@@ -1,8 +1,8 @@
 {
-    "name": "@swapnet-protocol/contracts",
+    "name": "@notional-finance/contracts",
     "version": "0.0.1",
-    "description": "Smart contracts for the Swapnet Lite system",
-    "author": "Jeff Wu <jeff@swapnet.finance>",
+    "description": "Smart contracts for Notional Finance",
+    "author": "Jeff Wu <jeff@notional.finance>",
     "scripts": {
         "compile": "npx buidler compile",
         "build": "npm run compile && npx buidler typechain",
@@ -18,12 +18,9 @@
     },
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/jeffywu/swapnet-lite.git"
+        "url": "git+https://github.com/notional-finance/notional.git"
     },
-    "bugs": {
-        "url": "https://github.com/jeffywu/swapnet-lite/issues"
-    },
-    "homepage": "https://github.com/jeffywu/swapnet-lite#readme",
+    "homepage": "https://notional.finance",
     "devDependencies": {
         "@nomiclabs/buidler": "^1.3.3",
         "@nomiclabs/buidler-ethers": "^1.1.2",

@@ -1,12 +1,12 @@
 import {config} from "dotenv";
 import path from 'path';
 import Debug from "debug";
-import { SwapnetDeployer } from '../scripts/SwapnetDeployer';
+import { NotionalDeployer } from '../scripts/NotionalDeployer';
 import { Contract, ethers, Wallet } from 'ethers';
 import ERC20Artifact from "../build/ERC20.json";
-import FutureCashArtifact from "../build/FutureCash.json"
+import CashMarketArtifact from "../build/CashMarket.json"
 import { JsonRpcProvider } from 'ethers/providers';
-import { FutureCash } from '../typechain/FutureCash';
+import { CashMarket } from '../typechain/CashMarket';
 import { Erc20 } from '../typechain/Erc20';
 import { parseEther, BigNumber } from 'ethers/utils';
 import { writeFileSync } from 'fs';
@@ -23,27 +23,27 @@ async function main() {
     process.env.TESTNET_PRIVATE_KEY as string,
     new JsonRpcProvider(process.env.TESTNET_PROVIDER)
   );
-  const swapnet = await SwapnetDeployer.restoreFromFile(path.join(__dirname, "../local.json"), account);
-  const daiToken = new Contract(await swapnet.escrow.currencyIdToAddress(1), ERC20Artifact.abi, account) as Erc20;
+  const notional = await NotionalDeployer.restoreFromFile(path.join(__dirname, "../local.json"), account);
+  const daiToken = new Contract(await notional.escrow.currencyIdToAddress(1), ERC20Artifact.abi, account) as Erc20;
 
-  await daiToken.approve(swapnet.escrow.address, parseEther("10000000"));
-  await swapnet.escrow.deposit(daiToken.address, parseEther("6000000"));
+  await daiToken.approve(notional.escrow.address, parseEther("10000000"));
+  await notional.escrow.deposit(daiToken.address, parseEther("6000000"));
   log("Adding $2M liquidity to 1M Dai market");
-  await initializeLiquidity(1, swapnet, account);
+  await initializeLiquidity(1, notional, account);
   // log("Adding $2M liquidity to 3M Dai market");
-  // await initializeLiquidity(2, swapnet, account);
+  // await initializeLiquidity(2, notional, account);
   // log("Adding $2M liquidity to 6M Dai market");
-  // await initializeLiquidity(3, swapnet, account);
+  // await initializeLiquidity(3, notional, account);
 }
 
-async function initializeLiquidity(futureCashGroup: number, swapnet: SwapnetDeployer, account: Wallet) {
-  const fg = await swapnet.portfolios.getFutureCashGroup(futureCashGroup);
-  const futureCash = new Contract(fg.futureCashMarket, FutureCashArtifact.abi, account) as FutureCash;
+async function initializeLiquidity(cashGroup: number, notional: NotionalDeployer, account: Wallet) {
+  const fg = await notional.portfolios.getCashGroup(cashGroup);
+  const futureCash = new Contract(fg.cashMarket, CashMarketArtifact.abi, account) as CashMarket;
   const maturities = await futureCash.getActiveMaturities();
   const txn = await txMined(futureCash.addLiquidity(maturities[0], parseEther("2000000"), parseEther("2000000"), 0, 100_000_000, BLOCK_TIME_LIMIT));
   log(`Transaction mined: ${txn.transactionHash}`);
   
-  const trace = await (swapnet.provider as JsonRpcProvider).send("debug_traceTransaction", [txn.transactionHash, {}]);
+  const trace = await (notional.provider as JsonRpcProvider).send("debug_traceTransaction", [txn.transactionHash, {}]);
   await logTrace(trace);
 }
 

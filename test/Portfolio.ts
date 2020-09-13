@@ -5,7 +5,7 @@ import { Wallet } from "ethers";
 import { WeiPerEther } from "ethers/constants";
 
 import {Ierc20 as ERC20} from "../typechain/Ierc20";
-import { FutureCash } from "../typechain/FutureCash";
+import { CashMarket } from "../typechain/CashMarket";
 import { ErrorDecoder, ErrorCodes } from "../scripts/errorCodes";
 import { Escrow } from "../typechain/Escrow";
 import { Portfolios } from "../typechain/Portfolios";
@@ -22,7 +22,7 @@ describe("Portfolio", () => {
     let wallet: Wallet;
     let wallet2: Wallet;
     let rateAnchor: number;
-    let futureCash: FutureCash;
+    let futureCash: CashMarket;
     let escrow: Escrow;
     let portfolios: Portfolios;
     let t: TestUtils;
@@ -36,7 +36,7 @@ describe("Portfolio", () => {
         let objs = await fixtureLoader(fixture);
 
         dai = objs.erc20;
-        futureCash = objs.futureCash;
+        futureCash = objs.cashMarket;
         escrow = objs.escrow;
         portfolios = objs.portfolios;
         weth = objs.weth;
@@ -83,19 +83,19 @@ describe("Portfolio", () => {
         expect(await t.hasCashPayer(wallet, maturities[0], WeiPerEther.mul(200)));
     });
 
-    it("does not allow future cash groups with invalid currencies", async () => {
+    it("does not allow fCash groups with invalid currencies", async () => {
         await expect(
-            portfolios.createFutureCashGroup(2, 40, 1e9, 3, futureCash.address)
+            portfolios.createCashGroup(2, 40, 1e9, 3, futureCash.address)
         ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INVALID_CURRENCY));
     });
 
-    it("allows future cash groups to be updated", async () => {
+    it("allows fCash groups to be updated", async () => {
         await expect(
-            portfolios.updateFutureCashGroup(1, 0, 1000, 1e8, CURRENCY.DAI, futureCash.address)
+            portfolios.updateCashGroup(1, 0, 1000, 1e8, CURRENCY.DAI, futureCash.address)
         ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.INVALID_INSTRUMENT_PRECISION));
 
-        await portfolios.updateFutureCashGroup(1, 0, 1000, 1e9, CURRENCY.DAI, futureCash.address);
-        expect(await portfolios.getFutureCashGroup(1)).to.eql([
+        await portfolios.updateCashGroup(1, 0, 1000, 1e9, CURRENCY.DAI, futureCash.address);
+        expect(await portfolios.getCashGroup(1)).to.eql([
             0,
             1000,
             1e9,

@@ -4,12 +4,12 @@ import {fixture, wallets, fixtureLoader, provider, fastForwardToMaturity, CURREN
 import {Wallet} from "ethers";
 
 import {Ierc20 as ERC20} from "../typechain/Ierc20";
-import {FutureCash} from "../typechain/FutureCash";
+import {CashMarket} from "../typechain/CashMarket";
 import {Escrow} from "../typechain/Escrow";
 import {Portfolios} from "../typechain/Portfolios";
 import {TestUtils, BLOCK_TIME_LIMIT} from "./testUtils";
 import {MockAggregator} from "../mocks/MockAggregator";
-import {SwapnetDeployer} from "../scripts/SwapnetDeployer";
+import {NotionalDeployer} from "../scripts/NotionalDeployer";
 import {parseEther, BigNumber} from "ethers/utils";
 import { WeiPerEther } from 'ethers/constants';
 import { Iweth } from '../typechain/Iweth';
@@ -28,11 +28,11 @@ describe("Multi Currency", () => {
     let reserve: Wallet;
     let escrow: Escrow;
     let portfolios: Portfolios;
-    let swapnet: SwapnetDeployer;
+    let notional: NotionalDeployer;
 
     let token: ERC20[] = [];
     let chainlink: MockAggregator[] = [];
-    let futureCash: FutureCash[] = [];
+    let futureCash: CashMarket[] = [];
     let wbtc: {
         currencyId: number;
         erc20: ERC20;
@@ -56,14 +56,14 @@ describe("Multi Currency", () => {
 
         escrow = objs.escrow;
         portfolios = objs.portfolios;
-        swapnet = objs.swapnet;
+        notional = objs.notional;
         weth = objs.weth;
 
         token[0] = objs.erc20;
-        futureCash[0] = objs.futureCash;
+        futureCash[0] = objs.cashMarket;
         chainlink[0] = objs.chainlink;
 
-        const usdcCurrencyId = await swapnet.listCurrency(
+        const usdcCurrencyId = await notional.listCurrency(
             objs.environment.USDC.address,
             objs.environment.USDCETHOracle,
             parseEther("1.20"),
@@ -72,7 +72,7 @@ describe("Multi Currency", () => {
             new BigNumber(1e6),
             false
         );
-        const newFutureCash = await swapnet.deployFutureCashMarket(
+        const newFutureCash = await notional.deployCashMarket(
             usdcCurrencyId,
             2,
             2592000 * 1.5,
@@ -104,11 +104,11 @@ describe("Multi Currency", () => {
         tDai = new TestUtils(escrow, futureCash[0], portfolios, token[0], owner, chainlink[0], objs.weth, 1);
         tUSDC = new TestUtils(escrow, futureCash[1], portfolios, token[1], owner, chainlink[1], objs.weth, 2);
 
-        const mockWbtc = (await SwapnetDeployer.deployContract(owner, MockWBTCArtifact, [])) as ERC20;
-        const wbtcOracle = (await SwapnetDeployer.deployContract(owner, MockAggregatorArtfiact, [])) as MockAggregator;
+        const mockWbtc = (await NotionalDeployer.deployContract(owner, MockWBTCArtifact, [])) as ERC20;
+        const wbtcOracle = (await NotionalDeployer.deployContract(owner, MockAggregatorArtfiact, [])) as MockAggregator;
         await wbtcOracle.setAnswer(10e8);
 
-        const wbtcCurrencyId = await swapnet.listCurrency(
+        const wbtcCurrencyId = await notional.listCurrency(
             mockWbtc.address,
             wbtcOracle as unknown as IAggregator,
             parseEther("1.30"),
@@ -125,7 +125,7 @@ describe("Multi Currency", () => {
             chainlink: wbtcOracle
         }
 
-        const daiOneYear = await swapnet.deployFutureCashMarket(
+        const daiOneYear = await notional.deployCashMarket(
             CURRENCY.DAI,
             1,
             2592000 * 12,
@@ -166,7 +166,7 @@ describe("Multi Currency", () => {
         const maturities = await tDai.futureCash.getActiveMaturities();
         await tDai.futureCash
             .connect(wallet)
-            .takeCollateral(maturities[0], parseEther("100"), BLOCK_TIME_LIMIT, 80_000_000);
+            .takeCurrentCash(maturities[0], parseEther("100"), BLOCK_TIME_LIMIT, 80_000_000);
 
         await escrow
             .connect(wallet)
@@ -176,7 +176,7 @@ describe("Multi Currency", () => {
     };
 
     describe("happy path", async () => {
-        it("allows an account to trade on two different future cash groups in the same currency", async () => {
+        it("allows an account to trade on two different fCash groups in the same currency", async () => {
             await tDai.setupLiquidity();
             await tDaiOneYear.setupLiquidity();
             await tDai.borrowAndWithdraw(wallet, parseEther("100"), 1.5, 0, 100_000_000);
@@ -211,7 +211,7 @@ describe("Multi Currency", () => {
             await escrow.connect(wallet2).liquidate(wallet.address, CURRENCY.DAI, wbtc.currencyId);
         });
 
-        it("liquidates accounts across two future cash groups", async () => {
+        it("liquidates accounts across two fCash groups", async () => {
             await escrow.connect(wallet2).deposit(token[0].address, parseEther("1000"));
 
             await tDai.setupLiquidity();
@@ -256,7 +256,7 @@ describe("Multi Currency", () => {
             expect(await escrow.cashBalances(CURRENCY.DAI, wallet.address)).to.equal(parseEther("-100"));
         });
 
-        it("[6] settles cash with a secondary deposit currency", async () => {
+        it("[6] settles cash with a secondary collateral currency", async () => {
             await setupTest();
             await escrow
                 .connect(wallet2)
@@ -283,13 +283,13 @@ describe("Multi Currency", () => {
             );
         });
 
-        it("[8] does not settle cash with the reserve account if the account has future cash", async () => {
+        it("[8] does not settle cash with the reserve account if the account has fCash", async () => {
             await setupTest();
 
             await tUSDC.setupLiquidity(owner, 0.5, new BigNumber(10000e6), [1]);
             await escrow.connect(wallet).deposit(tUSDC.token.address, new BigNumber(100e6));
             const maturities = await tUSDC.futureCash.getActiveMaturities();
-            await tUSDC.futureCash.connect(wallet).takeFutureCash(maturities[1], new BigNumber(100e6), BLOCK_TIME_LIMIT, 0);
+            await tUSDC.futureCash.connect(wallet).takefCash(maturities[1], new BigNumber(100e6), BLOCK_TIME_LIMIT, 0);
 
             await wbtc.chainlink.setAnswer(new BigNumber(1.5e8));
 
@@ -352,7 +352,7 @@ describe("Multi Currency", () => {
         expect(fcAfter[0]).to.be.below(1e12);
     });
 
-    it("removes liquidity tokens in the deposit currency in order to liquidate", async () => {
+    it("removes liquidity tokens in the collateral currency in order to liquidate", async () => {
         await tDai.setupLiquidity();
         await tUSDC.setupLiquidity(owner, 0.5, new BigNumber(10000e6), [0]);
 

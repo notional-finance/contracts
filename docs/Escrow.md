@@ -6,40 +6,35 @@ cash balances, collateral lockup for trading, cash transfers (settlement), and l
 
 ## Methods
 - [`isValidCurrency(uint16 currency)`](#isValidCurrency)
-- [`isTradableCurrency(uint16 currency)`](#isTradableCurrency)
-- [`isDepositCurrency(uint16 currency)`](#isDepositCurrency)
-- [`getExchangeRate(address base, address quote)`](#getExchangeRate)
-- [`getNetBalances(address account)`](#getNetBalances)
-- [`getNetBalanceOfCurrency(address account, uint16 currency)`](#getNetBalanceOfCurrency)
-- [`convertBalancesToETH(uint128[] amounts)`](#convertBalancesToETH)
+- [`getExchangeRate(uint16 base, uint16 quote)`](#getExchangeRate)
+- [`getBalances(address account)`](#getBalances)
+- [`convertBalancesToETH(int256[] amounts)`](#convertBalancesToETH)
 - [`depositEth()`](#depositEth)
 - [`withdrawEth(uint128 amount)`](#withdrawEth)
-- [`deposit(address token, uint256 amount)`](#deposit)
-- [`withdraw(address token, uint256 amount)`](#withdraw)
-- [`settleCashBalanceBatch(uint16 currency, uint16 depositCurrency, address[] payers, address[] receivers, uint128[] values)`](#settleCashBalanceBatch)
-- [`settleCashBalance(uint16 currency, uint16 depositCurrency, address payer, address receiver, uint128 value)`](#settleCashBalance)
-- [`liquidateBatch(address[] accounts, uint16 currency, uint16 depositCurrency)`](#liquidateBatch)
-- [`liquidate(address account, uint16 currency, uint16 depositCurrency)`](#liquidate)
+- [`deposit(address token, uint128 amount)`](#deposit)
+- [`withdraw(address token, uint128 amount)`](#withdraw)
+- [`settleCashBalanceBatch(uint16 currency, uint16 collateralCurrency, address[] payers, uint128[] values)`](#settleCashBalanceBatch)
+- [`settleCashBalance(uint16 currency, uint16 collateralCurrency, address payer, uint128 value)`](#settleCashBalance)
+- [`liquidateBatch(address[] accounts, uint16 currency, uint16 collateralCurrency)`](#liquidateBatch)
+- [`liquidate(address account, uint16 currency, uint16 collateralCurrency)`](#liquidate)
 
 ## Events
-- [`NewTradableCurrency(address token)`](#NewTradableCurrency)
-- [`NewDepositCurrency(address token)`](#NewDepositCurrency)
-- [`UpdateExchangeRate(address baseToken, address quoteToken)`](#UpdateExchangeRate)
+- [`NewCurrency(address token)`](#NewCurrency)
+- [`UpdateExchangeRate(uint16 base, uint16 quote)`](#UpdateExchangeRate)
 - [`Deposit(uint16 currency, address account, uint256 value)`](#Deposit)
 - [`Withdraw(uint16 currency, address account, uint256 value)`](#Withdraw)
-- [`Liquidate(uint16 localCurrency, uint16 depositCurrency, address account, uint128 amountLiquidated)`](#Liquidate)
-- [`LiquidateBatch(uint16 localCurrency, uint16 depositCurrency, address[] accounts, uint128[] amountLiquidated)`](#LiquidateBatch)
-- [`SettleCash(uint16 localCurrency, uint16 depositCurrency, address payer, address receiver, uint128 settledAmount)`](#SettleCash)
-- [`SettleCashBatch(uint16 localCurrency, uint16 depositCurrency, address[] payers, address[] receivers, uint128[] settledAmounts)`](#SettleCashBatch)
-- [`SetDiscounts(uint128 liquidationDiscount, uint128 settlementDiscount)`](#SetDiscounts)
+- [`Liquidate(uint16 localCurrency, uint16 collateralCurrency, address account, uint128 amountLiquidated)`](#Liquidate)
+- [`LiquidateBatch(uint16 localCurrency, uint16 collateralCurrency, address[] accounts, uint128[] amountLiquidated)`](#LiquidateBatch)
+- [`SettleCash(uint16 localCurrency, uint16 collateralCurrency, address payer, uint128 settledAmount)`](#SettleCash)
+- [`SettleCashBatch(uint16 localCurrency, uint16 collateralCurrency, address[] payers, uint128[] settledAmounts)`](#SettleCashBatch)
+- [`SetDiscounts(uint128 liquidationDiscount, uint128 settlementDiscount, uint128 repoIncentive)`](#SetDiscounts)
 - [`SetReserve(address reserveAccount)`](#SetReserve)
 
 ## Governance Methods
-- [`setDiscounts(uint128 liquidation, uint128 settlement)`](#setDiscounts)
+- [`setDiscounts(uint128 liquidation, uint128 settlement, uint128 repoIncentive)`](#setDiscounts)
 - [`setReserveAccount(address account)`](#setReserveAccount)
-- [`listTradableCurrency(address token)`](#listTradableCurrency)
-- [`listDepositCurrency(address token)`](#listDepositCurrency)
-- [`addExchangeRate(uint16 base, uint16 quote, address rateOracle, address[] uniswapPath, uint128 haircut)`](#addExchangeRate)
+- [`listCurrency(address token, struct EscrowStorage.TokenOptions options)`](#listCurrency)
+- [`addExchangeRate(uint16 base, uint16 quote, address rateOracle, uint128 buffer, uint128 rateDecimals, bool mustInvert)`](#addExchangeRate)
 
 # Methods
 ### `isValidCurrency`
@@ -48,26 +43,6 @@ cash balances, collateral lockup for trading, cash transfers (settlement), and l
 - `currency`: currency id
 #### Return Values:
 - true if the currency is valid
-
-
-***
-
-### `isTradableCurrency`
-> Evaluates whether or not a currency can be traded
-#### Parameters:
-- `currency`: currency id
-#### Return Values:
-- true if the currency is tradable
-
-
-***
-
-### `isDepositCurrency`
-> Evaluates whether or not a currency can be used as collateral
-#### Parameters:
-- `currency`: currency id
-#### Return Values:
-- true if the currency is a deposit currency
 
 
 ***
@@ -83,25 +58,13 @@ cash balances, collateral lockup for trading, cash transfers (settlement), and l
 
 ***
 
-### `getNetBalances`
+### `getBalances`
 > Returns the net balances of all the currencies owned by an account as
 an array. Each index of the array refers to the currency id.
 #### Parameters:
 - `account`: the account to query
 #### Return Values:
 - the balance of each currency net of the account's cash position
-
-
-***
-
-### `getNetBalanceOfCurrency`
-> Returns the net balance denominated in the currency for an account. This balance
-may be less than zero due to negative cash balances.
-#### Parameters:
-- `account`: to get the balance for
-- `currency`: currency id
-#### Return Values:
-- the net balance of the currency
 
 
 ***
@@ -141,7 +104,8 @@ sufficient free collateral.
 ***
 
 ### `deposit`
-> Transfers a balance from an ERC20 token contract into the Escrow.
+> Transfers a balance from an ERC20 token contract into the Escrow. Do not call this for ERC777 transfers, use
+the `send` method instead.
 #### Parameters:
 - `token`: token contract to send from
 - `amount`: tokens to transfer
@@ -166,21 +130,17 @@ account has sufficient free collateral after the withdraw or else it fails.
 ***
 
 ### `settleCashBalanceBatch`
-> Settles the cash balances between the payers and receivers in batch
+> Settles the cash balances of payers in batch
 #### Parameters:
 - `currency`: the currency group to settle
 - `payers`: the party that has a negative cash balance and will transfer collateral to the receiver
-- `receivers`: the party that has a positive cash balance and will receive collateral from the payer
 - `values`: the amount of collateral to transfer
 
 #### Error Codes:
-- INVALID_TRADABLE_CURRENCY: tradable currency supplied is not a valid currency
-- INVALID_DEPOSIT_CURRENCY: deposit currency supplied is not a valid currency
-- COUNTERPARTY_CANNOT_BE_SELF: payer and receiver cannot be the same address
-- INCORRECT_CASH_BALANCE: payer or receiver does not have sufficient cash balance to settle
+- INVALID_CURRENCY: currency specified is invalid
+- INCORRECT_CASH_BALANCE: payer does not have sufficient cash balance to settle
 - INVALID_EXCHANGE_RATE: exchange rate returned by the oracle is less than 0
 - NO_EXCHANGE_LISTED_FOR_PAIR: cannot settle cash because no exchange is listed for the pair
-- CANNOT_SETTLE_PRICE_DISCREPENCY: cannot settle due to a discrepency or slippage in Uniswap
 - INSUFFICIENT_COLLATERAL_FOR_SETTLEMENT: not enough collateral to settle on the exchange
 - RESERVE_ACCOUNT_HAS_INSUFFICIENT_BALANCE: settling requires the reserve account, but there is insufficient
 balance to do so
@@ -195,27 +155,20 @@ after settling payers and receivers
 > Settles the cash balance between the payer and the receiver.
 #### Parameters:
 - `currency`: the currency group to settle
-- `depositCurrency`: the deposit currency to sell to cover
+- `collateralCurrency`: the collateral currency to sell to cover
 - `payer`: the party that has a negative cash balance and will transfer collateral to the receiver
-- `receiver`: the party that has a positive cash balance and will receive collateral from the payer
 - `value`: the amount of collateral to transfer
 
 #### Error Codes:
-- INVALID_SWAP: portfolio contains an invalid swap, this would be system level error
-- INVALID_TRADABLE_CURRENCY: tradable currency supplied is not a valid currency
-- INVALID_DEPOSIT_CURRENCY: deposit currency supplied is not a valid currency
-- COUNTERPARTY_CANNOT_BE_SELF: payer and receiver cannot be the same address
 - INCORRECT_CASH_BALANCE: payer or receiver does not have sufficient cash balance to settle
 - INVALID_EXCHANGE_RATE: exchange rate returned by the oracle is less than 0
 - NO_EXCHANGE_LISTED_FOR_PAIR: cannot settle cash because no exchange is listed for the pair
-- CANNOT_SETTLE_PRICE_DISCREPENCY: cannot settle due to a discrepency or slippage in Uniswap
 - INSUFFICIENT_COLLATERAL_FOR_SETTLEMENT: not enough collateral to settle on the exchange
 - RESERVE_ACCOUNT_HAS_INSUFFICIENT_BALANCE: settling requires the reserve account, but there is insufficient
 balance to do so
 - INSUFFICIENT_COLLATERAL_BALANCE: account does not hold enough collateral to settle, they will have
 - INSUFFICIENT_FREE_COLLATERAL_SETTLER: calling account to settle cash does not have sufficient free collateral
 after settling payers and receivers
-additional collateral in a different currency if they are collateralized
 
 ***
 
@@ -224,10 +177,9 @@ additional collateral in a different currency if they are collateralized
 #### Parameters:
 - `accounts`: the account to liquidate
 - `currency`: the currency that is undercollateralized
-- `depositCurrency`: the deposit currency to exchange for `currency`
+- `collateralCurrency`: the collateral currency to exchange for `currency`
 
 #### Error Codes:
-*  - INVALID_DEPOSIT_CURRENCY: deposit currency supplied is not a valid currency
 - CANNOT_LIQUIDATE_SUFFICIENT_COLLATERAL: account has positive free collateral and cannot be liquidated
 - CANNOT_LIQUIDATE_SELF: liquidator cannot equal the liquidated account
 - INSUFFICIENT_FREE_COLLATERAL_LIQUIDATOR: liquidator does not have sufficient free collateral after liquidating
@@ -240,38 +192,32 @@ accounts
 #### Parameters:
 - `account`: the account to liquidate
 - `currency`: the currency that is undercollateralized
-- `depositCurrency`: the deposit currency to exchange for `currency`
+- `collateralCurrency`: the collateral currency to exchange for `currency`
 
 #### Error Codes:
-*  - INVALID_DEPOSIT_CURRENCY: deposit currency supplied is not a valid currency
 - CANNOT_LIQUIDATE_SUFFICIENT_COLLATERAL: account has positive free collateral and cannot be liquidated
 - CANNOT_LIQUIDATE_SELF: liquidator cannot equal the liquidated account
 - INSUFFICIENT_FREE_COLLATERAL_LIQUIDATOR: liquidator does not have sufficient free collateral after liquidating
 accounts
+- CANNOT_LIQUIDATE_TO_WORSE_FREE_COLLATERAL: we cannot liquidate an account and have it end up in a worse free
+collateral position than when it started. This is possible if collateralCurrency has a larger haircut than currency.
 
 ***
 
 
 # Events
-### `NewTradableCurrency`
-> A new tradable currency
+### `NewCurrency`
+> A new currency
 #### Parameters:
 - `token`: address of the tradable token
-
-***
-
-### `NewDepositCurrency`
-> A new deposit currency
-#### Parameters:
-- `token`: address of the deposit token
 
 ***
 
 ### `UpdateExchangeRate`
 > A new exchange rate between two currencies
 #### Parameters:
-- `baseToken`: address of the base token
-- `quoteToken`: address of the quote token
+- `base`: id of the base currency
+- `quote`: id of the quote currency
 
 ***
 
@@ -297,7 +243,7 @@ accounts
 > Notice of a successful liquidation. `msg.sender` will be the liquidator.
 #### Parameters:
 - `localCurrency`: currency that was liquidated
-- `depositCurrency`: currency that was exchanged for the local currency
+- `collateralCurrency`: currency that was exchanged for the local currency
 - `account`: the account that was liquidated
 
 ***
@@ -306,7 +252,7 @@ accounts
 > Notice of a successful batch liquidation. `msg.sender` will be the liquidator.
 #### Parameters:
 - `localCurrency`: currency that was liquidated
-- `depositCurrency`: currency that was exchanged for the local currency
+- `collateralCurrency`: currency that was exchanged for the local currency
 - `accounts`: the accounts that were liquidated
 
 ***
@@ -315,9 +261,8 @@ accounts
 > Notice of a successful cash settlement. `msg.sender` will be the settler.
 #### Parameters:
 - `localCurrency`: currency that was settled
-- `depositCurrency`: currency that was exchanged for the local currency
+- `collateralCurrency`: currency that was exchanged for the local currency
 - `payer`: the account that paid in the settlement
-- `receiver`: the account that received in the settlement
 - `settledAmount`: the amount settled between the parties
 
 ***
@@ -326,9 +271,8 @@ accounts
 > Notice of a successful batch cash settlement. `msg.sender` will be the settler.
 #### Parameters:
 - `localCurrency`: currency that was settled
-- `depositCurrency`: currency that was exchanged for the local currency
+- `collateralCurrency`: currency that was exchanged for the local currency
 - `payers`: the accounts that paid in the settlement
-- `receivers`: the accounts that received in the settlement
 - `settledAmounts`: the amounts settled between the parties
 
 ***
@@ -338,6 +282,7 @@ accounts
 #### Parameters:
 - `liquidationDiscount`: discount given to liquidators when purchasing collateral
 - `settlementDiscount`: discount given to settlers when purchasing collateral
+- `repoIncentive`: incentive given to liquidators for pulling liquidity tokens to recollateralize an account
 
 ***
 
@@ -357,6 +302,7 @@ represented as percentages multiplied by 1e18. For example, a 5% discount for li
 #### Parameters:
 - `liquidation`: discount applied to liquidation
 - `settlement`: discount applied to settlement
+- `repoIncentive`: incentive to repo liquidity tokens
 
 ***
 ### `setReserveAccount`
@@ -365,16 +311,11 @@ represented as percentages multiplied by 1e18. For example, a 5% discount for li
 - `account`: address of reserve account
 
 ***
-### `listTradableCurrency`
-> Lists a new currency that can be traded in future cash markets
+### `listCurrency`
+> Lists a new currency for deposits
 #### Parameters:
-- `token`: address of the ERC20 or ERC777 token
-
-***
-### `listDepositCurrency`
-> Lists a new currency that can only be used to collateralize `CASH_PAYER` tokens
-#### Parameters:
-- `token`: address of the ERC20 or ERC777 token
+- `token`: address of ERC20 or ERC777 token to list
+- `options`: a set of booleans that describe the token
 
 ***
 ### `addExchangeRate`
@@ -383,7 +324,8 @@ represented as percentages multiplied by 1e18. For example, a 5% discount for li
 - `base`: the base currency
 - `quote`: the quote currency
 - `rateOracle`: the oracle that will give the exchange rate between the two
-- `uniswapPath`: path between uniswap exchanges
-- `haircut`: multiple to apply to the exchange rate that sets the collateralization ratio
+- `buffer`: multiple to apply to the exchange rate that sets the collateralization ratio
+- `rateDecimals`: decimals of precision that the rate oracle uses
+- `mustInvert`: true if the chainlink oracle must be inverted
 
 ***

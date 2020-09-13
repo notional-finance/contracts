@@ -142,7 +142,6 @@ contract MockUSDC is IERC20, OpenZeppelinUpgradesOwnable {
         require(sender != address(0), "ERC20: transfer from zero address");
         require(recipient != address(0), "ERC20: send to zero address");
 
-        // TODO: there is something wrong with this ERC20 contract and the interaction with uniswap
         _balances[sender] = _balances[sender].sub(amount, "ERC20: transfer exceeds balance");
         _balances[recipient] = _balances[recipient].add(amount);
         emit Transfer(sender, recipient, _balances[sender]);

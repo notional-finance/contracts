@@ -1,6 +1,6 @@
 import { Wallet } from "ethers";
 import { JsonRpcProvider } from "ethers/providers";
-import { SwapnetDeployer, Environment } from "./SwapnetDeployer";
+import { NotionalDeployer, Environment } from "./NotionalDeployer";
 import { BigNumber, parseEther } from "ethers/utils";
 import { config } from "dotenv";
 import { WeiPerEther } from 'ethers/constants';
@@ -8,7 +8,7 @@ import Debug from "debug";
 import { deployLocal, deployTestEnvironment } from './deployEnvironment';
 import path from 'path';
 
-const log = Debug("swapnet:deploy");
+const log = Debug("notional:deploy");
 const ONE_MONTH = 2592000;
 const BASIS_POINT = 1e5;
 
@@ -51,7 +51,7 @@ async function main() {
             process.exit(1);
     }
 
-    const swapnet = await SwapnetDeployer.deploy(
+    const notional = await NotionalDeployer.deploy(
         environment.deploymentWallet,
         environment,
         new BigNumber(8),
@@ -64,7 +64,7 @@ async function main() {
     );
 
     // List DAI currency
-    const currencyId = await swapnet.listCurrency(
+    const currencyId = await notional.listCurrency(
         environment.DAI.address,
         environment.DAIETHOracle,
         parseEther("1.4"),
@@ -74,7 +74,7 @@ async function main() {
         false 
     )
 
-    await swapnet.deployFutureCashMarket(
+    await notional.deployCashMarket(
         currencyId,
         1,
         ONE_MONTH,
@@ -85,7 +85,7 @@ async function main() {
         85
     );
 
-    await swapnet.deployFutureCashMarket(
+    await notional.deployCashMarket(
         currencyId,
         2,
         ONE_MONTH * 3,
@@ -97,8 +97,8 @@ async function main() {
     );
 
     const outputFile = path.join(__dirname, "../" + process.env.CONTRACTS_FILE as string);
-    await swapnet.saveAddresses(outputFile);
-    await swapnet.transferOwner(process.env.TRANSFER_OWNER_PUBLIC_KEY as string);
+    await notional.saveAddresses(outputFile);
+    await notional.transferOwner(process.env.TRANSFER_OWNER_PUBLIC_KEY as string);
 }
 
 main()

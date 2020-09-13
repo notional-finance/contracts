@@ -9,20 +9,20 @@ interface IEscrowCallable {
     function getBalances(address account) external view returns (int256[] memory);
     function convertBalancesToETH(int256[] calldata amounts) external view returns (int256[] memory);
     function portfolioSettleCash(address account, int256[] calldata settledCash) external;
-    function unlockCollateral(uint16 currency, address futureCashMarket, int256 amount) external;
+    function unlockCurrentCash(uint16 currency, address cashMarket, int256 amount) external;
 
     function depositsOnBehalf(address account, Common.Deposit[] calldata deposits) external payable;
     function withdrawsOnBehalf(address account, Common.Withdraw[] calldata withdraws) external;
 
     function depositIntoMarket(
         address account,
-        uint8 futureCashGroupId,
+        uint8 cashGroupId,
         uint128 value,
         uint128 fee
     ) external;
     function withdrawFromMarket(
         address account,
-        uint8 futureCashGroupId,
+        uint8 cashGroupId,
         uint128 value,
         uint128 fee
     ) external;

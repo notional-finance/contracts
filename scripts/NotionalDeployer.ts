@@ -18,7 +18,7 @@ import {Escrow} from "../typechain/Escrow";
 import {ProxyAdmin} from "../typechain/ProxyAdmin";
 import {Directory} from "../typechain/Directory";
 import {Ierc20 as ERC20} from "../typechain/Ierc20";
-import {FutureCash} from "../typechain/FutureCash";
+import {CashMarket} from "../typechain/CashMarket";
 import {Erc1155Token as ERC1155Token} from "../typechain/Erc1155Token";
 import {Erc1155Trade as ERC1155Trade} from "../typechain/Erc1155Trade";
 import { Ierc1820Registry as IERC1820Registry } from "../typechain/Ierc1820Registry";
@@ -28,7 +28,7 @@ import { OpenZeppelinUpgradesOwnable } from '../typechain/OpenZeppelinUpgradesOw
 
 import Debug from "debug";
 import path from "path";
-const log = Debug("swapnet:deploy");
+const log = Debug("notional:deploy");
 
 export interface Environment {
     deploymentWallet: Wallet,
@@ -48,7 +48,7 @@ export const enum CoreContracts {
     ERC1155Trade
 }
 
-export class SwapnetDeployer {
+export class NotionalDeployer {
     constructor(
         public owner: Wallet,
         public escrow: Escrow,
@@ -130,7 +130,7 @@ export class SwapnetDeployer {
 
         if (Object.keys(artifact.linkReferences).length > 0) {
             if (libraries == null) throw new Error(`Libraries not defined for ${artifact.contractName}`);
-            SwapnetDeployer.link(artifact, libraries);
+            NotionalDeployer.link(artifact, libraries);
         }
 
         const factory = new ContractFactory(artifact.abi, artifact.bytecode, owner);
@@ -152,12 +152,12 @@ export class SwapnetDeployer {
         proxyAdmin: ProxyAdmin,
         libraries: Map<string, Contract>
     ) => {
-        const logic = await SwapnetDeployer.deployContract(owner, artifact, [], libraries);
+        const logic = await NotionalDeployer.deployContract(owner, artifact, [], libraries);
 
         const abi = new ethers.utils.Interface(artifact.abi);
         log(`Initializing ${artifact.contractName} with sig ${initializeSig} and params ${params}`);
         const data = abi.functions[`initialize(${initializeSig})`].encode(params);
-        const proxy = await SwapnetDeployer.deployContract(owner, AdminUpgradeabilityProxyArtifact, [
+        const proxy = await NotionalDeployer.deployContract(owner, AdminUpgradeabilityProxyArtifact, [
             logic.address,
             proxyAdmin.address,
             data
@@ -195,36 +195,36 @@ export class SwapnetDeployer {
         const startBlock = await owner.provider.getBlockNumber();
         const libraries = new Map<string, Contract>();
         
-        libraries.set("Liquidation", (await SwapnetDeployer.deployContract(
+        libraries.set("Liquidation", (await NotionalDeployer.deployContract(
             owner,
-            SwapnetDeployer.loadArtifact("Liquidation"),
+            NotionalDeployer.loadArtifact("Liquidation"),
             []
         )));
 
-        libraries.set("RiskFramework", (await SwapnetDeployer.deployContract(
+        libraries.set("RiskFramework", (await NotionalDeployer.deployContract(
             owner,
-            SwapnetDeployer.loadArtifact("RiskFramework"),
+            NotionalDeployer.loadArtifact("RiskFramework"),
             []
         )));
 
-        const proxyAdmin = (await SwapnetDeployer.deployContract(
+        const proxyAdmin = (await NotionalDeployer.deployContract(
             owner,
-            SwapnetDeployer.loadArtifact("ProxyAdmin"),
+            NotionalDeployer.loadArtifact("ProxyAdmin"),
             []
         )) as ProxyAdmin;
 
-        const directory = await SwapnetDeployer.deployProxyContract<Directory>(
+        const directory = await NotionalDeployer.deployProxyContract<Directory>(
             owner,
-            SwapnetDeployer.loadArtifact("Directory"),
+            NotionalDeployer.loadArtifact("Directory"),
             "",
             [],
             proxyAdmin,
             libraries
         );
 
-        const escrow = await SwapnetDeployer.deployProxyContract<Escrow>(
+        const escrow = await NotionalDeployer.deployProxyContract<Escrow>(
             owner,
-            SwapnetDeployer.loadArtifact("Escrow"),
+            NotionalDeployer.loadArtifact("Escrow"),
             "address,address,address,uint128",
             [directory.address, environment.ERC1820.address, environment.WETH.address, ethToETHHaircut],
             proxyAdmin,
@@ -232,9 +232,9 @@ export class SwapnetDeployer {
         );
 
         const INIT_NUM_CURRENCIES = 1;
-        const portfolios = await SwapnetDeployer.deployProxyContract<Portfolios>(
+        const portfolios = await NotionalDeployer.deployProxyContract<Portfolios>(
             owner,
-            SwapnetDeployer.loadArtifact("Portfolios"),
+            NotionalDeployer.loadArtifact("Portfolios"),
             "address,uint16,uint256",
             [directory.address, INIT_NUM_CURRENCIES, maxAssets],
             proxyAdmin,
@@ -243,45 +243,45 @@ export class SwapnetDeployer {
 
         // If these need to be upgraded we will change the directory. Neither holds state so there is no
         // need for them to be proxies.
-        const erc1155 = await SwapnetDeployer.deployContract(
+        const erc1155 = await NotionalDeployer.deployContract(
             owner,
-            SwapnetDeployer.loadArtifact("ERC1155Token"),
+            NotionalDeployer.loadArtifact("ERC1155Token"),
             [directory.address]
         ) as ERC1155Token;
 
-        const erc1155trade = await SwapnetDeployer.deployContract(
+        const erc1155trade = await NotionalDeployer.deployContract(
             owner,
-            SwapnetDeployer.loadArtifact("ERC1155Trade"),
+            NotionalDeployer.loadArtifact("ERC1155Trade"),
             [directory.address]
         ) as ERC1155Trade;
 
         // Set dependencies
-        log("Setting Swapnet Contract: Escrow");
-        await SwapnetDeployer.txMined(directory.setContract(CoreContracts.Escrow, escrow.address), confirmations);
-        log("Setting Swapnet Contract: Portfolios");
-        await SwapnetDeployer.txMined(directory.setContract(CoreContracts.Portfolios, portfolios.address), confirmations);
-        log("Setting Swapnet Contract: ERC1155Token");
-        await SwapnetDeployer.txMined(directory.setContract(CoreContracts.ERC1155Token, erc1155.address), confirmations);
-        log("Setting Swapnet Contract: ERC1155Trade");
-        await SwapnetDeployer.txMined(directory.setContract(CoreContracts.ERC1155Trade, erc1155trade.address), confirmations);
+        log("Setting Notional Contract: Escrow");
+        await NotionalDeployer.txMined(directory.setContract(CoreContracts.Escrow, escrow.address), confirmations);
+        log("Setting Notional Contract: Portfolios");
+        await NotionalDeployer.txMined(directory.setContract(CoreContracts.Portfolios, portfolios.address), confirmations);
+        log("Setting Notional Contract: ERC1155Token");
+        await NotionalDeployer.txMined(directory.setContract(CoreContracts.ERC1155Token, erc1155.address), confirmations);
+        log("Setting Notional Contract: ERC1155Trade");
+        await NotionalDeployer.txMined(directory.setContract(CoreContracts.ERC1155Trade, erc1155trade.address), confirmations);
 
-        log("Setting Swapnet Dependencies: Escrow Dependency");
-        await SwapnetDeployer.txMined(directory.setDependencies(CoreContracts.Escrow, [
+        log("Setting Notional Dependencies: Escrow Dependency");
+        await NotionalDeployer.txMined(directory.setDependencies(CoreContracts.Escrow, [
             CoreContracts.Portfolios,
             CoreContracts.ERC1155Trade,
         ]), confirmations);
-        log("Setting Swapnet Dependencies: ERC1155Token Dependency");
-        await SwapnetDeployer.txMined(
+        log("Setting Notional Dependencies: ERC1155Token Dependency");
+        await NotionalDeployer.txMined(
             directory.setDependencies(CoreContracts.ERC1155Token, [CoreContracts.Portfolios]),
             confirmations
         );
-        log("Setting Swapnet Dependencies: ERC1155Trade Dependency");
-        await SwapnetDeployer.txMined(
+        log("Setting Notional Dependencies: ERC1155Trade Dependency");
+        await NotionalDeployer.txMined(
             directory.setDependencies(CoreContracts.ERC1155Trade, [CoreContracts.Portfolios, CoreContracts.Escrow]),
             confirmations
         );
-        log("Setting Swapnet Dependencies: Portfolio Dependency");
-        await SwapnetDeployer.txMined(
+        log("Setting Notional Dependencies: Portfolio Dependency");
+        await NotionalDeployer.txMined(
             directory.setDependencies(CoreContracts.Portfolios, [
                 CoreContracts.Escrow,
                 CoreContracts.ERC1155Token,
@@ -292,12 +292,12 @@ export class SwapnetDeployer {
 
         // Setup some contract defaults
         log("Setting liquidation discounts");
-        await SwapnetDeployer.txMined(escrow.setDiscounts(liquidationDiscount, settlementDiscount, repoDiscount), confirmations);
+        await NotionalDeployer.txMined(escrow.setDiscounts(liquidationDiscount, settlementDiscount, repoDiscount), confirmations);
 
         log("Setting liquidity haircut");
-        await SwapnetDeployer.txMined(portfolios.setHaircut(liquidityHaircut), confirmations);
+        await NotionalDeployer.txMined(portfolios.setHaircut(liquidityHaircut), confirmations);
 
-        return new SwapnetDeployer(
+        return new NotionalDeployer(
             owner,
             escrow,
             portfolios,
@@ -322,7 +322,7 @@ export class SwapnetDeployer {
         mustInvert: boolean
     ) => {
         log("Listing currency on Escrow");
-        await SwapnetDeployer.txMined(this.escrow.listCurrency(tokenAddress, { isERC777, hasTransferFee }), this.defaultConfirmations);
+        await NotionalDeployer.txMined(this.escrow.listCurrency(tokenAddress, { isERC777, hasTransferFee }), this.defaultConfirmations);
         const currencyId = (await this.escrow.addressToCurrencyId(tokenAddress)) as number;
 
         log("Registering new exchange rate to ETH");
@@ -330,7 +330,7 @@ export class SwapnetDeployer {
             throw new Error("Haircut must be greater than 1e18");
         }
 
-        await SwapnetDeployer.txMined(
+        await NotionalDeployer.txMined(
             this.escrow.addExchangeRate(
                 currencyId,
                 0,
@@ -345,10 +345,10 @@ export class SwapnetDeployer {
         return currencyId;
     };
 
-    public deployFutureCashMarket = async (
+    public deployCashMarket = async (
         currencyId: number,
-        numPeriods: number,
-        periodSize: number,
+        numMaturities: number,
+        maturityLength: number,
         maxTradeSize: BigNumber,
         liquidityFee: BigNumber,
         transactionFee: BigNumber,
@@ -357,33 +357,33 @@ export class SwapnetDeployer {
         precision: number = 1e9,
     ) => {
         const tokenAddress = await this.escrow.currencyIdToAddress(currencyId);
-        const futureCash = (await SwapnetDeployer.deployProxyContract(
+        const cashMarket = (await NotionalDeployer.deployProxyContract(
             this.owner,
-            SwapnetDeployer.loadArtifact("FutureCash"),
+            NotionalDeployer.loadArtifact("CashMarket"),
             "address,address",
             [this.directory.address, tokenAddress],
             this.proxyAdmin,
             new Map<string, Contract>()
 
-        )) as FutureCash;
+        )) as CashMarket;
 
-        log("Creating future cash group...");
-        await SwapnetDeployer.txMined(
-            this.portfolios.createFutureCashGroup(
-                numPeriods,
-                periodSize,
+        log("Creating cash group...");
+        await NotionalDeployer.txMined(
+            this.portfolios.createCashGroup(
+                numMaturities,
+                maturityLength,
                 precision,
                 currencyId,
-                futureCash.address
+                cashMarket.address
             ), this.defaultConfirmations
         );
 
-        log("Setting future cash parameters...");
-        await SwapnetDeployer.txMined(futureCash.setMaxTradeSize(maxTradeSize), this.defaultConfirmations);
-        await SwapnetDeployer.txMined(futureCash.setFee(liquidityFee, transactionFee), this.defaultConfirmations);
-        await SwapnetDeployer.txMined(futureCash.setRateFactors(rateAnchor, rateScalar), this.defaultConfirmations);
+        log("Setting cash market parameters...");
+        await NotionalDeployer.txMined(cashMarket.setMaxTradeSize(maxTradeSize), this.defaultConfirmations);
+        await NotionalDeployer.txMined(cashMarket.setFee(liquidityFee, transactionFee), this.defaultConfirmations);
+        await NotionalDeployer.txMined(cashMarket.setRateFactors(rateAnchor, rateScalar), this.defaultConfirmations);
 
-        return futureCash;
+        return cashMarket;
     };
 
     public upgradeContract = async (name: CoreContracts, artifact: any) => {
@@ -392,9 +392,9 @@ export class SwapnetDeployer {
 
         // Deploy the upgraded logic contract
         log("Deploying new logic contract");
-        const upgrade = await SwapnetDeployer.deployContract(this.owner, artifact, []);
+        const upgrade = await NotionalDeployer.deployContract(this.owner, artifact, []);
         log(`Deployed new logic contract at ${upgrade.address}`);
-        await SwapnetDeployer.txMined(this.proxyAdmin.upgrade(proxy.address, upgrade.address), this.defaultConfirmations);
+        await NotionalDeployer.txMined(this.proxyAdmin.upgrade(proxy.address, upgrade.address), this.defaultConfirmations);
         log(`Proxy Admin upgraded ${name.toString()}`);
     };
 
@@ -402,7 +402,7 @@ export class SwapnetDeployer {
         const ownable = new Contract(address, OpenZeppelinUpgradesOwnableArtifact.abi, this.owner) as OpenZeppelinUpgradesOwnable;
 
         log(`Transfering ownership of contract at ${address} to ${newOwner}`);
-        await SwapnetDeployer.txMined(ownable.transferOwnership(newOwner), this.defaultConfirmations);
+        await NotionalDeployer.txMined(ownable.transferOwnership(newOwner), this.defaultConfirmations);
     }
 
     public transferOwner = async (newOwner: string) => {
@@ -415,11 +415,11 @@ export class SwapnetDeployer {
         log(`Transfering ownership of Directory`);
         await this.transferOwnerOfContract(this.directory.address, newOwner);
 
-        const maxId = await this.portfolios.currentFutureCashGroupId();
+        const maxId = await this.portfolios.currentCashGroupId();
         for (let i = 1; i <= maxId; i++) {
-            const group = await this.portfolios.futureCashGroups(i);
+            const group = await this.portfolios.cashGroups(i);
             log(`Transferring ownership of Cash Group: ${i}`);
-            await this.transferOwnerOfContract(group.futureCashMarket, newOwner);
+            await this.transferOwnerOfContract(group.cashMarket, newOwner);
         }
 
         log(`Transfering ownership of ProxyAdmin`);
@@ -437,11 +437,11 @@ export class SwapnetDeployer {
         const erc1155 = new Contract(addresses.erc1155, ERC1155TokenArtifact.abi, owner) as ERC1155Token;
         const erc1155trade = new Contract(addresses.erc1155trade, ERC1155TradeArtifact.abi, owner) as ERC1155Trade;
         const libraries = Object.keys(addresses.libraries).reduce((obj, name) => {
-            obj.set(name, new Contract(addresses.libraries[name], SwapnetDeployer.loadArtifact(name).abi, owner));
+            obj.set(name, new Contract(addresses.libraries[name], NotionalDeployer.loadArtifact(name).abi, owner));
             return obj;
         }, new Map<string, Contract>())
 
-        return new SwapnetDeployer(
+        return new NotionalDeployer(
             owner,
             escrow,
             portfolios,

@@ -6,11 +6,11 @@ import "./utils/ERC1155Base.sol";
 
 import "./interface/IERC1155TokenReceiver.sol";
 
-import "./FutureCash.sol";
+import "./CashMarket.sol";
 
 /**
- * @notice Implements the ERC1155 token standard for transferring future cash tokens within Swapnet. ERC1155 ids
- * encode an identifier that represents assets that are fungible with each other. For example, two future cash tokens
+ * @notice Implements the ERC1155 token standard for transferring fCash tokens within Notional. ERC1155 ids
+ * encode an identifier that represents assets that are fungible with each other. For example, two fCash tokens
  * that asset in the same market and mature at the same time are fungible with each other and therefore will have the
  * same id. `CASH_PAYER` tokens are not transferrable because they have negative value.
  */
@@ -124,18 +124,18 @@ contract ERC1155Token is ERC1155Base {
         require(uint256(value) == _value, $$(ErrorCode(INTEGER_OVERFLOW)));
         require(msg.sender == from || isApprovedForAll(from, msg.sender), $$(ErrorCode(UNAUTHORIZED_CALLER)));
 
-        bytes1 swapType = Common.getSwapType(id);
+        bytes1 assetType = Common.getAssetType(id);
         // Transfers can only be entitlements to receive which are a net benefit.
-        require(Common.isReceiver(swapType), $$(ErrorCode(CANNOT_TRANSFER_PAYER)));
+        require(Common.isReceiver(assetType), $$(ErrorCode(CANNOT_TRANSFER_PAYER)));
 
-        (uint8 futureCashGroupId, uint16 instrumentId, uint32 maturity) = Common.decodeAssetId(id);
+        (uint8 cashGroupId, uint16 instrumentId, uint32 maturity) = Common.decodeAssetId(id);
         require(maturity > block.timestamp, $$(ErrorCode(CANNOT_TRANSFER_MATURED_ASSET)));
 
         Portfolios().transferAccountAsset(
             from,
             to,
-            swapType,
-            futureCashGroupId,
+            assetType,
+            cashGroupId,
             instrumentId,
             maturity,
             value

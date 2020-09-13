@@ -9,7 +9,7 @@ import MockUSDC from "../mocks/MockUSDC.json";
 import MockAggregatorArtifact from "../mocks/MockAggregator.json";
 import {Ierc20 as ERC20} from "../typechain/Ierc20";
 import {Iweth as IWETH} from "../typechain/Iweth";
-import {FutureCash} from "../typechain/FutureCash";
+import {CashMarket} from "../typechain/CashMarket";
 import {ErrorDecoder, ErrorCodes} from "../scripts/errorCodes";
 import {Escrow} from "../typechain/Escrow";
 import {Portfolios} from "../typechain/Portfolios";
@@ -28,7 +28,7 @@ describe("Deposits and Withdraws", () => {
     let wallet2: Wallet;
     let wallet3: Wallet;
     let rateAnchor: number;
-    let futureCash: FutureCash;
+    let futureCash: CashMarket;
     let escrow: Escrow;
     let portfolios: Portfolios;
     let chainlink: MockAggregator;
@@ -45,7 +45,7 @@ describe("Deposits and Withdraws", () => {
         let objs = await fixtureLoader(fixture);
 
         dai = objs.erc20;
-        futureCash = objs.futureCash;
+        futureCash = objs.cashMarket;
         escrow = objs.escrow;
         portfolios = objs.portfolios;
         registry = objs.registry;
@@ -121,8 +121,8 @@ describe("Deposits and Withdraws", () => {
         ).to.be.revertedWith(ErrorDecoder.decodeError(ErrorCodes.INVALID_CURRENCY));
     });
 
-    it("does not allow invalid currencies to be listed in future cash markets", async () => {
-        await expect(portfolios.createFutureCashGroup(2, 100, 1e9, 2, AddressZero)).to.be.revertedWith(
+    it("does not allow invalid currencies to be listed in fCash markets", async () => {
+        await expect(portfolios.createCashGroup(2, 100, 1e9, 2, AddressZero)).to.be.revertedWith(
             ErrorDecoder.decodeError(ErrorCodes.INVALID_CURRENCY)
         );
     });

@@ -2,7 +2,7 @@ import chai from "chai";
 import { solidity } from "ethereum-waffle";
 import { Wallet, Contract } from 'ethers';
 import { wallets, CURRENCY } from './fixtures';
-import { SwapnetDeployer } from '../scripts/SwapnetDeployer';
+import { NotionalDeployer } from '../scripts/NotionalDeployer';
 import MockLiquidationArtifact from '../build/MockLiquidation.json';
 import { MockLiquidation } from '../typechain/MockLiquidation';
 import MockPortfoliosArtifact from '../build/MockPortfolios.json';
@@ -25,19 +25,19 @@ describe("Liquidation Calculations", () => {
     owner = wallets[0];
     const libraries = new Map<string, Contract>();
 
-    libraries.set("Liquidation", (await SwapnetDeployer.deployContract(
+    libraries.set("Liquidation", (await NotionalDeployer.deployContract(
         owner,
-        SwapnetDeployer.loadArtifact("Liquidation"),
+        NotionalDeployer.loadArtifact("Liquidation"),
         []
     )));
 
-    liquidation = await SwapnetDeployer.deployContract(
+    liquidation = await NotionalDeployer.deployContract(
       owner,
       MockLiquidationArtifact,
       []
     ) as MockLiquidation;
 
-    portfolios = await SwapnetDeployer.deployContract(
+    portfolios = await NotionalDeployer.deployContract(
       owner,
       MockPortfoliosArtifact,
       []
@@ -290,7 +290,7 @@ describe("Liquidation Calculations", () => {
 
   describe("calculate deposit to sell", async () => {
     it("base case", async () => {
-      const value = await liquidation.calculateDepositToSell(
+      const value = await liquidation.calculateCollateralToSell(
         parseEther("0.01"),
         WeiPerEther,
         defaultLiquidationDiscount,
@@ -304,7 +304,7 @@ describe("Liquidation Calculations", () => {
 
     it("small values, convert down", async () => {
       // When converting down from 18 decimals to 6 we cannot sell under some amount of dust
-      const value = await liquidation.calculateDepositToSell(
+      const value = await liquidation.calculateCollateralToSell(
         0.01e6,
         1e6,
         defaultLiquidationDiscount,
@@ -318,7 +318,7 @@ describe("Liquidation Calculations", () => {
 
     it("small values, convert up", async () => {
       // When converting down from 18 decimals to 6 we cannot sell under some amount of dust
-      const value = await liquidation.calculateDepositToSell(
+      const value = await liquidation.calculateCollateralToSell(
         0.01e6,
         1e6,
         defaultLiquidationDiscount,
@@ -331,21 +331,21 @@ describe("Liquidation Calculations", () => {
     });
   });
 
-  describe("transfer deposit currency", async () => {
+  describe("transfer collateral currency", async () => {
     // Keep rate 1-1 to make things easy
     const rateParams = {
       rate: 1e6,
       rateDecimals: 1e6,
       localDecimals: WeiPerEther,
-      depositDecimals: 1e6
+      collateralDecimals: 1e6
     }
 
     const depositParameters = {
       // localCurrencyRequired 
-      // depositCurrencyCashClaim
-      // depositCurrencyAvailable
+      // collateralCurrencyCashClaim
+      // collateralCurrencyAvailable
       localCurrencyAvailable: 0, // This is unused in the calculations, required maxes out at available
-      depositCurrency: CURRENCY.ETH,
+      collateralCurrency: CURRENCY.ETH,
       discountFactor: defaultLiquidationDiscount,
       liquidityHaircut: defaultLiquidityHaircut,
     }
@@ -359,7 +359,7 @@ describe("Liquidation Calculations", () => {
       },
       outputs: {
         localToPurchase: number,
-        depositToSell: number,
+        collateralToSell: number,
         payerBalance: number,
         amountToRaise: number
       }
@@ -370,21 +370,21 @@ describe("Liquidation Calculations", () => {
 
       const available = balance.add(claim).sub(new BigNumber(inputs.requirement * 1e6));
 
-      await expect(liquidation.tradeDepositCurrency(
+      await expect(liquidation.tradeCollateralCurrency(
         AddressZero,
         balance,
         {
           ...depositParameters,
           localCurrencyRequired: parseEther(inputs.localRequired.toString()),
-          depositCurrencyCashClaim: claim,
-          depositCurrencyAvailable: available,
+          collateralCurrencyCashClaim: claim,
+          collateralCurrencyAvailable: available,
           Portfolios: portfolios.address
         },
         rateParams
-      )).to.emit(liquidation, "TradeDepositCurrency")
+      )).to.emit(liquidation, "TradeCollateralCurrency")
         .withArgs(
           parseEther(outputs.localToPurchase.toString()),
-          outputs.depositToSell * 1e6,
+          outputs.collateralToSell * 1e6,
           outputs.payerBalance * 1e6
         );
       
@@ -412,7 +412,7 @@ describe("Liquidation Calculations", () => {
         },
         {
           localToPurchase: 100,
-          depositToSell: 106,
+          collateralToSell: 106,
           payerBalance: 4,
           amountToRaise: 0
         }
@@ -430,7 +430,7 @@ describe("Liquidation Calculations", () => {
           },
           {
             localToPurchase: 100,
-            depositToSell: 106,
+            collateralToSell: 106,
             payerBalance: 0,
             amountToRaise: 0
           }
@@ -443,14 +443,14 @@ describe("Liquidation Calculations", () => {
         const cashClaim = 0;
         const available = balance + cashClaim;
 
-        await expect(liquidation.tradeDepositCurrency(
+        await expect(liquidation.tradeCollateralCurrency(
           AddressZero,
           balance,
           {
             ...depositParameters,
             localCurrencyRequired: parseEther("200"),
-            depositCurrencyCashClaim: cashClaim,
-            depositCurrencyAvailable: available,
+            collateralCurrencyCashClaim: cashClaim,
+            collateralCurrencyAvailable: available,
             Portfolios: portfolios.address
           },
           rateParams
@@ -467,7 +467,7 @@ describe("Liquidation Calculations", () => {
           },
           {
             localToPurchase: 100,
-            depositToSell: 106,
+            collateralToSell: 106,
             payerBalance: 100,
             amountToRaise: 0
           }
@@ -484,7 +484,7 @@ describe("Liquidation Calculations", () => {
           },
           {
             localToPurchase: 50,
-            depositToSell: 53,
+            collateralToSell: 53,
             payerBalance: 100,
             amountToRaise: 0
           }
@@ -505,7 +505,7 @@ describe("Liquidation Calculations", () => {
           },
           {
             localToPurchase: 100,
-            depositToSell: 106,
+            collateralToSell: 106,
             payerBalance: 0,
             amountToRaise: 106
           }
@@ -522,7 +522,7 @@ describe("Liquidation Calculations", () => {
           },
           {
             localToPurchase: 100,
-            depositToSell: 106,
+            collateralToSell: 106,
             payerBalance: 0,
             amountToRaise: 56
           }
@@ -539,7 +539,7 @@ describe("Liquidation Calculations", () => {
           },
           {
             localToPurchase: 100,
-            depositToSell: 106,
+            collateralToSell: 106,
             payerBalance: 0,
             amountToRaise: 156
           }
@@ -556,7 +556,7 @@ describe("Liquidation Calculations", () => {
           },
           {
             localToPurchase: 100,
-            depositToSell: 106,
+            collateralToSell: 106,
             payerBalance: 4,
             amountToRaise: 0
           }
@@ -573,7 +573,7 @@ describe("Liquidation Calculations", () => {
           },
           {
             localToPurchase: 100,
-            depositToSell: 106,
+            collateralToSell: 106,
             payerBalance: 84,
             amountToRaise: 190
           }
@@ -590,7 +590,7 @@ describe("Liquidation Calculations", () => {
           },
           {
             localToPurchase: 100,
-            depositToSell: 106,
+            collateralToSell: 106,
             payerBalance: 0,
             amountToRaise: 0
           }
@@ -607,7 +607,7 @@ describe("Liquidation Calculations", () => {
           },
           {
             localToPurchase: 100,
-            depositToSell: 106,
+            collateralToSell: 106,
             payerBalance: 0,
             amountToRaise: 56
           }
@@ -624,7 +624,7 @@ describe("Liquidation Calculations", () => {
           },
           {
             localToPurchase: 100,
-            depositToSell: 106,
+            collateralToSell: 106,
             payerBalance: 0,
             amountToRaise: 156
           }
@@ -643,7 +643,7 @@ describe("Liquidation Calculations", () => {
           },
           {
             localToPurchase: 100,
-            depositToSell: 106,
+            collateralToSell: 106,
             payerBalance: 0,
             amountToRaise: 106
           }
@@ -660,7 +660,7 @@ describe("Liquidation Calculations", () => {
           },
           {
             localToPurchase: 100,
-            depositToSell: 106,
+            collateralToSell: 106,
             payerBalance: 0,
             amountToRaise: 105
           }
@@ -677,7 +677,7 @@ describe("Liquidation Calculations", () => {
           },
           {
             localToPurchase: 100,
-            depositToSell: 106,
+            collateralToSell: 106,
             payerBalance: 0,
             amountToRaise: 107
           }
@@ -694,7 +694,7 @@ describe("Liquidation Calculations", () => {
           },
           {
             localToPurchase: 100,
-            depositToSell: 106,
+            collateralToSell: 106,
             payerBalance: 4,
             amountToRaise: 0
           }
@@ -711,7 +711,7 @@ describe("Liquidation Calculations", () => {
           },
           {
             localToPurchase: 100,
-            depositToSell: 106,
+            collateralToSell: 106,
             payerBalance: 4,
             amountToRaise: 110
           }
@@ -728,7 +728,7 @@ describe("Liquidation Calculations", () => {
           },
           {
             localToPurchase: 100,
-            depositToSell: 106,
+            collateralToSell: 106,
             payerBalance: 4,
             amountToRaise: 109
           }
@@ -745,7 +745,7 @@ describe("Liquidation Calculations", () => {
           },
           {
             localToPurchase: 100,
-            depositToSell: 106,
+            collateralToSell: 106,
             payerBalance: 4,
             amountToRaise: 111
           }
@@ -763,7 +763,7 @@ describe("Liquidation Calculations", () => {
           },
           {
             localToPurchase: 100,
-            depositToSell: 106,
+            collateralToSell: 106,
             payerBalance: 20,
             amountToRaise: 26
           }
@@ -783,7 +783,7 @@ describe("Liquidation Calculations", () => {
           },
           {
             localToPurchase: 100,
-            depositToSell: 106,
+            collateralToSell: 106,
             payerBalance: 0,
             amountToRaise: 106
           }
@@ -800,7 +800,7 @@ describe("Liquidation Calculations", () => {
           },
           {
             localToPurchase: 100,
-            depositToSell: 106,
+            collateralToSell: 106,
             payerBalance: 0,
             amountToRaise: 100
           }
@@ -817,7 +817,7 @@ describe("Liquidation Calculations", () => {
           },
           {
             localToPurchase: 50,
-            depositToSell: 53,
+            collateralToSell: 53,
             payerBalance: 0,
             amountToRaise: 100
           }
@@ -834,7 +834,7 @@ describe("Liquidation Calculations", () => {
           },
           {
             localToPurchase: 120,
-            depositToSell: 127.2,
+            collateralToSell: 127.2,
             payerBalance: 22.8,
             amountToRaise: 0
           }
@@ -851,7 +851,7 @@ describe("Liquidation Calculations", () => {
           },
           {
             localToPurchase: 100,
-            depositToSell: 106,
+            collateralToSell: 106,
             payerBalance: 20,
             amountToRaise: 126
           }
@@ -868,7 +868,7 @@ describe("Liquidation Calculations", () => {
           },
           {
             localToPurchase: 100,
-            depositToSell: 106,
+            collateralToSell: 106,
             payerBalance: 20,
             amountToRaise: 125
           }
@@ -885,7 +885,7 @@ describe("Liquidation Calculations", () => {
           },
           {
             localToPurchase: 100,
-            depositToSell: 106,
+            collateralToSell: 106,
             payerBalance: 20,
             amountToRaise: 127
           }
@@ -902,7 +902,7 @@ describe("Liquidation Calculations", () => {
           },
           {
             localToPurchase: 120,
-            depositToSell: 127.2,
+            collateralToSell: 127.2,
             payerBalance: 12.8,
             amountToRaise: 0
           }

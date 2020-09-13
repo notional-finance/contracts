@@ -41,20 +41,20 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         address directory,
         address registry,
         address weth,
-        uint128 ethHaircut
+        uint128 ethBuffer
     ) external initializer {
         Governed.initialize(directory);
 
         // This registry call is used for the ERC777 token standard.
         IERC1820Registry(registry).setInterfaceImplementer(address(0), TOKENS_RECIPIENT_INTERFACE_HASH, address(this));
 
-        // List ETH as the zero currency and a deposit currency
+        // List ETH as the zero currency
         WETH = weth;
         currencyIdToAddress[0] = WETH;
         addressToCurrencyId[WETH] = 0;
         currencyIdToDecimals[0] = Common.DECIMALS;
-        // Add the ETH haircut for ETH debts
-        exchangeRateOracles[0][0] = ExchangeRate(address(0), 0, false, ethHaircut);
+        // Add the ETH buffer for ETH debts
+        exchangeRateOracles[0][0] = ExchangeRate(address(0), 0, false, ethBuffer);
         emit NewCurrency(WETH);
     }
 
@@ -92,20 +92,20 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
     /**
      * @notice Notice of a successful liquidation. `msg.sender` will be the liquidator.
      * @param localCurrency currency that was liquidated
-     * @param depositCurrency currency that was exchanged for the local currency
+     * @param collateralCurrency currency that was exchanged for the local currency
      * @param account the account that was liquidated
      */
-    event Liquidate(uint16 indexed localCurrency, uint16 depositCurrency, address account, uint128 amountLiquidated);
+    event Liquidate(uint16 indexed localCurrency, uint16 collateralCurrency, address account, uint128 amountLiquidated);
 
     /**
      * @notice Notice of a successful batch liquidation. `msg.sender` will be the liquidator.
      * @param localCurrency currency that was liquidated
-     * @param depositCurrency currency that was exchanged for the local currency
+     * @param collateralCurrency currency that was exchanged for the local currency
      * @param accounts the accounts that were liquidated
      */
     event LiquidateBatch(
         uint16 indexed localCurrency,
-        uint16 depositCurrency,
+        uint16 collateralCurrency,
         address[] accounts,
         uint128[] amountLiquidated
     );
@@ -113,13 +113,13 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
     /**
      * @notice Notice of a successful cash settlement. `msg.sender` will be the settler.
      * @param localCurrency currency that was settled
-     * @param depositCurrency currency that was exchanged for the local currency
+     * @param collateralCurrency currency that was exchanged for the local currency
      * @param payer the account that paid in the settlement
      * @param settledAmount the amount settled between the parties
      */
     event SettleCash(
         uint16 localCurrency,
-        uint16 depositCurrency,
+        uint16 collateralCurrency,
         address indexed payer,
         uint128 settledAmount
     );
@@ -127,13 +127,13 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
     /**
      * @notice Notice of a successful batch cash settlement. `msg.sender` will be the settler.
      * @param localCurrency currency that was settled
-     * @param depositCurrency currency that was exchanged for the local currency
+     * @param collateralCurrency currency that was exchanged for the local currency
      * @param payers the accounts that paid in the settlement
      * @param settledAmounts the amounts settled between the parties
      */
     event SettleCashBatch(
         uint16 localCurrency,
-        uint16 depositCurrency,
+        uint16 collateralCurrency,
         address[] payers,
         uint128[] settledAmounts
     );
@@ -159,6 +159,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
     /**
      * @notice Sets a local cached version of the G_LIQUIDITY_HAIRCUT on the RiskFramework contract. This will be
      * used locally in the settlement and liquidation calculations when we pull local currency liquidity tokens.
+     * @dev skip
      */
     function setLiquidityHaircut(uint128 haircut) external override {
         require(calledByPortfolios(), $$(ErrorCode(UNAUTHORIZED_CALLER)));
@@ -193,6 +194,12 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         emit SetReserve(account);
     }
 
+    /**
+     * @notice Lists a new currency for deposits
+     * @dev governance
+     * @param token address of ERC20 or ERC777 token to list
+     * @param options a set of booleans that describe the token
+     */
     function listCurrency(address token, TokenOptions memory options) public onlyOwner {
         require(addressToCurrencyId[token] == 0 && token != WETH, $$(ErrorCode(INVALID_CURRENCY)));
 
@@ -217,7 +224,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
      * @param base the base currency
      * @param quote the quote currency
      * @param rateOracle the oracle that will give the exchange rate between the two
-     * @param haircut multiple to apply to the exchange rate that sets the collateralization ratio
+     * @param buffer multiple to apply to the exchange rate that sets the collateralization ratio
      * @param rateDecimals decimals of precision that the rate oracle uses
      * @param mustInvert true if the chainlink oracle must be inverted
      */
@@ -225,19 +232,19 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         uint16 base,
         uint16 quote,
         address rateOracle,
-        uint128 haircut,
+        uint128 buffer,
         uint128 rateDecimals,
         bool mustInvert
     ) external onlyOwner {
-        // We require that exchange rate haircuts are always greater than the settlement discount. The reason is
+        // We require that exchange rate buffers are always greater than the settlement discount. The reason is
         // that if this is not the case, it opens up the possibility that free collateral actually ends up in a worse
         // position in the event of a third party settlement.
-        require(haircut > G_SETTLEMENT_DISCOUNT, $$(ErrorCode(INVALID_HAIRCUT_SIZE)));
+        require(buffer > G_SETTLEMENT_DISCOUNT, $$(ErrorCode(INVALID_HAIRCUT_SIZE)));
         exchangeRateOracles[base][quote] = ExchangeRate(
             rateOracle,
             rateDecimals,
             mustInvert,
-            haircut
+            buffer
         );
 
         emit UpdateExchangeRate(base, quote);
@@ -299,9 +306,9 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         // Currency ID = 0 is already ETH so we don't need to convert it, unless it is negative. Then we will
         // haircut it.
         if (amounts[0] < 0) {
-            // We store the ETH haircut on the exchange rate back to itself.
-            uint128 haircut = exchangeRateOracles[0][0].haircut;
-            results[0] = amounts[0].mul(haircut).div(Common.DECIMALS);
+            // We store the ETH buffer on the exchange rate back to itself.
+            uint128 buffer = exchangeRateOracles[0][0].buffer;
+            results[0] = amounts[0].mul(buffer).div(Common.DECIMALS);
         } else {
             results[0] = amounts[0];
         }
@@ -310,10 +317,10 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
             if (amounts[i] == 0) continue;
 
             if (amounts[i] < 0) {
-                // We haircut negative amounts to enforce collateralization ratios
+                // We buffer negative amounts to enforce collateralization ratios
                 results[i] = _convertToETH(uint16(i), amounts[i], true);
             } else {
-                // We do not haircut positive amounts so that they can be used to collateralize
+                // We do not buffer positive amounts so that they can be used to collateralize
                 // other debts.
                 results[i] = _convertToETH(uint16(i), amounts[i], false);
             }
@@ -376,7 +383,8 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
     }
 
     /**
-     * @notice Transfers a balance from an ERC20 token contract into the Escrow.
+     * @notice Transfers a balance from an ERC20 token contract into the Escrow. Do not call this for ERC777 transfers, use
+     * the `send` method instead.
      * @dev - INVALID_CURRENCY: token address supplied is not a valid currency
      * @param token token contract to send from
      * @param amount tokens to transfer
@@ -540,86 +548,86 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
 
     /********** Withdraw / Deposit Methods ***********/
 
-    /********** Collateral / Cash Management *********/
+    /********** Cash Management *********/
 
     /**
-     * @notice Transfers the collateral required between the Future Cash Market and the specified account. Collateral
-     * held by the Future Cash Market is available to purchase in the liquidity pools.
+     * @notice Transfers the cash required between the Market and the specified account. Cash
+     * held by the Market is available to purchase in the liquidity pools.
      * @dev skip
      * @param account the account to withdraw collateral from
-     * @param futureCashGroupId the future cash group used to authenticate the future cash market
+     * @param cashGroupId the cash group used to authenticate the fCash market
      * @param value the amount of collateral to deposit
      * @param fee the amount of `value` to pay as a fee
      */
     function depositIntoMarket(
         address account,
-        uint8 futureCashGroupId,
+        uint8 cashGroupId,
         uint128 value,
         uint128 fee
     ) external override {
-        // Only the future cash market is allowed to call this function.
-        Common.FutureCashGroup memory fg = Portfolios().getFutureCashGroup(futureCashGroupId);
-        require(msg.sender == fg.futureCashMarket, $$(ErrorCode(UNAUTHORIZED_CALLER)));
+        // Only the fCash market is allowed to call this function.
+        Common.CashGroup memory cg = Portfolios().getCashGroup(cashGroupId);
+        require(msg.sender == cg.cashMarket, $$(ErrorCode(UNAUTHORIZED_CALLER)));
 
         if (fee > 0) {
-            cashBalances[fg.currency][G_RESERVE_ACCOUNT] = cashBalances[fg.currency][G_RESERVE_ACCOUNT]
+            cashBalances[cg.currency][G_RESERVE_ACCOUNT] = cashBalances[cg.currency][G_RESERVE_ACCOUNT]
                 .add(fee);
         }
 
-        cashBalances[fg.currency][msg.sender] = cashBalances[fg.currency][msg.sender].add(value);
-        int256 balance = cashBalances[fg.currency][account];
-        cashBalances[fg.currency][account] = balance.subNoNeg(value.add(fee));
+        cashBalances[cg.currency][msg.sender] = cashBalances[cg.currency][msg.sender].add(value);
+        int256 balance = cashBalances[cg.currency][account];
+        cashBalances[cg.currency][account] = balance.subNoNeg(value.add(fee));
     }
 
     /**
-     * @notice Transfers the collateral required between the Future Cash Market and the specified account. Collateral
-     * held by the Future Cash Market is available to purchase in the liquidity pools.
+     * @notice Transfers the cash required between the Market and the specified account. Cash
+     * held by the Market is available to purchase in the liquidity pools.
      * @dev skip
-     * @param account the account to withdraw collateral from
-     * @param futureCashGroupId the future cash group used to authenticate the future cash market
-     * @param value the amount of collateral to deposit
+     * @param account the account to withdraw cash from
+     * @param cashGroupId the cash group used to authenticate the fCash market
+     * @param value the amount of cash to deposit
      * @param fee the amount of `value` to pay as a fee
      */
     function withdrawFromMarket(
         address account,
-        uint8 futureCashGroupId,
+        uint8 cashGroupId,
         uint128 value,
         uint128 fee
     ) external override {
-        // Only the future cash market is allowed to call this function.
-        Common.FutureCashGroup memory fg = Portfolios().getFutureCashGroup(futureCashGroupId);
-        require(msg.sender == fg.futureCashMarket, $$(ErrorCode(UNAUTHORIZED_CALLER)));
+        // Only the fCash market is allowed to call this function.
+        Common.CashGroup memory cg = Portfolios().getCashGroup(cashGroupId);
+        require(msg.sender == cg.cashMarket, $$(ErrorCode(UNAUTHORIZED_CALLER)));
 
         if (fee > 0) {
-            cashBalances[fg.currency][G_RESERVE_ACCOUNT] = cashBalances[fg.currency][G_RESERVE_ACCOUNT]
+            cashBalances[cg.currency][G_RESERVE_ACCOUNT] = cashBalances[cg.currency][G_RESERVE_ACCOUNT]
                 .add(fee);
         }
 
-        cashBalances[fg.currency][account] = cashBalances[fg.currency][account].add(value.sub(fee));
+        cashBalances[cg.currency][account] = cashBalances[cg.currency][account].add(value.sub(fee));
 
-        int256 balance = cashBalances[fg.currency][msg.sender];
-        cashBalances[fg.currency][msg.sender] = balance.subNoNeg(value);
+        int256 balance = cashBalances[cg.currency][msg.sender];
+        cashBalances[cg.currency][msg.sender] = balance.subNoNeg(value);
     }
 
     /**
-     * @notice Adds or removes collateral from the future cash market when the portfolio is trading positions
+     * @notice Adds or removes collateral from the fCash market when the portfolio is trading positions
      * as a result of settlement or liquidation.
      * @dev skip
      * @param currency the currency group of the collateral
-     * @param futureCashMarket the address of the future cash market to transfer between
+     * @param cashMarket the address of the fCash market to transfer between
      * @param amount the amount to transfer
      */
-    function unlockCollateral(
+    function unlockCurrentCash(
         uint16 currency,
-        address futureCashMarket,
+        address cashMarket,
         int256 amount
     ) external override {
         require(calledByPortfolios(), $$(ErrorCode(UNAUTHORIZED_CALLER)));
 
         // The methods that calls this function will handle management of the collateral that is added or removed from
         // the market.
-        int256 balance = cashBalances[currency][futureCashMarket];
-        cashBalances[currency][futureCashMarket] = balance.subNoNeg(amount);
+        int256 balance = cashBalances[currency][cashMarket];
+        cashBalances[currency][cashMarket] = balance.subNoNeg(amount);
     }
 
     /**
@@ -645,18 +653,16 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         }
     }
 
-    /********** Collateral / Cash Management *********/
+    /********** Cash Management *********/
 
     /********** Settle Cash / Liquidation *************/
 
     /**
-     * @notice Settles the cash balances between the payers and receivers in batch
+     * @notice Settles the cash balances of payers in batch
      * @dev - INVALID_CURRENCY: currency specified is invalid
-     *  - COUNTERPARTY_CANNOT_BE_SELF: payer and receiver cannot be the same address
-     *  - INCORRECT_CASH_BALANCE: payer or receiver does not have sufficient cash balance to settle
+     *  - INCORRECT_CASH_BALANCE: payer does not have sufficient cash balance to settle
      *  - INVALID_EXCHANGE_RATE: exchange rate returned by the oracle is less than 0
      *  - NO_EXCHANGE_LISTED_FOR_PAIR: cannot settle cash because no exchange is listed for the pair
-     *  - CANNOT_SETTLE_PRICE_DISCREPENCY: cannot settle due to a discrepency or slippage in Uniswap
      *  - INSUFFICIENT_COLLATERAL_FOR_SETTLEMENT: not enough collateral to settle on the exchange
      *  - RESERVE_ACCOUNT_HAS_INSUFFICIENT_BALANCE: settling requires the reserve account, but there is insufficient
      * balance to do so
@@ -704,12 +710,9 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
 
     /**
      * @notice Settles the cash balance between the payer and the receiver.
-     * @dev - INVALID_SWAP: portfolio contains an invalid swap, this would be system level error
-     *  - COUNTERPARTY_CANNOT_BE_SELF: payer and receiver cannot be the same address
-     *  - INCORRECT_CASH_BALANCE: payer or receiver does not have sufficient cash balance to settle
+     * @dev - INCORRECT_CASH_BALANCE: payer or receiver does not have sufficient cash balance to settle
      *  - INVALID_EXCHANGE_RATE: exchange rate returned by the oracle is less than 0
      *  - NO_EXCHANGE_LISTED_FOR_PAIR: cannot settle cash because no exchange is listed for the pair
-     *  - CANNOT_SETTLE_PRICE_DISCREPENCY: cannot settle due to a discrepency or slippage in Uniswap
      *  - INSUFFICIENT_COLLATERAL_FOR_SETTLEMENT: not enough collateral to settle on the exchange
      *  - RESERVE_ACCOUNT_HAS_INSUFFICIENT_BALANCE: settling requires the reserve account, but there is insufficient
      * balance to do so
@@ -761,7 +764,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         if (cashClaims[currency] > 0) {
             // We only try to raise collateral via liquidity tokens if the account has NPV, meaning it has
             // liquidity tokens of this currency in its portfolio
-            uint128 remainder = Portfolios().raiseCollateralViaLiquidityToken(
+            uint128 remainder = Portfolios().raiseCurrentCashViaLiquidityToken(
                 payer,
                 currency,
                 valueToSettle
@@ -786,7 +789,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
                 settledAmount = settledAmount.add(localCurrencyPurchased);
             } else if (!_hasCollateral(payer)) {
                 settledAmount = settledAmount.add(
-                    _attemptToSettleWithFutureCash(
+                    _attemptToSettleWithfCash(
                         payer,
                         currency,
                         valueToSettle - settledAmount
@@ -956,10 +959,10 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         int256[] memory netCurrencyAvailable,
         bool isLiquidate
     ) internal returns (uint128, uint128) {
-        Liquidation.DepositCurrencyParameters memory parameters;
+        Liquidation.CollateralCurrencyParameters memory parameters;
         Liquidation.RateParameters memory rateParameters;
         if (true) {
-            parameters = Liquidation.DepositCurrencyParameters(
+            parameters = Liquidation.CollateralCurrencyParameters(
                 localCurrencyRequired,
                 netCurrencyAvailable[localCurrency],
                 collateralCurrency,
@@ -987,12 +990,12 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         uint128[] memory vars = new uint128[](2);
 
         if (isLiquidate) {
-            uint128 localCurrencyHaircut = exchangeRateOracles[localCurrency][0].haircut;
+            uint128 localCurrencyBuffer = exchangeRateOracles[localCurrency][0].buffer;
             // (localCurrencyPurchased, collateralCurrencySold, ...)
             ( vars[0], vars[1], payerBalance ) = Liquidation.liquidate(
                 payer,
                 payerBalance,
-                localCurrencyHaircut,
+                localCurrencyBuffer,
                 parameters,
                 rateParameters
             );
@@ -1024,15 +1027,15 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         require(localCurrency != collateralCurrency, $$(ErrorCode(INVALID_CURRENCY)));
     }
 
-    function _attemptToSettleWithFutureCash(
+    function _attemptToSettleWithfCash(
         address payer,
         uint16 currency,
         uint128 localCurrencyRequired
     ) internal returns (uint128) {
-        // This call will attempt to sell future cash tokens in return for local currency. We do this as a last ditch effort
+        // This call will attempt to sell fCash tokens in return for local currency. We do this as a last ditch effort
         // before we dip into reserves. The free collateral position will not change as a result of this method since positive
-        // future cash (in this version) does not affect free collateral.
-        uint128 cashShortfall = Portfolios().raiseCollateralViaCashReceiver(payer, currency, localCurrencyRequired);
+        // fCash (in this version) does not affect free collateral.
+        uint128 cashShortfall = Portfolios().raiseCurrentCashViaCashReceiver(payer, currency, localCurrencyRequired);
 
         if (cashShortfall > 0 && _hasNoAssets(payer)) {
             // At this point, the portfolio has no positive future value associated with it and no collateral. It
@@ -1070,24 +1073,24 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
      * @param balance amount to convert
      * @return the converted balance denominated in ETH with 18 decimal places
      */
-    function _convertToETH(uint16 base, int256 balance, bool haircut) internal view returns (int256) {
+    function _convertToETH(uint16 base, int256 balance, bool buffer) internal view returns (int256) {
         ExchangeRate memory er = exchangeRateOracles[base][0];
         uint256 baseDecimals = currencyIdToDecimals[base];
 
-        // Fetches the latest answer from the chainlink oracle and haircut it by the apporpriate amount.
+        // Fetches the latest answer from the chainlink oracle and buffer it by the apporpriate amount.
         uint256 rate = _fetchExchangeRate(er, false);
         uint128 absBalance = uint128(balance.abs());
 
         // We are converting to ETH here so we know that it has Common.DECIMAL precision. The calculation here is:
         // baseDecimals * rateDecimals * Common.DECIMAL /  (rateDecimals * baseDecimals)
-        // er.haircut is in Common.DECIMAL precision
+        // er.buffer is in Common.DECIMAL precision
         // We use uint256 to do the calculation and then cast back to int256 to avoid overflows.
         int256 result = int256(
             SafeCast.toUint128(rate
                 .mul(absBalance)
-                .mul(haircut ? er.haircut : Common.DECIMALS)
+                .mul(buffer ? er.buffer : Common.DECIMALS)
                 .div(er.rateDecimals)
-                // Haircut has 18 decimal places of precision
+                // Buffer has 18 decimal places of precision
                 .div(baseDecimals)
             )
         );
@@ -1109,7 +1112,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
 
         // We are converting from ETH here so we know that it has Common.DECIMAL precision. The calculation here is:
         // ethDecimals * rateDecimals * baseDecimals / (ethDecimals * rateDecimals)
-        // er.haircut is in Common.DECIMAL precision
+        // er.buffer is in Common.DECIMAL precision
         // We use uint256 to do the calculation and then cast back to int256 to avoid overflows.
         int256 result = int256(
             SafeCast.toUint128(rate
@@ -1168,7 +1171,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         Common.Asset[] memory portfolio = Portfolios().getAssets(account);
         for (uint256 i; i < portfolio.length; i++) {
             // This may be cash receiver or liquidity tokens
-            if (Common.isReceiver(portfolio[i].swapType)) {
+            if (Common.isReceiver(portfolio[i].assetType)) {
                 return false;
             }
         }

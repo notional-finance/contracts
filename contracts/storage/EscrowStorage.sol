@@ -8,9 +8,7 @@ contract EscrowStorage {
     address public WETH;
 
     /**
-     * Exchange rates are defined by an oracle and an on chain exchange. In the future, these may be combined
-     * into a single contract (i.e. via Uniswap V2 price oracles). However, in this version they are separate.
-     * The rate oracle is a chainlink price oracle and on the onChainExchange is the Uniswap V1 exchange.
+     * Exchange rates between currencies
      */
     struct ExchangeRate {
         // The address of the chainlink price oracle
@@ -19,10 +17,10 @@ contract EscrowStorage {
         uint128 rateDecimals;
         // True of the exchange rate must be inverted
         bool mustInvert;
-        // Amount of haircut to apply to the exchange rate, this defines the collateralization ratio
+        // Amount of buffer to apply to the exchange rate, this defines the collateralization ratio
         // between the two currencies. This must be stored with 18 decimal precision because it is used
         // to convert to an ETH balance.
-        uint128 haircut;
+        uint128 buffer;
     }
 
     // Holds token features that can be used to check certain behaviors on deposit / withdraw.
