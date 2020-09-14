@@ -3,12 +3,12 @@ import path from 'path';
 import Debug from "debug";
 import { NotionalDeployer } from './NotionalDeployer';
 import { Contract, ethers, Wallet } from 'ethers';
-import ERC20Artifact from "../build/ERC20.json";
+import ERC20Artifact from "../build/IERC20.json";
 import CashMarketArtifact from "../build/CashMarket.json"
 import WETHArtifact from "../build/IWETH.json";
 import { JsonRpcProvider } from 'ethers/providers';
 import { CashMarket } from '../typechain/CashMarket';
-import { Erc20 } from '../typechain/Erc20';
+import { Ierc20 as Erc20 } from '../typechain/Ierc20';
 import { parseEther } from 'ethers/utils';
 import defaultAccounts from "../test/defaultAccounts.json";
 import { Iweth } from '../typechain/Iweth';
