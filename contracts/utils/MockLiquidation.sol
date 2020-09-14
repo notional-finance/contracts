@@ -8,17 +8,17 @@ import "../interface/IPortfoliosCallable.sol";
 import "./Liquidation.sol";
 
 contract MockLiquidation {
-    event TradeDepositCurrency(uint128 localToPurchase, uint128 depositToSell, int256 newPayerBalance);
-    function tradeDepositCurrency(
+    event TradeCollateralCurrency(uint128 localToPurchase, uint128 collateralToSell, int256 newPayerBalance);
+    function tradeCollateralCurrency(
         address payer,
         int256 payerBalance,
-        Liquidation.DepositCurrencyParameters memory param,
+        Liquidation.CollateralCurrencyParameters memory param,
         Liquidation.RateParameters memory rateParam
     ) public returns (uint128, uint128, int256) {
-        (uint128 localToPurchase, uint128 depositToSell, int256 newPayerBalance) = 
-            Liquidation._tradeDepositCurrency(payer, payerBalance, param, rateParam);
+        (uint128 localToPurchase, uint128 collateralToSell, int256 newPayerBalance) = 
+            Liquidation._tradeCollateralCurrency(payer, payerBalance, param, rateParam);
 
-        emit TradeDepositCurrency(localToPurchase, depositToSell, newPayerBalance);
+        emit TradeCollateralCurrency(localToPurchase, collateralToSell, newPayerBalance);
     }
 
     event LiquidityTokenTrade(uint128 cashClaimWithdrawn, uint128 localCurrencyRaised);
@@ -56,10 +56,10 @@ contract MockLiquidation {
     function calculateLocalCurrencyToTrade(
         uint128 localCurrencyRequired,
         uint128 liquidationDiscount,
-        uint128 localCurrencyHaircut,
+        uint128 localCurrencyBuffer,
         uint128 maxLocalCurrencyDebt
     ) public pure returns (uint128) {
-        return Liquidation._calculateLocalCurrencyToTrade(localCurrencyRequired, liquidationDiscount, localCurrencyHaircut, maxLocalCurrencyDebt);
+        return Liquidation._calculateLocalCurrencyToTrade(localCurrencyRequired, liquidationDiscount, localCurrencyBuffer, maxLocalCurrencyDebt);
     }
 
     function calculateLiquidityTokenHaircut(
@@ -72,32 +72,32 @@ contract MockLiquidation {
     function calculatePurchaseAmounts(
         uint128 haircutClaim,
         uint128 maxLocalCurrencyToTrade,
-        Liquidation.DepositCurrencyParameters memory param,
+        Liquidation.CollateralCurrencyParameters memory param,
         Liquidation.RateParameters memory rateParam
     ) public pure returns (uint128, uint128, uint128) {
         return Liquidation._calculatePurchaseAmounts(haircutClaim, maxLocalCurrencyToTrade, param, rateParam);
     }
 
-    function calculateDepositToSell(
+    function calculateCollateralToSell(
         uint256 rate,
         uint256 rateDecimals,
         uint128 discountFactor,
         uint128 localCurrencyRequired,
         uint256 localDecimals,
-        uint256 depositDecimals
+        uint256 collateralDecimals
     ) public pure returns (uint128) {
-        return Liquidation._calculateDepositToSell(rate, rateDecimals, discountFactor, localCurrencyRequired, localDecimals, depositDecimals);
+        return Liquidation._calculateCollateralToSell(rate, rateDecimals, discountFactor, localCurrencyRequired, localDecimals, collateralDecimals);
     }
 
-    function transferDepositBalances(
+    function calculateCollateralBalances(
         address payer,
         int256 payerBalance,
-        uint16 depositCurrency,
-        uint128 depositToSell,
+        uint16 collateralCurrency,
+        uint128 collateralToSell,
         uint128 amountToRaise,
         address Portfolios
     ) public returns (int256) {
-        return Liquidation._transferDepositBalances(payer, payerBalance, depositCurrency, depositToSell, amountToRaise, IPortfoliosCallable(Portfolios));
+        return Liquidation._calculateCollateralBalances(payer, payerBalance, collateralCurrency, collateralToSell, amountToRaise, IPortfoliosCallable(Portfolios));
     }
 }
 
@@ -135,7 +135,7 @@ contract MockPortfolios {
         return (uint128(cashClaim), uint128(fCashClaim));
     }
 
-    function raiseCollateralViaLiquidityToken(
+    function raiseCurrentCashViaLiquidityToken(
         address /* account */,
         uint16 /* currency */,
         uint128 amount

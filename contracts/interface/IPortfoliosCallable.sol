@@ -6,9 +6,9 @@ import "../utils/Common.sol";
 interface IPortfoliosCallable {
     function getAssets(address account) external view returns (Common.Asset[] memory);
 
-    function getFutureCashGroup(uint8 futureCashGroupId) external view returns (Common.FutureCashGroup memory);
+    function getCashGroup(uint8 cashGroupId) external view returns (Common.CashGroup memory);
 
-    function getFutureCashGroups(uint8[] calldata groupIds) external view returns (Common.FutureCashGroup[] memory);
+    function getCashGroups(uint8[] calldata groupIds) external view returns (Common.CashGroup[] memory);
 
     function settleMaturedAssets(address account) external;
 
@@ -18,7 +18,7 @@ interface IPortfoliosCallable {
 
     function upsertAccountAssetBatch(address account, Common.Asset[] calldata assets, bool checkFreeCollateral) external;
 
-    function mintFutureCashPair(address payer, address receiver, uint8 futureCashGroupId, uint32 maturity, uint128 notional) external;
+    function mintfCashPair(address payer, address receiver, uint8 cashGroupId, uint32 maturity, uint128 notional) external;
 
     function freeCollateral(address account) external returns (int256, int256[] memory, int256[] memory);
 
@@ -33,8 +33,8 @@ interface IPortfoliosCallable {
     function transferAccountAsset(
         address from,
         address to,
-        bytes1 swapType,
-        uint8 futureCashGroupId,
+        bytes1 assetType,
+        uint8 cashGroupId,
         uint16 instrumentId,
         uint32 maturity,
         uint128 value
@@ -42,19 +42,19 @@ interface IPortfoliosCallable {
 
     function searchAccountAsset(
         address account,
-        bytes1 swapType,
-        uint8 futureCashGroupId,
+        bytes1 assetType,
+        uint8 cashGroupId,
         uint16 instrumentId,
         uint32 maturity
     ) external view returns (Common.Asset memory, uint256);
 
-    function raiseCollateralViaLiquidityToken(
+    function raiseCurrentCashViaLiquidityToken(
         address account,
         uint16 currency,
         uint128 amount
     ) external returns (uint128);
 
-    function raiseCollateralViaCashReceiver(
+    function raiseCurrentCashViaCashReceiver(
         address account,
         uint16 currency,
         uint128 amount

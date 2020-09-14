@@ -13,20 +13,21 @@ import { Wallet } from "ethers";
 import { WeiPerEther } from "ethers/constants";
 
 import {Ierc20 as ERC20} from "../typechain/Ierc20";
-import { FutureCash } from "../typechain/FutureCash";
+import { CashMarket } from "../typechain/CashMarket";
 import { ErrorDecoder, ErrorCodes } from "../scripts/errorCodes";
 import { Escrow } from "../typechain/Escrow";
 import { Portfolios } from "../typechain/Portfolios";
 import { MockAggregator } from "../mocks/MockAggregator";
 import { TestUtils, BLOCK_TIME_LIMIT } from "./testUtils";
 import { parseEther } from "ethers/utils";
+import { Iweth } from '../typechain/Iweth';
 
 chai.use(solidity);
 const { expect } = chai;
 
 describe("Liquidation", () => {
     let dai: ERC20;
-    let futureCash: FutureCash;
+    let futureCash: CashMarket;
     let escrow: Escrow;
     let portfolios: Portfolios;
     let chainlink: MockAggregator;
@@ -36,6 +37,7 @@ describe("Liquidation", () => {
     let maturities: number[];
     let rateAnchor: number;
     let t: TestUtils;
+    let weth: Iweth;
 
     beforeEach(async () => {
         owner = wallets[0];
@@ -44,10 +46,11 @@ describe("Liquidation", () => {
         let objs = await fixtureLoader(fixture);
 
         dai = objs.erc20;
-        futureCash = objs.futureCash;
+        futureCash = objs.cashMarket;
         escrow = objs.escrow;
         portfolios = objs.portfolios;
         chainlink = objs.chainlink;
+        weth = objs.weth;
 
         await dai.transfer(wallet.address, WeiPerEther.mul(10_000));
         await dai.transfer(wallet2.address, WeiPerEther.mul(10_000));
@@ -147,7 +150,7 @@ describe("Liquidation", () => {
             await escrow.connect(wallet).deposit(dai.address, WeiPerEther.mul(1000));
             await futureCash
                 .connect(wallet)
-                .takeCollateral(maturities[0], WeiPerEther.mul(200), BLOCK_TIME_LIMIT, 60_000_000);
+                .takeCurrentCash(maturities[0], WeiPerEther.mul(200), BLOCK_TIME_LIMIT, 60_000_000);
             await futureCash
                 .connect(wallet)
                 .addLiquidity(maturities[1], WeiPerEther.mul(500), WeiPerEther.mul(500), 0, 100_000_000, BLOCK_TIME_LIMIT);
@@ -169,7 +172,7 @@ describe("Liquidation", () => {
             await escrow.connect(wallet).deposit(dai.address, WeiPerEther.mul(1000));
             await futureCash
                 .connect(wallet)
-                .takeCollateral(maturities[0], WeiPerEther.mul(200), BLOCK_TIME_LIMIT, 60_000_000);
+                .takeCurrentCash(maturities[0], WeiPerEther.mul(200), BLOCK_TIME_LIMIT, 60_000_000);
             await futureCash
                 .connect(wallet)
                 .addLiquidity(maturities[1], WeiPerEther.mul(200), WeiPerEther.mul(200), 0, 100_000_000, BLOCK_TIME_LIMIT);
@@ -217,7 +220,8 @@ describe("Liquidation", () => {
         });
 
         it("[6] should settle cash between accounts when eth must be sold", async () => {
-            await escrow.connect(wallet2).deposit(dai.address, WeiPerEther.mul(1000));
+            const settlerDaiBalanceBefore = await dai.balanceOf(wallet2.address);
+            const settlerEthBalanceBefore = await weth.balanceOf(wallet2.address);
             const [ethAmount] = await t.borrowAndWithdraw(wallet, WeiPerEther.mul(100), 1.5);
 
             await t.mineAndSettleAccount([owner, wallet, wallet2]);
@@ -231,16 +235,19 @@ describe("Liquidation", () => {
             expect(await escrow.cashBalances(CURRENCY.ETH, wallet.address)).to.equal(
                 ethAmount.sub(ethPurchased)
             );
-            expect(await escrow.cashBalances(CURRENCY.ETH, wallet2.address)).to.equal(ethPurchased);
+
+            const settlerEthBalanceAfter = await weth.balanceOf(wallet2.address);
+            expect(settlerEthBalanceAfter.sub(settlerEthBalanceBefore)).to.equal(ethPurchased);
 
             // 100 Dai has been transfered to the owner wallet in exchange for ETH.
-            expect(await escrow.cashBalances(CURRENCY.DAI, wallet2.address)).to.equal(WeiPerEther.mul(900));
+            const settlerDaiBalanceAfter = await dai.balanceOf(wallet2.address);
+            expect(settlerDaiBalanceBefore.sub(settlerDaiBalanceAfter)).to.equal(parseEther("100"));
         });
 
     });
 
-    describe("settle cash w/ future cash scenarios [7-8]", async () => {
-        it("[7] should sell future cash and use the reserve account to settle cash", async () => {
+    describe("settle cash w/ fCash scenarios [7-8]", async () => {
+        it("[7] should sell fCash and use the reserve account to settle cash", async () => {
             // This is required for the settling account
             await escrow.deposit(dai.address, WeiPerEther.mul(1000));
             await t.setupSellFutureCash(wallet2, wallet, WeiPerEther.mul(120), WeiPerEther.mul(100));
@@ -250,7 +257,7 @@ describe("Liquidation", () => {
             const walletDaiBalance = await escrow.cashBalances(CURRENCY.DAI, wallet.address);
 
             const blockTime = await fastForwardToTime(provider);
-            const futureCashPrice = await futureCash.getFutureCashToCollateralAtTime(
+            const futureCashPrice = await futureCash.getfCashToCurrentCashAtTime(
                 maturities[1],
                 WeiPerEther.mul(100),
                 blockTime
@@ -258,13 +265,13 @@ describe("Liquidation", () => {
             const [isSettled] = await t.settleCashBalance(wallet);
             expect(isSettled).to.be.true;
 
-            // Expect future cash to be sold and part of the reserve to be reduced
+            // Expect fCash to be sold and part of the reserve to be reduced
             expect(await portfolios.getAssets(wallet.address)).to.have.lengthOf(0);
             const reserveBalanceDiff = parseEther("1000").sub(await escrow.cashBalances(CURRENCY.DAI, wallet2.address));
             expect(walletDaiBalance.add(futureCashPrice).add(reserveBalanceDiff)).to.equal(0);
         });
 
-        it("[7] should sell future cash and use the reserve account to partially settle cash", async () => {
+        it("[7] should sell fCash and use the reserve account to partially settle cash", async () => {
             // This is required for the settling account
             await escrow.deposit(dai.address, parseEther("1000"));
             await t.setupSellFutureCash(wallet2, wallet, WeiPerEther.mul(120), WeiPerEther.mul(100));
@@ -282,7 +289,7 @@ describe("Liquidation", () => {
             expect(ownerCashBalance).to.be.above(0);
         });
 
-        it("[8] should sell future cash to settle cash", async () => {
+        it("[8] should sell fCash to settle cash", async () => {
             await escrow.deposit(dai.address, WeiPerEther.mul(1000));
             await t.setupSellFutureCash(wallet2, wallet, WeiPerEther.mul(50), WeiPerEther.mul(100));
             expect(await t.isCollateralized(wallet)).to.be.false;
@@ -291,7 +298,7 @@ describe("Liquidation", () => {
 
             const cashBalance = await escrow.cashBalances(CURRENCY.DAI, wallet.address);
             const blockTime = await fastForwardToTime(provider);
-            const futureCashPrice = await futureCash.getFutureCashToCollateralAtTime(
+            const futureCashPrice = await futureCash.getfCashToCurrentCashAtTime(
                 maturities[1],
                 WeiPerEther.mul(100),
                 blockTime
@@ -304,13 +311,13 @@ describe("Liquidation", () => {
             expect(await escrow.cashBalances(CURRENCY.DAI, wallet2.address)).to.equal(WeiPerEther.mul(1000));
         });
 
-        it("[9] should partially settle accounts when selling future cash fails", async () => {
+        it("[9] should partially settle accounts when selling fCash fails", async () => {
             // This is required for the settling account
             await escrow.deposit(dai.address, WeiPerEther.mul(1000));
             await t.setupSellFutureCash(wallet2, wallet, WeiPerEther.mul(120), WeiPerEther.mul(100));
             expect(await t.isCollateralized(wallet)).to.be.false;
 
-            // Remove liquidity in maturity[1] so that future cash does not trade
+            // Remove liquidity in maturity[1] so that fCash does not trade
             await futureCash.removeLiquidity(maturities[1], WeiPerEther.mul(10_000), BLOCK_TIME_LIMIT);
             await t.mineAndSettleAccount([owner, wallet, wallet2]);
 
@@ -331,7 +338,7 @@ describe("Liquidation", () => {
             await escrow.connect(wallet).depositEth({ value: WeiPerEther.mul(5) });
             await futureCash
                 .connect(wallet)
-                .takeCollateral(maturities[0], WeiPerEther.mul(100), BLOCK_TIME_LIMIT, 60_000_000);
+                .takeCurrentCash(maturities[0], WeiPerEther.mul(100), BLOCK_TIME_LIMIT, 60_000_000);
 
             expect((await portfolios.freeCollateralView(wallet.address))[0]).to.be.above(0);
             await expect(escrow.liquidate(wallet.address, CURRENCY.DAI, CURRENCY.ETH)).to.be.revertedWith(
@@ -340,25 +347,21 @@ describe("Liquidation", () => {
         });
 
         it("[2] should recollateralize an account using just liquidity tokens before it touches eth", async () => {
-            await escrow.deposit(dai.address, WeiPerEther.mul(1000));
-
-            await escrow.connect(wallet).deposit(dai.address, parseEther("90"));
-            await futureCash.addLiquidity(maturities[1], parseEther("90"), parseEther("90"), 0, 100_000_000, BLOCK_TIME_LIMIT);
+            await escrow.connect(wallet).deposit(dai.address, parseEther("10"));
+            await futureCash.connect(wallet).addLiquidity(maturities[1], parseEther("10"), parseEther("10"), 0, 100_000_000, BLOCK_TIME_LIMIT);
             const [ethBalanceBefore] = await t.borrowAndWithdraw(wallet, parseEther("100"));
-            await escrow.connect(wallet).withdrawEth(ethBalanceBefore.sub(parseEther("0.14")));
 
-            const newRate = parseEther("0.011");
+            const newRate = parseEther("0.013");
             await chainlink.setAnswer(newRate);
             expect(await t.isCollateralized(wallet)).to.be.false;
 
             await escrow.liquidate(wallet.address, CURRENCY.DAI, CURRENCY.ETH);
 
             expect(await t.hasLiquidityToken(wallet, maturities[1])).to.be.false;
-            expect(await escrow.cashBalances(CURRENCY.ETH, wallet.address)).to.be.below(parseEther("0.2"));
+            expect(await escrow.cashBalances(CURRENCY.ETH, wallet.address)).to.be.below(ethBalanceBefore);
         });
 
         it("[3] should liquidate an account when it is under collateralized by eth", async () => {
-            await escrow.deposit(dai.address, WeiPerEther.mul(1000));
             const [ethBalanceBefore, ] = await t.borrowAndWithdraw(wallet, parseEther("100"));
 
             // Change this via chainlink
@@ -380,7 +383,7 @@ describe("Liquidation", () => {
                 .mul(WeiPerEther)
                 .mul(WeiPerEther)
                 .div(newRate)
-                .div(exchangeRate.haircut.sub(liquidationBonus));
+                .div(exchangeRate.buffer.sub(liquidationBonus));
             
             const ethPurchased = daiPurchased
                 .mul(newRate)
@@ -394,8 +397,8 @@ describe("Liquidation", () => {
         });
 
         it("[3] should account for dai when partially liquidating an account", async () => {
-            // This is for the liquidator
-            await escrow.deposit(dai.address, WeiPerEther.mul(1000));
+            const liquidatorEthBalanceBefore = await weth.balanceOf(owner.address);
+            const liquidatorDaiBalanceBefore = await dai.balanceOf(owner.address);
 
             const [ethBalanceBefore, collateralAmount] = await t.borrowAndWithdraw(wallet, parseEther("100"));
             const daiLeft = collateralAmount.sub(parseEther("50"));
@@ -419,7 +422,7 @@ describe("Liquidation", () => {
                 .mul(WeiPerEther)
                 .mul(WeiPerEther)
                 .div(newRate)
-                .div(exchangeRate.haircut.sub(liquidationBonus));
+                .div(exchangeRate.buffer.sub(liquidationBonus));
 
             const ethPurchased = daiPurchased
                 .mul(newRate)
@@ -428,24 +431,14 @@ describe("Liquidation", () => {
                 .div(WeiPerEther);
 
             expect(ethBalanceBefore.sub(ethBalanceAfter).div(100)).to.equal(ethPurchased.div(100));
-            expect((await escrow.cashBalances(CURRENCY.ETH, owner.address)).div(100)).to.equal(ethPurchased.div(100));
-            expect((await escrow.cashBalances(CURRENCY.DAI, owner.address)).div(100)).to.equal(
-                WeiPerEther.mul(1000).sub(daiPurchased).div(100)
+
+
+            const liquidatorEthBalanceAfter = await weth.balanceOf(owner.address);
+            const liquidatorDaiBalanceAfter = await dai.balanceOf(owner.address);
+            expect((liquidatorEthBalanceAfter.sub(liquidatorEthBalanceBefore)).div(100)).to.equal(ethPurchased.div(100));
+            expect((liquidatorDaiBalanceBefore.sub(daiPurchased)).div(100)).to.equal(
+                liquidatorDaiBalanceAfter.div(100)
             );
-        });
-
-        it("[3] leave dai raised in the account if it cannot repay the cash payer", async () => {
-            await escrow.deposit(dai.address, WeiPerEther.mul(1000));
-            await t.borrowAndWithdraw(wallet, WeiPerEther.mul(100), 1.3);
-            await chainlink.setAnswer(parseEther("0.014"));
-            expect(await t.isCollateralized(wallet)).to.be.false;
-
-            // This prevents trades from happening at the maturity
-            await futureCash.removeLiquidity(maturities[0], WeiPerEther.mul(10_000), BLOCK_TIME_LIMIT);
-
-            await escrow.liquidate(wallet.address, CURRENCY.DAI, CURRENCY.ETH);
-            expect(await t.hasCashPayer(wallet, maturities[0], WeiPerEther.mul(100))).to.be.true;
-            expect(await t.isCollateralized(wallet)).to.be.true;
         });
     });
 });

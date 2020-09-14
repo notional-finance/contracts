@@ -36,13 +36,13 @@ abstract contract ERC1155Base is Governed, IERC1155, IERC165 {
      * @return The account's balance of the token type requested
      */
     function balanceOf(address account, uint256 id) external override view returns (uint256) {
-        bytes1 swapType = Common.getSwapType(id);
+        bytes1 assetType = Common.getAssetType(id);
 
-        (uint8 futureCashGroupId, uint16 instrumentId, uint32 maturity) = Common.decodeAssetId(id);
+        (uint8 cashGroupId, uint16 instrumentId, uint32 maturity) = Common.decodeAssetId(id);
         (Common.Asset memory asset, ) = Portfolios().searchAccountAsset(
             account,
-            swapType,
-            futureCashGroupId,
+            assetType,
+            cashGroupId,
             instrumentId,
             maturity
         );
@@ -83,19 +83,19 @@ abstract contract ERC1155Base is Governed, IERC1155, IERC165 {
 
     /**
      * @notice Encodes a asset object into a uint256 id for ERC1155 compatibility
-     * @param futureCashGroupId future cash group id
+     * @param cashGroupId cash group id
      * @param instrumentId instrument id
      * @param maturity maturity of the asset
-     * @param swapType swap type identifier
+     * @param assetType asset type identifier
      * @return a uint256 id that is representative of a matching fungible token
      */
     function encodeAssetId(
-        uint8 futureCashGroupId,
+        uint8 cashGroupId,
         uint16 instrumentId,
         uint32 maturity,
-        bytes1 swapType
+        bytes1 assetType
     ) external pure returns (uint256) {
-        Common.Asset memory asset = Common.Asset(futureCashGroupId, instrumentId, maturity, swapType, 0, 0);
+        Common.Asset memory asset = Common.Asset(cashGroupId, instrumentId, maturity, assetType, 0, 0);
 
         return Common.encodeAssetId(asset);
     }
@@ -103,7 +103,7 @@ abstract contract ERC1155Base is Governed, IERC1155, IERC165 {
     /**
      * @notice Decodes an ERC1155 id into its attributes
      * @param id the asset id to decode
-     * @return (futureCashGroupId, instrumentId, maturity, swapType)
+     * @return (cashGroupId, instrumentId, maturity, assetType)
      */
     function decodeAssetId(uint256 id)
         external
@@ -115,10 +115,10 @@ abstract contract ERC1155Base is Governed, IERC1155, IERC165 {
             bytes1
         )
     {
-        bytes1 swapType = Common.getSwapType(id);
-        (uint8 futureCashGroupId, uint16 instrumentId, uint32 maturity) = Common.decodeAssetId(id);
+        bytes1 assetType = Common.getAssetType(id);
+        (uint8 cashGroupId, uint16 instrumentId, uint32 maturity) = Common.decodeAssetId(id);
 
-        return (futureCashGroupId, instrumentId, maturity, swapType);
+        return (cashGroupId, instrumentId, maturity, assetType);
     }
 
     /**

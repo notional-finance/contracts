@@ -1,4 +1,4 @@
-import {SwapnetDeployer, CoreContracts} from "./SwapnetDeployer";
+import {NotionalDeployer, CoreContracts} from "./NotionalDeployer";
 import {config} from "dotenv";
 import Debug from "debug";
 import { Wallet } from "ethers";
@@ -20,14 +20,14 @@ async function main() {
         new JsonRpcProvider(process.env.TESTNET_PROVIDER)
     );
 
-    const swapnet = await SwapnetDeployer.restoreFromFile(process.env.CONTRACTS_FILE as string, owner);
+    const notional = await NotionalDeployer.restoreFromFile(process.env.CONTRACTS_FILE as string, owner);
 
     log(`Upgrading Escrow contract on kovan testnet`);
-    await swapnet.upgradeContract(CoreContracts.Escrow, EscrowArtifact);
+    await notional.upgradeContract(CoreContracts.Escrow, EscrowArtifact);
     log(`Upgrading ERC1155 Token contract on kovan testnet`);
-    await swapnet.upgradeContract(CoreContracts.ERC1155Token, ERC1155TokenArtifact);
+    await notional.upgradeContract(CoreContracts.ERC1155Token, ERC1155TokenArtifact);
     log(`Upgrading Portfolios contract on kovan testnet`);
-    await swapnet.upgradeContract(CoreContracts.Portfolios, PortfoliosArtifact);
+    await notional.upgradeContract(CoreContracts.Portfolios, PortfoliosArtifact);
     log(`Completed at block height ${await owner.provider.getBlockNumber()}`);
 }
 

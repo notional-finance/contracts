@@ -4,7 +4,7 @@ pragma experimental ABIEncoderV2;
 import "../lib/SafeMath.sol";
 
 /**
- * @notice Contains all the structs and convenience methods for Swapnet contracts.
+ * @notice Contains all the structs and convenience methods for Notional contracts.
  */
 library Common {
     using SafeMath for uint256;
@@ -40,15 +40,15 @@ library Common {
      * Each asset object is a 32 byte word stored in the portfolio.
      */
     struct Asset {
-        // The future cash group id for this asset
-        uint8 futureCashGroupId;
+        // The cash group id for this asset
+        uint8 cashGroupId;
         // The instrument id for this asset
         uint16 instrumentId;
         // When this asset matures, in seconds
         uint32 maturity;
         // A 1 byte bitfield defined above that contains instrument agnostic
         // information about a asset (i.e. payer or receiver, periodic or nonperiodic)
-        bytes1 swapType;
+        bytes1 assetType;
         // The rate for this asset
         uint32 rate;
         // The notional for this asset
@@ -61,19 +61,19 @@ library Common {
      * against each other. Also defines the other parameters that will apply to all the instruments in
      * the group such that their risk ladders can net against each other.
      *
-     * Each risk ladder is defined by its maturity cadence which maps to an underlying future cash market,
-     * therefore each Instrument Group will map to a future cash market called `futureCashMarket`.
+     * Each risk ladder is defined by its maturity cadence which maps to an underlying fCash market,
+     * therefore each Instrument Group will map to a fCash market called `cashMarket`.
      */
-    struct FutureCashGroup {
-        // The maximum number of future periods that instruments in this group will asset
-        uint32 numPeriods;
-        // The size of periods (in seconds) for all instruments in this group
-        uint32 periodSize;
+    struct CashGroup {
+        // The maximum number of future maturities that instruments in this group will asset
+        uint32 numMaturities;
+        // The size of maturities (in seconds) for all instruments in this group
+        uint32 maturityLength;
         // The precision of the discount rate oracle
         uint32 precision;
         // The discount rate oracle that applies to all instruments in this group
-        address futureCashMarket;
-        // The currency group identifier for this future cash group
+        address cashMarket;
+        // The currency group identifier for this cash group
         uint16 currency;
     }
 
@@ -100,8 +100,8 @@ library Common {
     }
 
     enum TradeType {
-        TakeCollateral,
-        TakeFutureCash,
+        TakeCurrentCash,
+        TakefCash,
         AddLiquidity,
         RemoveLiquidity
     }
@@ -111,7 +111,7 @@ library Common {
      */
     struct Trade {
         TradeType tradeType;
-        uint8 futureCashGroup;
+        uint8 cashGroup;
         uint32 maturity;
         uint128 amount;
         bytes slippageData;
@@ -121,64 +121,64 @@ library Common {
      * Checks if a asset is a periodic asset, i.e. it matures on the cadence
      * defined by its Instrument Group.
      */
-    function isPeriodic(bytes1 swapType) internal pure returns (bool) {
-        return ((swapType & MASK_PERIODIC) == MASK_PERIODIC);
+    function isPeriodic(bytes1 assetType) internal pure returns (bool) {
+        return ((assetType & MASK_PERIODIC) == MASK_PERIODIC);
     }
 
     /**
      * Checks if a asset is a payer, meaning that the asset is an obligation
      * to pay cash when the asset matures.
      */
-    function isPayer(bytes1 swapType) internal pure returns (bool) {
-        return ((swapType & MASK_PAYER) == MASK_PAYER);
+    function isPayer(bytes1 assetType) internal pure returns (bool) {
+        return ((assetType & MASK_PAYER) == MASK_PAYER);
     }
 
     /**
      * Checks if a asset is a receiver, meaning that the asset is an entitlement
      * to recieve cash when asset matures.
      */
-    function isReceiver(bytes1 swapType) internal pure returns (bool) {
-        return ((swapType & MASK_RECEIVER) == MASK_RECEIVER);
+    function isReceiver(bytes1 assetType) internal pure returns (bool) {
+        return ((assetType & MASK_RECEIVER) == MASK_RECEIVER);
     }
 
     /**
      * Checks if a asset is a liquidity token, which represents a claim on collateral
-     * and future cash in a future cash market. The liquidity token can only be stored
+     * and fCash in a fCash market. The liquidity token can only be stored
      * as a receiver in the portfolio, but it can be marked as a payer in memory when
      * the contracts remove liquidity.
      */
-    function isLiquidityToken(bytes1 swapType) internal pure returns (bool) {
-        return ((swapType & MASK_ORDER) == MASK_ORDER && (swapType & MASK_CASH) == MASK_CASH);
+    function isLiquidityToken(bytes1 assetType) internal pure returns (bool) {
+        return ((assetType & MASK_ORDER) == MASK_ORDER && (assetType & MASK_CASH) == MASK_CASH);
     }
 
     /**
-     * Checks if an object is a future cash token.
+     * Checks if an object is a fCash token.
      */
-    function isCash(bytes1 swapType) internal pure returns (bool) {
-        return ((swapType & MASK_ORDER) == 0x00 && (swapType & MASK_CASH) == MASK_CASH);
+    function isCash(bytes1 assetType) internal pure returns (bool) {
+        return ((assetType & MASK_ORDER) == 0x00 && (assetType & MASK_CASH) == MASK_CASH);
     }
 
-    function isCashPayer(bytes1 swapType) internal pure returns (bool) {
-        return isCash(swapType) && isPayer(swapType);
+    function isCashPayer(bytes1 assetType) internal pure returns (bool) {
+        return isCash(assetType) && isPayer(assetType);
     }
 
-    function isCashReceiver(bytes1 swapType) internal pure returns (bool) {
-        return isCash(swapType) && isReceiver(swapType) && !isLiquidityToken(swapType);
+    function isCashReceiver(bytes1 assetType) internal pure returns (bool) {
+        return isCash(assetType) && isReceiver(assetType) && !isLiquidityToken(assetType);
     }
 
     /**
      * Changes a asset into its counterparty asset.
      */
-    function makeCounterparty(bytes1 swapType) internal pure returns (bytes1) {
-        if (isPayer(swapType)) {
-            return ((swapType & ~(MASK_PAYER)) | MASK_RECEIVER);
+    function makeCounterparty(bytes1 assetType) internal pure returns (bytes1) {
+        if (isPayer(assetType)) {
+            return ((assetType & ~(MASK_PAYER)) | MASK_RECEIVER);
         } else {
-            return ((swapType & ~(MASK_RECEIVER)) | MASK_PAYER);
+            return ((assetType & ~(MASK_RECEIVER)) | MASK_PAYER);
         }
     }
 
     /**
-     * Returns a liquidity token swap type, this is marked as receiver that
+     * Returns a liquidity token asset type, this is marked as receiver that
      * will be stored in the portfolio.
      */
     function getLiquidityToken() internal pure returns (bytes1) {
@@ -194,9 +194,9 @@ library Common {
     }
 
     /**
-     * Returns the swap type from an encoded asset id.
+     * Returns the asset type from an encoded asset id.
      */
-    function getSwapType(uint256 id) internal pure returns (bytes1) {
+    function getAssetType(uint256 id) internal pure returns (bytes1) {
         return bytes1(bytes32(id) << 248);
     }
 
@@ -207,10 +207,10 @@ library Common {
      * a portfolio will be sorted by `Common._sortPortfolio`.
      */
     function encodeAssetId(Asset memory asset) internal pure returns (uint256) {
-        bytes8 id = (bytes8(bytes1(asset.futureCashGroupId)) & 0xFF00000000000000) |
+        bytes8 id = (bytes8(bytes1(asset.cashGroupId)) & 0xFF00000000000000) |
             ((bytes8(bytes2(asset.instrumentId)) >> 8) & 0x00FFFF0000000000) |
             ((bytes8(bytes4(asset.maturity)) >> 24) & 0x000000FFFFFFFF00) |
-            ((bytes8(asset.swapType) >> 56) & 0x00000000000000FF);
+            ((bytes8(asset.assetType) >> 56) & 0x00000000000000FF);
 
         return uint256(bytes32(id) >> 192);
     }
@@ -219,7 +219,7 @@ library Common {
      * Decodes a uint256 id for a asset
      *
      * @param _id a uint256 asset id
-     * @return (futureCashGroupId, instrumentId, maturity)
+     * @return (cashGroupId, instrumentId, maturity)
      */
     function decodeAssetId(uint256 _id) internal pure returns (uint8, uint16, uint32)
     {

@@ -11,7 +11,7 @@ import MockUSDCArtifact from "../mocks/MockUSDC.json";
 import MockAggregatorArtfiact from "../mocks/MockAggregator.json";
 import Debug from "debug";
 import { Wallet, Contract } from 'ethers';
-import { Environment, SwapnetDeployer } from './SwapnetDeployer';
+import { Environment, NotionalDeployer } from './NotionalDeployer';
 import { parseEther, BigNumber } from 'ethers/utils';
 
 const log = Debug("test:deployEnvironment");
@@ -24,13 +24,13 @@ export async function deployTestEnvironment(
 ): Promise<Environment> {
     log("Deploying test environment");
 
-    const dai = (await SwapnetDeployer.deployContract(deployWallet, MockDaiArtifact, [])) as ERC20;
-    const usdc = (await SwapnetDeployer.deployContract(deployWallet, MockUSDCArtifact, [])) as ERC20;
+    const dai = (await NotionalDeployer.deployContract(deployWallet, MockDaiArtifact, [])) as ERC20;
+    const usdc = (await NotionalDeployer.deployContract(deployWallet, MockUSDCArtifact, [])) as ERC20;
 
-    const daiOracle = (await SwapnetDeployer.deployContract(deployWallet, MockAggregatorArtfiact, [])) as MockAggregator;
-    await SwapnetDeployer.txMined(daiOracle.setAnswer(parseEther("0.01")), confirmations);
-    const usdcOracle = (await SwapnetDeployer.deployContract(deployWallet, MockAggregatorArtfiact, [])) as MockAggregator;
-    await SwapnetDeployer.txMined(usdcOracle.setAnswer(new BigNumber(0.01e6)), confirmations);
+    const daiOracle = (await NotionalDeployer.deployContract(deployWallet, MockAggregatorArtfiact, [])) as MockAggregator;
+    await NotionalDeployer.txMined(daiOracle.setAnswer(parseEther("0.01")), confirmations);
+    const usdcOracle = (await NotionalDeployer.deployContract(deployWallet, MockAggregatorArtfiact, [])) as MockAggregator;
+    await NotionalDeployer.txMined(usdcOracle.setAnswer(new BigNumber(0.01e6)), confirmations);
 
     return {
         deploymentWallet: deployWallet,
@@ -46,8 +46,8 @@ export async function deployTestEnvironment(
 
 export async function deployLocal(deployWallet: Wallet): Promise<Environment> {
     log("Deploying to local environment");
-    const weth = (await SwapnetDeployer.deployContract(deployWallet, WETHArtifact, [])) as IWETH;
-    const registry = (await SwapnetDeployer.deployContract(deployWallet, ERC1820RegistryArtifact, [])) as IERC1820Registry;
+    const weth = (await NotionalDeployer.deployContract(deployWallet, WETHArtifact, [])) as IWETH;
+    const registry = (await NotionalDeployer.deployContract(deployWallet, ERC1820RegistryArtifact, [])) as IERC1820Registry;
 
     return await deployTestEnvironment(deployWallet, weth.address, registry.address, 1);
 }

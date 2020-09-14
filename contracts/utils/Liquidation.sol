@@ -24,12 +24,12 @@ library Liquidation {
         IPortfoliosCallable Portfolios;
     }
 
-    struct DepositCurrencyParameters {
+    struct CollateralCurrencyParameters {
         uint128 localCurrencyRequired;
         int256 localCurrencyAvailable;
-        uint16 depositCurrency;
-        int256 depositCurrencyCashClaim;
-        int256 depositCurrencyAvailable;
+        uint16 collateralCurrency;
+        int256 collateralCurrencyCashClaim;
+        int256 collateralCurrencyAvailable;
         uint128 discountFactor;
         uint128 liquidityHaircut;
         IPortfoliosCallable Portfolios;
@@ -39,7 +39,7 @@ library Liquidation {
         uint256 rate;
         uint256 rateDecimals;
         uint256 localDecimals;
-        uint256 depositDecimals;
+        uint256 collateralDecimals;
     }
 
     /**
@@ -108,7 +108,7 @@ library Liquidation {
                 .div(Common.DECIMALS.sub(liquidityHaircut))
         );
 
-        uint128 remainder = Portfolios.raiseCollateralViaLiquidityToken(
+        uint128 remainder = Portfolios.raiseCurrentCashViaLiquidityToken(
             account,
             currency,
             cashClaimsToTrade
@@ -170,18 +170,18 @@ library Liquidation {
     }
 
     /**
-     * @notice Trades local currency for deposit currency for a payer in order to recollateralize the account.
+     * @notice Trades local currency for collateral currency for a payer in order to recollateralize the account.
      * @param payer account that is being liquidated
-     * @param payerBalance payer's deposit currency account balance
-     * @param localCurrencyHaircut the haircut given to a local currency
-     * @param param deposit currency parameters
-     * @param rateParam deposit currency exchange rate parameters
+     * @param payerBalance payer's collateral currency account balance
+     * @param localCurrencyBuffer the haircut given to a local currency
+     * @param param collateral currency parameters
+     * @param rateParam collateral currency exchange rate parameters
      */
     function liquidate(
         address payer,
         int256 payerBalance,
-        uint128 localCurrencyHaircut,
-        DepositCurrencyParameters memory param,
+        uint128 localCurrencyBuffer,
+        CollateralCurrencyParameters memory param,
         RateParameters memory rateParam
     ) public returns (uint128, uint128, int256) {
         require(param.localCurrencyAvailable < 0, $$(ErrorCode(INSUFFICIENT_LOCAL_CURRENCY_DEBT)));
@@ -189,11 +189,11 @@ library Liquidation {
         param.localCurrencyRequired = _calculateLocalCurrencyToTrade(
             param.localCurrencyRequired,
             param.discountFactor,
-            localCurrencyHaircut,
+            localCurrencyBuffer,
             uint128(param.localCurrencyAvailable.neg())
         );
 
-        return _tradeDepositCurrency(
+        return _tradeCollateralCurrency(
             payer,
             payerBalance,
             param,
@@ -204,35 +204,35 @@ library Liquidation {
     function _calculateLocalCurrencyToTrade(
         uint128 localCurrencyRequired,
         uint128 liquidationDiscount,
-        uint128 localCurrencyHaircut,
+        uint128 localCurrencyBuffer,
         uint128 maxLocalCurrencyDebt
     ) internal pure returns (uint128) {
         // We calculate the max amount of local currency that the liquidator can trade for here. We set it to the min of the
         // netCurrencyAvailable and the localCurrencyToTrade figure calculated below. The math for this figure is as follows:
 
         // The benefit given to free collateral in local currency terms:
-        //   localCurrencyBenefit = localCurrencyToTrade * localCurrencyHaircut
+        //   localCurrencyBenefit = localCurrencyToTrade * localCurrencyBuffer
         // NOTE: this only holds true while maxLocalCurrencyDebt <= 0
 
-        // The penalty for trading deposit currency in local currency terms:
-        //   localCurrencyPenalty = depositCurrencyPurchased * exchangeRate[depositCurrency][localCurrency]
+        // The penalty for trading collateral currency in local currency terms:
+        //   localCurrencyPenalty = collateralCurrencyPurchased * exchangeRate[collateralCurrency][localCurrency]
         //
         //  netLocalCurrencyBenefit = localCurrencyBenefit - localCurrencyPenalty
         //
-        // depositCurrencyPurchased = localCurrencyToTrade * exchangeRate[localCurrency][depositCurrency] * liquidationDiscount
-        // localCurrencyPenalty = localCurrencyToTrade * exchangeRate[localCurrency][depositCurrency] * exchangeRate[depositCurrency][localCurrency] * liquidationDiscount
+        // collateralCurrencyPurchased = localCurrencyToTrade * exchangeRate[localCurrency][collateralCurrency] * liquidationDiscount
+        // localCurrencyPenalty = localCurrencyToTrade * exchangeRate[localCurrency][collateralCurrency] * exchangeRate[collateralCurrency][localCurrency] * liquidationDiscount
         // localCurrencyPenalty = localCurrencyToTrade * liquidationDiscount
-        // netLocalCurrencyBenefit =  localCurrencyToTrade * localCurrencyHaircut - localCurrencyToTrade * liquidationDiscount
-        // netLocalCurrencyBenefit =  localCurrencyToTrade * (localCurrencyHaircut - liquidationDiscount)
-        // localCurrencyToTrade =  netLocalCurrencyBenefit / (haircut - discount)
+        // netLocalCurrencyBenefit =  localCurrencyToTrade * localCurrencyBuffer - localCurrencyToTrade * liquidationDiscount
+        // netLocalCurrencyBenefit =  localCurrencyToTrade * (localCurrencyBuffer - liquidationDiscount)
+        // localCurrencyToTrade =  netLocalCurrencyBenefit / (buffer - discount)
         //
         // localCurrencyRequired is netLocalCurrencyBenefit after removing liquidity tokens
-        // localCurrencyToTrade =  localCurrencyRequired / (haircut - discount)
+        // localCurrencyToTrade =  localCurrencyRequired / (buffer - discount)
 
         uint128 localCurrencyToTrade = SafeCast.toUint128(
             uint256(localCurrencyRequired)
                 .mul(Common.DECIMALS)
-                .div(localCurrencyHaircut.sub(liquidationDiscount))
+                .div(localCurrencyBuffer.sub(liquidationDiscount))
         );
 
         // We do not trade past the amount of local currency debt the account has or this benefit will not longer be effective.
@@ -244,10 +244,10 @@ library Liquidation {
     function settle(
         address payer,
         int256 payerBalance,
-        DepositCurrencyParameters memory param,
+        CollateralCurrencyParameters memory param,
         RateParameters memory rateParam
    ) public returns (uint128, uint128, int256) {
-        return _tradeDepositCurrency(
+        return _tradeCollateralCurrency(
             payer,
             payerBalance,
             param,
@@ -255,26 +255,26 @@ library Liquidation {
         );
     }
 
-    function _tradeDepositCurrency(
+    function _tradeCollateralCurrency(
         address payer,
         int256 payerBalance,
-        DepositCurrencyParameters memory param,
+        CollateralCurrencyParameters memory param,
         RateParameters memory rateParam
     ) internal returns (uint128, uint128, int256) {
-        require(param.depositCurrencyAvailable > 0, $$(ErrorCode(INSUFFICIENT_BALANCE)));
+        require(param.collateralCurrencyAvailable > 0, $$(ErrorCode(INSUFFICIENT_BALANCE)));
         uint128 amountToRaise;
         uint128 localToPurchase;
-        uint128 depositToSell;
+        uint128 collateralToSell;
 
         uint128 haircutClaim = _calculateLiquidityTokenHaircut(
-            param.depositCurrencyCashClaim,
+            param.collateralCurrencyCashClaim,
             param.liquidityHaircut
         );
 
         (
             amountToRaise,
             localToPurchase,
-            depositToSell
+            collateralToSell
         ) = _calculatePurchaseAmounts(
             haircutClaim,
             param.localCurrencyRequired,
@@ -282,16 +282,16 @@ library Liquidation {
             rateParam
         );
 
-        int256 newPayerBalance = _transferDepositBalances(
+        int256 newPayerBalance = _calculateCollateralBalances(
             payer,
             payerBalance,
-            param.depositCurrency,
-            depositToSell,
+            param.collateralCurrency,
+            collateralToSell,
             amountToRaise,
             param.Portfolios
         );
 
-        return (localToPurchase, depositToSell, newPayerBalance);
+        return (localToPurchase, collateralToSell, newPayerBalance);
     }
 
     function _calculateLiquidityTokenHaircut(
@@ -313,82 +313,56 @@ library Liquidation {
     function _calculatePurchaseAmounts(
         uint128 haircutClaim,
         uint128 maxLocalCurrencyToTrade,
-        DepositCurrencyParameters memory param,
+        CollateralCurrencyParameters memory param,
         RateParameters memory rateParam
     ) internal pure returns (uint128, uint128, uint128) {
 
-        int256 depositToSell = _calculateDepositToSell(
+        int256 collateralToSell = _calculateCollateralToSell(
             rateParam.rate,
             rateParam.rateDecimals,
             param.discountFactor,
             maxLocalCurrencyToTrade,
             rateParam.localDecimals,
-            rateParam.depositDecimals
+            rateParam.collateralDecimals
         );
 
         uint128 localToPurchase;
         uint128 amountToRaise;
-        if (param.depositCurrencyAvailable >= depositToSell) {
-            // We have enough deposit currency available to fulfill the purchase. It is either locked up inside
+        // This calculation is described in Appendix B of the whitepaper. It is split between this function and
+        // _calculateCollateralBalances to deal with stack issues.
+        if (param.collateralCurrencyAvailable >= collateralToSell) {
+            // We have enough collateral currency available to fulfill the purchase. It is either locked up inside
             // liquidity tokens or in the account's balance. If the account's balance is negative then we will have
-            // to raise additional amount to fulfill depositToSell.
-            // 
-            // if (balance >= depositToSell) {
-            //     amountToRaise = 0;
-            //     balanceToTransfer = depositToSell;
-            // } else {
-            //     amountToRaise = depositToSell - balance;
-            //     balanceToTransfer = balance > 0 ? balance : 0;
-            // }
-
+            // to raise additional amount to fulfill collateralToSell.
             localToPurchase = maxLocalCurrencyToTrade;
-        } else if (param.depositCurrencyAvailable.add(haircutClaim) >= depositToSell) {
-            // We have enough deposit currency available if we account for the liquidity token haircut that
-            // is not part of the depositCurrencyAvailable figure. Here we raise an additional amount. 
-            // 
-            // if (balance >= depositToSell) {
-            //     // The balance may be sufficient to cover depositToSell here so we'll transfer it but we also
-            //     // need to extract a certain amount of haircutClaim in order to leave the account in balance.
-            //     amountToRaise = (depositToSell - depositCurrencyAvailable) / (1 - haircut)
-            //     balanceToTransfer = depositToSell;
-            // } else {
-            //     amountToRaise = depositToSell - balance;
-            //     balanceToTransfer = balance > 0 ? balance : 0;
-            // }
+        } else if (param.collateralCurrencyAvailable.add(haircutClaim) >= collateralToSell) {
+            // We have enough collateral currency available if we account for the liquidity token haircut that
+            // is not part of the collateralCurrencyAvailable figure. Here we raise an additional amount. 
 
             // This has to be scaled to the preHaircutCashClaim amount:
             // haircutClaim = preHaircutCashClaim - preHaircutCashClaim * haircut
             // haircutClaim = preHaircutCashClaim * (1 - haircut)
             // liquidiytTokenHaircut / (1 - haircut) = preHaircutCashClaim
             amountToRaise = SafeCast.toUint128(
-                uint256(depositToSell.sub(param.depositCurrencyAvailable))
+                uint256(collateralToSell.sub(param.collateralCurrencyAvailable))
                     .mul(Common.DECIMALS)
                     .div(Common.DECIMALS.sub(param.liquidityHaircut))
             );
             localToPurchase = maxLocalCurrencyToTrade;
-        } else if (depositToSell > param.depositCurrencyAvailable.add(haircutClaim)) {
-            // There is not enough value deposit currency in the account to fulfill the purchase, we
+        } else if (collateralToSell > param.collateralCurrencyAvailable.add(haircutClaim)) {
+            // There is not enough value collateral currency in the account to fulfill the purchase, we
             // specify the maximum amount that we can get from the account to partially settle.
-            //
-            // if (balance >= depositToSell) {
-            //     amountToRaise = haircutClaim / (1 - haircut);
-            //     balanceToTransfer = depositToSell;
-            // } else {
-            //     amountToRaise = depositToSell - balance;
-            //     balanceToTransfer = balance > 0 ? balance : 0;
-            // }
-
-            depositToSell = param.depositCurrencyAvailable.add(haircutClaim);
+            collateralToSell = param.collateralCurrencyAvailable.add(haircutClaim);
             amountToRaise = SafeCast.toUint128(
                 uint256(haircutClaim)
                     .mul(Common.DECIMALS)
                     .div(Common.DECIMALS.sub(param.liquidityHaircut))
             );
 
-            // In this case we partially settle the depositToSell amount.
-            // depositDecimals * rateDecimals * 1e18 * localDecimals
-            //         / (rateDecimals * 1e18 * depositDecimals) = localDecimals
-            uint256 x = uint256(depositToSell)
+            // In this case we partially settle the collateralToSell amount.
+            // collateralDecimals * rateDecimals * 1e18 * localDecimals
+            //         / (rateDecimals * 1e18 * collateralDecimals) = localDecimals
+            uint256 x = uint256(collateralToSell)
                 .mul(rateParam.rateDecimals)
                 // Discount factor uses 1e18 as its decimal precision
                 .mul(Common.DECIMALS);
@@ -399,22 +373,22 @@ library Liquidation {
 
             localToPurchase = SafeCast.toUint128(x
                     .div(param.discountFactor)
-                    .div(rateParam.depositDecimals)
+                    .div(rateParam.collateralDecimals)
             );
         }
 
-        require(depositToSell > 0);
+        require(collateralToSell > 0);
 
-        return (amountToRaise, localToPurchase, uint128(depositToSell));
+        return (amountToRaise, localToPurchase, uint128(collateralToSell));
     }
 
-    function _calculateDepositToSell(
+    function _calculateCollateralToSell(
         uint256 rate,
         uint256 rateDecimals,
         uint128 discountFactor,
         uint128 localCurrencyRequired,
         uint256 localDecimals,
-        uint256 depositDecimals
+        uint256 collateralDecimals
     ) internal pure returns (uint128) {
         uint256 x = rate
             .mul(localCurrencyRequired)
@@ -427,17 +401,17 @@ library Liquidation {
         // Splitting calculation to handle stack depth
         return SafeCast.toUint128(x
             // Multiplying to the quote decimal precision (may not be the same as the rate precision)
-            .mul(depositDecimals)
+            .mul(collateralDecimals)
             // discountFactor uses 1e18 as its decimal precision
             .div(Common.DECIMALS)
         );
     }
 
-    function _transferDepositBalances(
+    function _calculateCollateralBalances(
         address payer,
         int256 payerBalance,
-        uint16 depositCurrency,
-        uint128 depositToSell,
+        uint16 collateralCurrency,
+        uint128 collateralToSell,
         uint128 amountToRaise,
         IPortfoliosCallable Portfolios
     ) internal returns (int256) {
@@ -446,14 +420,14 @@ library Liquidation {
         int256 balance = payerBalance;
         bool creditBalance;
 
-        if (balance >= depositToSell) {
-            balance = balance.sub(depositToSell);
+        if (balance >= collateralToSell) {
+            balance = balance.sub(collateralToSell);
             creditBalance = true;
         } else {
-            // If amountToRaise is greater than (depositToSell - balance) this means that we're tapping into the
+            // If amountToRaise is greater than (collateralToSell - balance) this means that we're tapping into the
             // haircut claim amount. We need to credit back the difference to the account to ensure that the collateral
             // position does not get worse
-            uint128 tmp = uint128(int256(depositToSell).sub(balance));
+            uint128 tmp = uint128(int256(collateralToSell).sub(balance));
             if (amountToRaise > tmp) {
                 balance = int256(amountToRaise).sub(tmp);
             } else {
@@ -465,9 +439,9 @@ library Liquidation {
         }
 
         if (amountToRaise > 0) {
-            uint128 remainder = Portfolios.raiseCollateralViaLiquidityToken(
+            uint128 remainder = Portfolios.raiseCurrentCashViaLiquidityToken(
                 payer,
-                depositCurrency,
+                collateralCurrency,
                 amountToRaise
             );
 
@@ -476,7 +450,7 @@ library Liquidation {
             } else {
                 // Generally we expect remainder to equal zero but this can be off by small amounts due
                 // to truncation in the different calculations on the liquidity token haircuts. The upper bound on
-                // amountToRaise is based on depositCurrencyAvailable and the balance. Also note that when removing
+                // amountToRaise is based on collateralCurrencyAvailable and the balance. Also note that when removing
                 // liquidity tokens some amount of cash receiver is credited back to the account as well. The concern
                 // here is that if this is not true then remainder could put the account into a debt that it cannot pay off.
                 require(remainder <= 1, $$(ErrorCode(RAISING_LIQUIDITY_TOKEN_BALANCE_ERROR)));

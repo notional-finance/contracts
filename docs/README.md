@@ -1,6 +1,6 @@
-# Swapnet Contract ABI Reference
+# Notional Contract ABI Reference
 
-The [whitepaper](https://swapnet.finance/litepaper) is a good place to get a high level overview of the protocol.
+The [whitepaper](https://notional.finance/litepaper) is a good place to get a high level overview of the protocol.
 
 ## Flow Charts
 - [Free Collateral](./FreeCollateral.png)
@@ -9,7 +9,8 @@ The [whitepaper](https://swapnet.finance/litepaper) is a good place to get a hig
 
 ## ABI Reference
 - [ERC1155Token](./ERC1155Token.md)
+- [ERC1155Trade](./ERC1155Trade.md)
 - [Escrow](./Escrow.md)
-- [FutureCash](./FutureCash.md)
+- [CashMarket](./CashMarket.md)
 - [Portfolios](./Portfolios.md)
 - [RiskFramework](./RiskFramework.md)

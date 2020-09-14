@@ -1,5 +1,5 @@
 import { Escrow } from "../typechain/Escrow";
-import { FutureCash } from "../typechain/FutureCash";
+import { CashMarket } from "../typechain/CashMarket";
 import { Portfolios } from "../typechain/Portfolios";
 import { Wallet } from "ethers";
 import { MockAggregator } from "../mocks/MockAggregator";
@@ -15,7 +15,7 @@ const log = debug("test:testutils");
 // This will stop working in 2033 :)
 export const BLOCK_TIME_LIMIT = 2_000_000_000;
 export const IMPLIED_RATE_LIMIT = 60_000_000;
-export enum SwapType {
+export enum AssetType {
     LIQUIDITY_TOKEN = "0xac",
     CASH_PAYER = "0x98",
     CASH_RECEIVER = "0xa8"
@@ -24,7 +24,7 @@ export enum SwapType {
 export class TestUtils {
     constructor(
         public escrow: Escrow,
-        public futureCash: FutureCash,
+        public futureCash: CashMarket,
         public portfolios: Portfolios,
         public token: ERC20,
         public owner: Wallet,
@@ -64,7 +64,7 @@ export class TestUtils {
 
         const ethAmount = borrowFutureCash
             .mul(exchangeRate)
-            .mul(erObj.haircut)
+            .mul(erObj.buffer)
             .div(erObj.rateDecimals)
             .div(WeiPerEther)
             .mul(WeiPerEther)
@@ -78,7 +78,7 @@ export class TestUtils {
         const beforeAmount = await this.escrow.cashBalances(this.currencyId, wallet.address);
         await this.futureCash
             .connect(wallet)
-            .takeCollateral(maturities[maturityOffset], borrowFutureCash, BLOCK_TIME_LIMIT, impliedRateLimit);
+            .takeCurrentCash(maturities[maturityOffset], borrowFutureCash, BLOCK_TIME_LIMIT, impliedRateLimit);
         const collateralAmount = (await this.escrow.cashBalances(this.currencyId, wallet.address)).sub(
             beforeAmount
         );
@@ -99,6 +99,7 @@ export class TestUtils {
         const totalEthBalance = await this.weth.balanceOf(this.escrow.address);
         let escrowEthBalance = new BigNumber(0);
         for (let a of accounts) {
+            log(`Eth Balance: ${a.address}: ${await this.escrow.cashBalances(CURRENCY.ETH, a.address)}`)
             escrowEthBalance = escrowEthBalance.add(await this.escrow.cashBalances(CURRENCY.ETH, a.address));
         }
 
@@ -141,7 +142,7 @@ export class TestUtils {
         );
 
         const aggregateCollateral = markets.reduce((val, market) => {
-            return val.add(market.totalCollateral);
+            return val.add(market.totalCurrentCash);
         }, new BigNumber(0));
         const marketBalance = await this.escrow.cashBalances(this.currencyId, this.futureCash.address);
 
@@ -150,7 +151,7 @@ export class TestUtils {
             return false;
         }
 
-        const id = await this.futureCash.FUTURE_CASH_GROUP();
+        const id = await this.futureCash.CASH_GROUP();
 
         const allAssets = (
             await Promise.all(
@@ -161,15 +162,15 @@ export class TestUtils {
         )
             .reduce((acc, val) => acc.concat(val), [])
             .filter(t => {
-                return t.futureCashGroupId === id;
+                return t.cashGroupId === id;
             });
 
         for (let i = 0; i < maturities.length; i++) {
             const totalCash = allAssets.reduce((totalCash, asset) => {
                 if (asset.maturity === maturities[i]) {
-                    if (asset.swapType === SwapType.CASH_RECEIVER) {
+                    if (asset.assetType === AssetType.CASH_RECEIVER) {
                         totalCash = totalCash.add(asset.notional);
-                    } else if (asset.swapType === SwapType.CASH_PAYER) {
+                    } else if (asset.assetType === AssetType.CASH_PAYER) {
                         totalCash = totalCash.sub(asset.notional);
                     }
                 }
@@ -178,7 +179,7 @@ export class TestUtils {
 
             const totalTokens = allAssets.reduce((totalTokens, asset) => {
                 if (asset.maturity === maturities[i]) {
-                    if (asset.swapType === SwapType.LIQUIDITY_TOKEN) {
+                    if (asset.assetType === AssetType.LIQUIDITY_TOKEN) {
                         totalTokens = totalTokens.add(asset.notional);
                     }
                 }
@@ -186,8 +187,8 @@ export class TestUtils {
             }, new BigNumber(0));
 
             // Cash must always net out to zero
-            if (!totalCash.add(markets[i].totalFutureCash).eq(0)) {
-                log(`market integrity check, net cash: ${totalCash}, ${markets[i].totalFutureCash}`);
+            if (!totalCash.add(markets[i].totalfCash).eq(0)) {
+                log(`market integrity check, net cash: ${totalCash}, ${markets[i].totalfCash}`);
                 return false;
             }
 
@@ -200,14 +201,14 @@ export class TestUtils {
         return true;
     }
 
-    private async hasAsset(account: Wallet, swapType: string, maturity?: number, notional?: BigNumber) {
+    private async hasAsset(account: Wallet, assetType: string, maturity?: number, notional?: BigNumber) {
         if (maturity === undefined) {
             maturity = (await this.futureCash.getActiveMaturities())[0];
         }
         const p = await this.portfolios.getAssets(account.address);
 
         for (let t of p) {
-            if (t.maturity == maturity && t.swapType == swapType) {
+            if (t.maturity == maturity && t.assetType == assetType) {
                 if (notional !== undefined) {
                     return notional.eq(t.notional);
                 } else {
@@ -220,21 +221,21 @@ export class TestUtils {
     }
     public async hasLiquidityToken(account: Wallet, maturity?: number, tokens?: BigNumber, payer?: BigNumber) {
         if (payer !== undefined && payer.isZero()) {
-            return this.hasAsset(account, SwapType.LIQUIDITY_TOKEN, maturity, tokens);
+            return this.hasAsset(account, AssetType.LIQUIDITY_TOKEN, maturity, tokens);
         } else {
             return (
-                this.hasAsset(account, SwapType.LIQUIDITY_TOKEN, maturity, tokens) &&
+                this.hasAsset(account, AssetType.LIQUIDITY_TOKEN, maturity, tokens) &&
                 this.hasCashPayer(account, maturity, payer === undefined ? tokens : payer)
             );
         }
     }
 
     public async hasCashPayer(account: Wallet, maturity?: number, notional?: BigNumber) {
-        return this.hasAsset(account, SwapType.CASH_PAYER, maturity, notional);
+        return this.hasAsset(account, AssetType.CASH_PAYER, maturity, notional);
     }
 
     public async hasCashReceiver(account: Wallet, maturity?: number, notional?: BigNumber) {
-        return this.hasAsset(account, SwapType.CASH_RECEIVER, maturity, notional);
+        return this.hasAsset(account, AssetType.CASH_RECEIVER, maturity, notional);
     }
 
     public async mineAndSettleAccount(accounts: Wallet[]) {
@@ -249,7 +250,7 @@ export class TestUtils {
         balance?: BigNumber,
         operator?: Wallet,
         currencyId = CURRENCY.DAI,
-        depositCurrencyId = CURRENCY.ETH
+        collateralCurrencyId = CURRENCY.ETH
     ) {
         if (balance === undefined) {
             balance = (await this.escrow.cashBalances(currencyId, payer.address)).mul(-1);
@@ -261,7 +262,7 @@ export class TestUtils {
 
         await this.escrow
             .connect(operator)
-            .settleCashBalance(currencyId, depositCurrencyId, payer.address, balance);
+            .settleCashBalance(currencyId, collateralCurrencyId, payer.address, balance);
 
         const payerCashBalanceAfter = await this.escrow.cashBalances(currencyId, payer.address);
 
@@ -286,7 +287,7 @@ export class TestUtils {
         await this.escrow.connect(wallet).deposit(this.token.address, futureCashAmount);
         await this.futureCash
             .connect(wallet)
-            .takeFutureCash(maturities[1], futureCashAmount, BLOCK_TIME_LIMIT, 0);
+            .takefCash(maturities[1], futureCashAmount, BLOCK_TIME_LIMIT, 0);
 
         await this.chainlink.setAnswer(WeiPerEther);
         await this.escrow.liquidate(wallet.address, CURRENCY.DAI, CURRENCY.ETH);

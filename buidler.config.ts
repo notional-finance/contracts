@@ -17,10 +17,11 @@ const RINKEBY_PRIVATE_KEY = "";
 const ETHERSCAN_API_KEY = "";
 
 const CONTRACTS = [
-    "FutureCash",
+    "CashMarket",
     "Escrow",
     "Portfolios",
-    "ERC1155Token"
+    "ERC1155Token",
+    "ERC1155Trade"
 ];
 
 task("codeSize", "Prints the code size of all contracts")
