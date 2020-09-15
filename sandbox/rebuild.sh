@@ -23,11 +23,7 @@ node ../../../node_modules/ganache-cli/cli.js \
 DEBUG=* DOTENV_CONFIG_PATH=../.env.local ts-node ../scripts/deploy.ts
 DEBUG=* DOTENV_CONFIG_PATH=../.env.local ts-node ../scripts/setupLiquidity.ts
 
-# Stop ganache-cli
-pkill -f ganache-cli
-
 # Rebuild docker image
 tag=`git rev-parse --short HEAD`
 docker build -t notional/sandbox:$tag .
-# docker tag notional/sandbox:$tag notional/sandbox:latest
-# docker push notional/sandbox:latest
+docker tag notional/sandbox:$tag notional/sandbox:latest
