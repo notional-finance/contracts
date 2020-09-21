@@ -37,7 +37,6 @@ export async function fixture(provider: providers.Provider, [owner]: Wallet[]) {
         environment.deploymentWallet,
         environment,
         new BigNumber(8),
-        parseEther("1.30"), // TODO: what do we set this as?
         parseEther("1.06"),
         parseEther("1.02"),
         parseEther("0.80"),

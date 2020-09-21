@@ -8,6 +8,7 @@ usePlugin("@nomiclabs/buidler-solpp");
 usePlugin("@nomiclabs/buidler-waffle");
 usePlugin("@nomiclabs/buidler-ganache");
 usePlugin("@nomiclabs/buidler-solhint");
+usePlugin('buidler-abi-exporter');
 usePlugin("buidler-gas-reporter");
 usePlugin("buidler-typechain");
 usePlugin("solidity-coverage");
@@ -88,5 +89,8 @@ module.exports = {
     },
     solpp: {
         defs: ErrorCodes
+    },
+    abiExporter: {
+        only: ['Escrow', 'Portfolios', 'ERC1155Token', 'ERC1155Trade', 'CashMarket', 'Directory', 'IERC20', 'IAggregator']
     }
 };

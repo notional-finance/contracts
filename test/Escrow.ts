@@ -220,6 +220,7 @@ describe("Deposits and Withdraws", () => {
     });
 
     it("converts balances to ETH", async () => {
+        await escrow.addExchangeRate(0, 0, AddressZero, parseEther("1.3"), WeiPerEther, false);
         let converted = await escrow.convertBalancesToETH([WeiPerEther, parseEther("-100")]);
 
         expect(converted[0]).to.equal(WeiPerEther);

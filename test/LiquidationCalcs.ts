@@ -28,19 +28,22 @@ describe("Liquidation Calculations", () => {
     libraries.set("Liquidation", (await NotionalDeployer.deployContract(
         owner,
         NotionalDeployer.loadArtifact("Liquidation"),
-        []
+        [],
+        1
     )));
 
     liquidation = await NotionalDeployer.deployContract(
       owner,
       MockLiquidationArtifact,
-      []
+      [],
+      1
     ) as MockLiquidation;
 
     portfolios = await NotionalDeployer.deployContract(
       owner,
       MockPortfoliosArtifact,
-      []
+      [],
+      1
     ) as MockPortfolios;
 
     await portfolios.setHaircut(defaultLiquidityHaircut);

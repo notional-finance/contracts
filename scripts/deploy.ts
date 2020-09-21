@@ -33,7 +33,10 @@ async function main() {
             environment = await deployLocal(deployWallet);
             confirmations = 1;
             break;
+        // kovan
         case "42":
+        // rinkeby
+        case "4":
             confirmations = 3;
             deployWallet = new Wallet(
                 process.env.TESTNET_PRIVATE_KEY as string,
@@ -43,6 +46,7 @@ async function main() {
                 deployWallet,
                 process.env.WETH_ADDRESS as string,
                 process.env.ERC1820_REGISTRY_ADDRESS as string,
+                process.env.PROXY_FACTORY as string,
                 confirmations
             );
             break;
@@ -55,7 +59,6 @@ async function main() {
         environment.deploymentWallet,
         environment,
         new BigNumber(8),
-        parseEther("1.30"), // TODO: what do we set this as?
         parseEther("1.06"),
         parseEther("1.02"),
         parseEther("0.80"),

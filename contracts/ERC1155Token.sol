@@ -16,10 +16,6 @@ import "./CashMarket.sol";
  */
 contract ERC1155Token is ERC1155Base {
 
-    constructor(address directory) public {
-        Governed.initialize(directory);
-    }
-
     /**
      * @notice Transfers tokens between from and to addresses.
      * @dev - INVALID_ADDRESS: destination address cannot be 0

@@ -1,3 +1,6 @@
+// keccak256 hash of InitializeableAdminUpgradeabilityProxy creationCode
+// const proxyCreationCodeHash = "0xf4088da406c79381cd1d8c9f9af63888ea285b7f2a9e095b072a227afda16833";
+
 export const ErrorCodes = {
     EXCHANGE_RATE_UNDERFLOW: '1',
     EXCHANGE_RATE_OVERFLOW: '2',

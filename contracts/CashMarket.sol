@@ -30,12 +30,8 @@ contract CashMarket is Governed {
 
     /**
      * @dev skip
-     * @param _directory reference to other contracts
-     * @param collateralToken address of the token that will be used in this market
      */
-    function initialize(address _directory, address collateralToken) external initializer {
-        Governed.initialize(_directory);
-
+    function initializeDependencies() external {
         // Setting dependencies can only be done once here. With proxy contracts the addresses shouldn't
         // change as we upgrade the logic.
         Governed.CoreContracts[] memory dependencies = new Governed.CoreContracts[](3);

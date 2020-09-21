@@ -195,7 +195,7 @@ describe("Cash Market", () => {
             await fastForwardToMaturity(provider, maturities[1]);
             maturities = await futureCash.getActiveMaturities();
             await futureCash.addLiquidity(maturities[3], WeiPerEther.mul(10), WeiPerEther.mul(10), 0, 100_000_000, BLOCK_TIME_LIMIT);
-        });
+        }).timeout(50000);
     });
 
     describe("market liquidity limits", async () => {
@@ -639,4 +639,4 @@ describe("Cash Market", () => {
             );
         });
     });
-});
+}).timeout(50000);

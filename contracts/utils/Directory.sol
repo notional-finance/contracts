@@ -14,8 +14,8 @@ contract Directory is OpenZeppelinUpgradesOwnable, Initializable {
     mapping(uint256 => address) public contracts;
     event SetContract(Governed.CoreContracts name, address contractAddress);
 
-    function initialize() external initializer {
-        _owner = msg.sender;
+    function initialize(address owner) external initializer {
+        _owner = owner;
     }
 
     /**

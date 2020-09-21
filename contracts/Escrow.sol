@@ -39,11 +39,11 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
      */
     function initialize(
         address directory,
+        address owner,
         address registry,
-        address weth,
-        uint128 ethBuffer
+        address weth
     ) external initializer {
-        Governed.initialize(directory);
+        Governed.initialize(directory, owner);
 
         // This registry call is used for the ERC777 token standard.
         IERC1820Registry(registry).setInterfaceImplementer(address(0), TOKENS_RECIPIENT_INTERFACE_HASH, address(this));
@@ -53,8 +53,6 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         currencyIdToAddress[0] = WETH;
         addressToCurrencyId[WETH] = 0;
         currencyIdToDecimals[0] = Common.DECIMALS;
-        // Add the ETH buffer for ETH debts
-        exchangeRateOracles[0][0] = ExchangeRate(address(0), 0, false, ethBuffer);
         emit NewCurrency(WETH);
     }
 

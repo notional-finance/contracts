@@ -17,8 +17,8 @@ contract Governed is OpenZeppelinUpgradesOwnable, Initializable {
     address public DIRECTORY;
     mapping(uint256 => address) private contracts;
 
-    function initialize(address directory) public initializer {
-        _owner = msg.sender;
+    function initialize(address directory, address owner) public initializer {
+        _owner = owner;
         DIRECTORY = directory;
     }
 

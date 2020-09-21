@@ -73,8 +73,8 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
      * @param numCurrencies initializes the number of currencies listed on the escrow contract
      * @param maxAssets max assets that a portfolio can hold
      */
-    function initialize(address directory, uint16 numCurrencies, uint256 maxAssets) external initializer {
-        Governed.initialize(directory);
+    function initialize(address directory, address owner, uint16 numCurrencies, uint256 maxAssets) external initializer {
+        Governed.initialize(directory, owner);
 
         // We must initialize this here because it cannot be a constant.
         NULL_ASSET = Common.Asset(0, 0, 0, 0, 0, 0);

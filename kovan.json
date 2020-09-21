@@ -1,16 +1,17 @@
 {
   "chainId": 42,
   "networkName": "kovan",
-  "escrow": "0xC7078d914a9719A1665e1D0Dd258Ee26f22c89aA",
-  "portfolios": "0xBdD620137aE40cbd28777D0e6f58cf452aEe75BF",
-  "proxyAdmin": "0xA9B29BacD1727fE9aCdD4a49B0AD6bFfFA1D5c0e",
-  "directory": "0xf7533eF32b0E84Ed28E72a15E4945a662c6599A7",
-  "erc1155": "0x3cbeD025200A34a67c4b8447196FeFC4F4b8f744",
-  "erc1155trade": "0x4913b2d7d8B32256fA9903a31003ae37e47C764c",
-  "startBlock": 20825815,
+  "escrow": "0xE7A1eCeE73eE84816AA0B18e4546766b064Fe040",
+  "portfolios": "0xB92bA96564012eC0E40729229709DfB6372CBca8",
+  "proxyAdmin": "0x11F8a09F0b8F4E3D9c174A42Ef488Ae89b1573D9",
+  "proxyFactory": "0xc981D9E52684A25e528ba63552dF122Af8327D4E",
+  "directory": "0xb5B4760FE6F064db5e547D0602600CE2bd10c2DC",
+  "erc1155": "0xB1AE6b4fc767777bcE9687cB3Be4657d26B6d4c9",
+  "erc1155trade": "0x24782E712E42cf8Ce03CBfF73BBf9Be4bcFe11F3",
+  "startBlock": 20915616,
   "defaultConfirmations": 3,
   "libraries": {
-    "Liquidation": "0xDA17F46eBe9b38E4372f454AeEeb939fe650861B",
-    "RiskFramework": "0xe1B2F8eDCE04F304C2c08d98668345fA09133045"
+    "Liquidation": "0x967Dc123A0fFb474DCACFCEd897C66047C0e8a6d",
+    "RiskFramework": "0x3Be6202fA6DBcDd1e5426E3AED113C67581Ae900"
   }
 }

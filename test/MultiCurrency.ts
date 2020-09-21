@@ -104,8 +104,8 @@ describe("Multi Currency", () => {
         tDai = new TestUtils(escrow, futureCash[0], portfolios, token[0], owner, chainlink[0], objs.weth, 1);
         tUSDC = new TestUtils(escrow, futureCash[1], portfolios, token[1], owner, chainlink[1], objs.weth, 2);
 
-        const mockWbtc = (await NotionalDeployer.deployContract(owner, MockWBTCArtifact, [])) as ERC20;
-        const wbtcOracle = (await NotionalDeployer.deployContract(owner, MockAggregatorArtfiact, [])) as MockAggregator;
+        const mockWbtc = (await NotionalDeployer.deployContract(owner, MockWBTCArtifact, [], 1)) as ERC20;
+        const wbtcOracle = (await NotionalDeployer.deployContract(owner, MockAggregatorArtfiact, [], 1)) as MockAggregator;
         await wbtcOracle.setAnswer(10e8);
 
         const wbtcCurrencyId = await notional.listCurrency(
@@ -243,7 +243,7 @@ describe("Multi Currency", () => {
             // Expect ETH to be cleaned out
             expect(await escrow.cashBalances(CURRENCY.ETH, wallet.address)).to.equal(0);
         });
-    });
+    }).timeout(50000);
 
     // See flow chart at ../docs/SettleCash.png
     describe("settle cash situations [4-8]", async () => {
@@ -305,7 +305,7 @@ describe("Multi Currency", () => {
             // This fast forwards for the after each check
             await fastForwardToMaturity(provider, maturities[1]);
         });
-    });
+    }).timeout(50000);
 
     it("does not allow a liquidator to purchase more collateral than available", async () => {
         await tDai.setupLiquidity();
@@ -369,7 +369,7 @@ describe("Multi Currency", () => {
         await escrow.connect(wallet2).liquidate(wallet.address, CURRENCY.USDC, CURRENCY.DAI)
         expect(await escrow.cashBalances(1, wallet.address)).to.equal(0);
         expect(await tDai.hasLiquidityToken(wallet, daiMaturities[1])).to.be.true;
-    });
+    }).timeout(50000);
 
     it("accounts for the haircut amount when purchasing deposit currencies", async () => {
         await tDai.setupLiquidity();
@@ -459,4 +459,4 @@ describe("Multi Currency", () => {
         await chainlink[1].setAnswer(new BigNumber(0.011e6));
         await escrow.connect(wallet2).settleCashBalance(CURRENCY.USDC, CURRENCY.DAI, wallet.address, new BigNumber(100e6))
     });
-});
+}).timeout(50000);

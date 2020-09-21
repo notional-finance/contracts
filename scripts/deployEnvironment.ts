@@ -9,10 +9,12 @@ import ERC1820RegistryArtifact from "../mocks/ERC1820Registry.json";
 import MockDaiArtifact from "../mocks/MockDai.json";
 import MockUSDCArtifact from "../mocks/MockUSDC.json";
 import MockAggregatorArtfiact from "../mocks/MockAggregator.json";
+import CreateProxyFactoryArtifact from "../build/CreateProxyFactory.json";
 import Debug from "debug";
 import { Wallet, Contract } from 'ethers';
 import { Environment, NotionalDeployer } from './NotionalDeployer';
 import { parseEther, BigNumber } from 'ethers/utils';
+import { CreateProxyFactory } from '../typechain/CreateProxyFactory';
 
 const log = Debug("test:deployEnvironment");
 
@@ -20,17 +22,19 @@ export async function deployTestEnvironment(
     deployWallet: Wallet,
     wethAddress: string,
     registryAddress: string,
+    proxyFactoryAddress: string,
     confirmations: number
 ): Promise<Environment> {
     log("Deploying test environment");
 
-    const dai = (await NotionalDeployer.deployContract(deployWallet, MockDaiArtifact, [])) as ERC20;
-    const usdc = (await NotionalDeployer.deployContract(deployWallet, MockUSDCArtifact, [])) as ERC20;
+    const dai = (await NotionalDeployer.deployContract(deployWallet, MockDaiArtifact, [], confirmations)) as ERC20;
+    const usdc = (await NotionalDeployer.deployContract(deployWallet, MockUSDCArtifact, [], confirmations)) as ERC20;
 
-    const daiOracle = (await NotionalDeployer.deployContract(deployWallet, MockAggregatorArtfiact, [])) as MockAggregator;
+    const daiOracle = (await NotionalDeployer.deployContract(deployWallet, MockAggregatorArtfiact, [], confirmations)) as MockAggregator;
     await NotionalDeployer.txMined(daiOracle.setAnswer(parseEther("0.01")), confirmations);
-    const usdcOracle = (await NotionalDeployer.deployContract(deployWallet, MockAggregatorArtfiact, [])) as MockAggregator;
+    const usdcOracle = (await NotionalDeployer.deployContract(deployWallet, MockAggregatorArtfiact, [], confirmations)) as MockAggregator;
     await NotionalDeployer.txMined(usdcOracle.setAnswer(new BigNumber(0.01e6)), confirmations);
+
 
     return {
         deploymentWallet: deployWallet,
@@ -39,15 +43,27 @@ export async function deployTestEnvironment(
         DAI: dai,
         USDC: usdc,
         DAIETHOracle: daiOracle as unknown as IAggregator,
-        USDCETHOracle: usdcOracle as unknown as IAggregator
+        USDCETHOracle: usdcOracle as unknown as IAggregator,
+        proxyFactory: new Contract(proxyFactoryAddress, CreateProxyFactoryArtifact.abi, deployWallet) as CreateProxyFactory
     }
-
 }
 
 export async function deployLocal(deployWallet: Wallet): Promise<Environment> {
     log("Deploying to local environment");
-    const weth = (await NotionalDeployer.deployContract(deployWallet, WETHArtifact, [])) as IWETH;
-    const registry = (await NotionalDeployer.deployContract(deployWallet, ERC1820RegistryArtifact, [])) as IERC1820Registry;
+    const weth = (await NotionalDeployer.deployContract(deployWallet, WETHArtifact, [], 1)) as IWETH;
+    const registry = (await NotionalDeployer.deployContract(deployWallet, ERC1820RegistryArtifact, [], 1)) as IERC1820Registry;
+    const proxyFactory = await deployProxyFactory(deployWallet, 1);
 
-    return await deployTestEnvironment(deployWallet, weth.address, registry.address, 1);
+    return await deployTestEnvironment(deployWallet, weth.address, registry.address, proxyFactory.address, 1);
+}
+
+export async function deployProxyFactory(deployWallet: Wallet, confirmations: number) {
+    const proxyFactory = (await NotionalDeployer.deployContract(
+        deployWallet,
+        NotionalDeployer.loadArtifact("CreateProxyFactory"),
+        [],
+        confirmations
+    )) as CreateProxyFactory;
+
+    return proxyFactory;
 }
