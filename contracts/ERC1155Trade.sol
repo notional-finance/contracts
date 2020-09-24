@@ -4,7 +4,6 @@ pragma experimental ABIEncoderV2;
 import "./utils/Common.sol";
 import "./utils/ERC1155Base.sol";
 
-import "./interface/IERC1155.sol";
 import "./interface/IERC1155TokenReceiver.sol";
 
 import "./CashMarket.sol";

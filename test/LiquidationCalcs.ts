@@ -31,31 +31,31 @@ describe("Liquidation Calculations", () => {
 
     libraries.set("Liquidation", (await NotionalDeployer.deployContract(
         owner,
-        NotionalDeployer.loadArtifact("Liquidation"),
+        "Liquidation",
         [],
         1
-    )));
+    )).contract);
 
-    liquidation = await NotionalDeployer.deployContract(
+    liquidation = (await NotionalDeployer.deployContract(
       owner,
       MockLiquidationArtifact,
       [],
       1
-    ) as MockLiquidation;
+    )).contract as MockLiquidation;
 
-    portfolios = await NotionalDeployer.deployContract(
+    portfolios = (await NotionalDeployer.deployContract(
       owner,
       MockPortfoliosArtifact,
       [],
       1
-    ) as MockPortfolios;
+    )).contract as MockPortfolios;
 
-    chainlink = await NotionalDeployer.deployContract(
+    chainlink = (await NotionalDeployer.deployContract(
       owner,
       MockAggregatorArtifact,
       [],
       1
-    ) as MockAggregator;
+    )).contract as MockAggregator;
     // This is the localToETH rate oracle
     await chainlink.setAnswer(1e4);
 

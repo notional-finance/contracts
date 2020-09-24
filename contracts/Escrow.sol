@@ -976,7 +976,6 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
     ) external {
         // This settles out matured assets for us before we enter the rest of the function
         Common.FreeCollateralFactors memory fc = _freeCollateralFactors(payer, localCurrency, collateralCurrency);
-
         require(!_hasCollateral(payer), $$(ErrorCode(ACCOUNT_HAS_COLLATERAL)));
         require(fc.aggregate < 0, $$(ErrorCode(CANNOT_LIQUIDATE_SUFFICIENT_COLLATERAL)));
 

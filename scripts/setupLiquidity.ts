@@ -13,6 +13,7 @@ import { parseEther } from 'ethers/utils';
 import defaultAccounts from "../test/defaultAccounts.json";
 import { Iweth } from '../typechain/Iweth';
 import { MaxUint256 } from 'ethers/constants';
+import { exit } from 'process';
 
 
 const log = Debug("deploy:liquidity");
@@ -23,6 +24,11 @@ config({path: envPath});
 const BLOCK_TIME_LIMIT = 2_000_000_000;
 
 async function main() {
+  if (process.env.DEPLOY_CHAIN_ID as string != "1337") {
+    log(`Not running on local environment, using ${process.env.DEPLOY_CHAIN_ID as string} exiting`);
+    exit(1);
+  }
+
   const provider = new JsonRpcProvider(process.env.TESTNET_PROVIDER);
   const account = new Wallet(
     process.env.TESTNET_PRIVATE_KEY as string,

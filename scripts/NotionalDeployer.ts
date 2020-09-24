@@ -65,6 +65,7 @@ export class NotionalDeployer {
         public erc1155trade: ERC1155Trade,
         public startBlock: number,
         public libraries: Map<string, Contract>,
+        public deployedCodeHash: Map<string, string>,
         public defaultConfirmations: number
     ) {}
 
@@ -108,7 +109,7 @@ export class NotionalDeployer {
             if (contract == null) throw new Error(`${libname} library is not defined`);
 
             for (let offset of artifact.linkReferences[k][libname]) {
-                log(`Linking ${libname} into ${artifact.contractName}`)
+                log(`Linking ${libname} into ${artifact.contractName} using ${contract.address}`)
                 const byteOffsetStart = offset.start * 2 + 2;
                 const byteOffsetEnd = byteOffsetStart + offset.length * 2;
                 artifact.bytecode = artifact.bytecode.substring(0, byteOffsetStart) +
@@ -116,11 +117,13 @@ export class NotionalDeployer {
                     artifact.bytecode.substring(byteOffsetEnd);
             }
         }
+
+        return artifact;
     }
 
     public static deployContract = async (
         owner: Wallet,
-        artifact: any,
+        name: string | any,
         args: any[],
         confirmations: number,
         libraries?: Map<string, Contract>
@@ -134,9 +137,16 @@ export class NotionalDeployer {
             gasLimit = 6_000_000;
         }
 
+        let artifact;
+        if (typeof name == "string") {
+            artifact = NotionalDeployer.loadArtifact(name);
+        } else {
+            artifact = name;
+        }
+
         if (Object.keys(artifact.linkReferences).length > 0) {
             if (libraries == null) throw new Error(`Libraries not defined for ${artifact.contractName}`);
-            NotionalDeployer.link(artifact, libraries);
+            artifact = NotionalDeployer.link(artifact, libraries);
         }
 
         const factory = new ContractFactory(artifact.abi, artifact.bytecode, owner);
@@ -147,22 +157,31 @@ export class NotionalDeployer {
         const contract = new Contract(receipt.contractAddress as string, artifact.abi, owner);
         log(`Successfully deployed ${artifact.contractName} at ${contract.address}...`);
 
-        return contract;
+        // We hash the bytecode in the artifact because the code on chain is not the same
+        const bytecodeHash = ethers.utils.keccak256(artifact.bytecode);
+
+        return {
+            contract: contract,
+            bytecodeHash: bytecodeHash
+        };
     };
 
     private static deployProxyContract = async <T>(
         owner: Wallet,
-        artifact: any,
+        name: string,
         initializeSig: string,
         params: any[],
         proxyAdmin: ProxyAdmin,
         libraries: Map<string, Contract>,
+        deployedCodeHash: Map<string, string>,
         confirmations: number,
         proxyFactory?: CreateProxyFactory,
         salt?: string,
     ) => {
-        const logic = await NotionalDeployer.deployContract(owner, artifact, [], confirmations, libraries);
+        const { contract: logic, bytecodeHash } = await NotionalDeployer.deployContract(owner, name, [], confirmations, libraries);
+        deployedCodeHash.set(name, bytecodeHash);
 
+        const artifact = NotionalDeployer.loadArtifact(name);
         const abi = new ethers.utils.Interface(artifact.abi);
         log(`Initializing ${artifact.contractName} with sig ${initializeSig} and params ${params}`);
         const data = abi.functions[`initialize(${initializeSig})`].encode(params);
@@ -170,7 +189,7 @@ export class NotionalDeployer {
         let proxyAddress;
         if (proxyFactory == undefined) {
             // Deploy a proxy without the proxy factory, this will not have a predicatable address
-            const proxy = await NotionalDeployer.deployContract(owner, AdminUpgradeabilityProxyArtifact, [
+            const { contract: proxy } = await NotionalDeployer.deployContract(owner, "AdminUpgradeabilityProxy", [
                 logic.address,
                 proxyAdmin.address,
                 data
@@ -186,7 +205,7 @@ export class NotionalDeployer {
         }
 
         log(`Deployed proxy for ${artifact.contractName} at ${proxyAddress}`);
-        return (new ethers.Contract(proxyAddress, artifact.abi, owner) as unknown) as T;
+        return (new ethers.Contract(proxyAddress, artifact.abi, owner) as unknown) as T
     };
 
     public static txMined = async (tx: Promise<ethers.ContractTransaction>, confirmations: number) => {
@@ -217,46 +236,59 @@ export class NotionalDeployer {
     ) => {
         const startBlock = await owner.provider.getBlockNumber();
         const libraries = new Map<string, Contract>();
+        // Deploy transactions are used to determine if bytecode has changed
+        const deployedCodeHash = new Map<string, string>();
         
-        libraries.set("Liquidation", (await NotionalDeployer.deployContract(
-            owner,
-            NotionalDeployer.loadArtifact("Liquidation"),
-            [],
-            confirmations
-        )));
+        {
+            let {contract, bytecodeHash} = await NotionalDeployer.deployContract(
+                owner,
+                "Liquidation",
+                [],
+                confirmations
+            );
 
-        libraries.set("RiskFramework", (await NotionalDeployer.deployContract(
-            owner,
-            NotionalDeployer.loadArtifact("RiskFramework"),
-            [],
-            confirmations
-        )));
+            libraries.set("Liquidation", contract);
+            deployedCodeHash.set("Liquidation", bytecodeHash);
+        }
+
+        {
+            let {contract, bytecodeHash} = await NotionalDeployer.deployContract(
+                owner,
+                "RiskFramework",
+                [],
+                confirmations
+            );
+            libraries.set("RiskFramework", contract);
+            deployedCodeHash.set("RiskFramework", bytecodeHash);
+        }
 
         const proxyAdmin = (await NotionalDeployer.deployContract(
             owner,
-            NotionalDeployer.loadArtifact("ProxyAdmin"),
+            "ProxyAdmin",
             [],
-            confirmations
-        )) as ProxyAdmin;
+            confirmations,
+        )).contract as ProxyAdmin;
 
-        const directory = await NotionalDeployer.deployProxyContract<Directory>(
+        const  directory = await NotionalDeployer.deployProxyContract<Directory>(
             owner,
-            NotionalDeployer.loadArtifact("Directory"),
+            "Directory",
             "address",
             [owner.address],
             proxyAdmin,
             libraries,
+            deployedCodeHash,
             confirmations,
             environment.proxyFactory
         );
 
         const escrow = await NotionalDeployer.deployProxyContract<Escrow>(
             owner,
-            NotionalDeployer.loadArtifact("Escrow"),
+            "Escrow",
             "address,address,address,address",
             [directory.address, owner.address, environment.ERC1820.address, environment.WETH.address],
             proxyAdmin,
             libraries,
+            deployedCodeHash,
             confirmations,
             environment.proxyFactory
         );
@@ -264,11 +296,12 @@ export class NotionalDeployer {
         const INIT_NUM_CURRENCIES = 1;
         const portfolios = await NotionalDeployer.deployProxyContract<Portfolios>(
             owner,
-            NotionalDeployer.loadArtifact("Portfolios"),
+            "Portfolios",
             "address,address,uint16,uint256",
             [directory.address, owner.address, INIT_NUM_CURRENCIES, maxAssets],
             proxyAdmin,
             libraries,
+            deployedCodeHash,
             confirmations,
             environment.proxyFactory
         );
@@ -277,22 +310,24 @@ export class NotionalDeployer {
         // need for them to be proxies.
         const erc1155 = await NotionalDeployer.deployProxyContract(
             owner,
-            NotionalDeployer.loadArtifact("ERC1155Token"),
+            "ERC1155Token",
             "address,address",
             [directory.address,owner.address],
             proxyAdmin,
             libraries,
+            deployedCodeHash,
             confirmations,
             environment.proxyFactory
         ) as ERC1155Token;
 
         const erc1155trade = await NotionalDeployer.deployProxyContract(
             owner,
-            NotionalDeployer.loadArtifact("ERC1155Trade"),
+            "ERC1155Trade",
             "address,address",
             [directory.address,owner.address],
             proxyAdmin,
             libraries,
+            deployedCodeHash,
             confirmations,
             environment.proxyFactory
         ) as ERC1155Trade;
@@ -351,6 +386,7 @@ export class NotionalDeployer {
             erc1155trade,
             startBlock,
             libraries,
+            deployedCodeHash,
             confirmations
         );
     };
@@ -401,11 +437,12 @@ export class NotionalDeployer {
     ) => {
         const cashMarket = (await NotionalDeployer.deployProxyContract(
             this.owner,
-            NotionalDeployer.loadArtifact("CashMarket"),
+            "CashMarket",
             "address,address",
             [this.directory.address, this.owner.address],
             this.proxyAdmin,
             new Map<string, Contract>(),
+            this.deployedCodeHash,
             this.defaultConfirmations
         )) as CashMarket;
         await NotionalDeployer.txMined(cashMarket.initializeDependencies(), this.defaultConfirmations);
@@ -429,25 +466,75 @@ export class NotionalDeployer {
         return cashMarket;
     };
 
-    public upgradeContract = async (name: CoreContracts, artifact: any) => {
-        const contract = this.coreContractToContract(name);
-        const proxy = new ethers.Contract(contract.address, AdminUpgradeabilityProxyArtifact.abi, this.owner) as AdminUpgradeabilityProxy;
+    public checkDeployedLibraries = async () => {
+        const changedLibraries: string[] = [];
+
+        for (let [name, ] of Array.from(this.libraries.entries())) {
+            const artifact = NotionalDeployer.loadArtifact(name);
+            const localBytecodeHash = ethers.utils.keccak256(artifact.bytecode);
+            const bytecodeHash = this.deployedCodeHash.get(name);
+            if (bytecodeHash == undefined) throw new Error(`Deploy transaction for ${name} not defined`);
+
+            if (bytecodeHash !== localBytecodeHash) changedLibraries.push(name);
+        }
+
+        return changedLibraries;
+    }
+
+    public deployLibrary = async (name: string, dryRun: boolean) => {
+        if (!dryRun) {
+            const {contract, bytecodeHash}  = await NotionalDeployer.deployContract(
+                this.owner,
+                name,
+                [],
+                this.defaultConfirmations
+            );
+
+            this.libraries.set(name, contract);
+            this.deployedCodeHash.set(name, bytecodeHash);
+
+            log(`Library ${name} deployed to ${this.libraries.get(name)?.address}`);
+        } else {
+            log(`*** Skipping library deployment of ${name}, dry run ***`);
+        }
+    }
+
+    public upgradeContract = async (name: CoreContracts, dryRun: boolean) => {
+        const contractName = this.coreContractToName(name);
 
         // Check implementation bytecode
-        const logicAddress = await this.proxyAdmin.getProxyImplementation(proxy.address);
-        const logicBytecode = this.provider.getCode(logicAddress);
+        const bytecodeHash = this.deployedCodeHash.get(contractName);
+        if (bytecodeHash == undefined) throw new Error(`Deploy transaction for ${name} not defined`);
 
-        if (logicBytecode == artifact.bytecode) {
-            log(`Bytecode unchanged for ${name}, do not deploy`);
+        let artifact = NotionalDeployer.loadArtifact(contractName);
+        artifact = NotionalDeployer.link(artifact, this.libraries);
+        const localBytecodeHash = ethers.utils.keccak256(artifact.bytecode);
+
+        if (bytecodeHash == localBytecodeHash) {
+            log(`Bytecode unchanged for ${contractName}, do not deploy`);
             return;
         }
 
         // Deploy the upgraded logic contract
-        log("Deploying new logic contract");
-        const upgrade = await NotionalDeployer.deployContract(this.owner, artifact, [], this.defaultConfirmations);
-        log(`Deployed new logic contract at ${upgrade.address}`);
-        await NotionalDeployer.txMined(this.proxyAdmin.upgrade(proxy.address, upgrade.address), this.defaultConfirmations);
-        log(`Proxy Admin upgraded ${name.toString()}`);
+        if (!dryRun) {
+            log("Deploying new logic contract");
+            const {contract: upgrade, bytecodeHash: newBytecodeHash} = await NotionalDeployer.deployContract(
+                this.owner,
+                contractName,
+                [],
+                this.defaultConfirmations,
+                this.libraries
+            );
+            this.deployedCodeHash.set(contractName, newBytecodeHash);
+
+            log(`Deployed new logic contract at ${upgrade.address}`);
+            const contract = this.coreContractToContract(name);
+            const proxy = new ethers.Contract(contract.address, AdminUpgradeabilityProxyArtifact.abi, this.owner) as AdminUpgradeabilityProxy;
+            await NotionalDeployer.txMined(this.proxyAdmin.upgrade(proxy.address, upgrade.address), this.defaultConfirmations);
+            log(`Proxy Admin upgraded ${contractName}`);
+        } else {
+            log(`*** Would have deployed ${contractName} in dry run ***`)
+        }
     };
 
     private transferOwnerOfContract = async (address: string, newOwner: string) => {
@@ -496,9 +583,15 @@ export class NotionalDeployer {
         const erc1155 = new Contract(addresses.erc1155, ERC1155TokenArtifact.abi, owner) as ERC1155Token;
         const erc1155trade = new Contract(addresses.erc1155trade, ERC1155TradeArtifact.abi, owner) as ERC1155Trade;
         const libraries = Object.keys(addresses.libraries).reduce((obj, name) => {
-            obj.set(name, new Contract(addresses.libraries[name], NotionalDeployer.loadArtifact(name).abi, owner));
+            const contract = new Contract(addresses.libraries[name], NotionalDeployer.loadArtifact(name).abi, owner);
+            obj.set(name, contract);
             return obj;
         }, new Map<string, Contract>())
+
+        const deployedCodeHash = Object.keys(addresses.deployedCodeHash).reduce((obj, name) => {
+            obj.set(name, addresses.deployedCodeHash[name]);
+            return obj;
+        }, new Map<string, string>())
 
         return new NotionalDeployer(
             owner,
@@ -512,6 +605,7 @@ export class NotionalDeployer {
             erc1155trade,
             addresses.startBlock,
             libraries,
+            deployedCodeHash,
             addresses.defaultConfirmations
         );
     };
@@ -522,6 +616,16 @@ export class NotionalDeployer {
             obj[name] = contract.address;
             return obj;
         }, {} as {[name: string]: string})
+
+        const deployedCodeHash = Array.from(this.deployedCodeHash.entries()).reduce((obj, [name, hash]) => {
+            obj[name] = hash;
+            return obj;
+        }, {} as {[name: string]: string})
+
+        const gitHash = require('child_process')
+            .execSync('git rev-parse HEAD')
+            .toString().trim()
+
         const addresses = {
             chainId: network.chainId,
             networkName: network.name,
@@ -534,7 +638,9 @@ export class NotionalDeployer {
             erc1155trade: this.erc1155trade.address,
             startBlock: this.startBlock,
             defaultConfirmations: this.defaultConfirmations,
-            libraries: libraries
+            libraries: libraries,
+            deployedCodeHash: deployedCodeHash,
+            gitHash: gitHash
         };
         writeFileSync(path, JSON.stringify(addresses, null, 2));
     }

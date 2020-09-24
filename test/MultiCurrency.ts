@@ -104,8 +104,8 @@ describe("Multi Currency", () => {
         tDai = new TestUtils(escrow, futureCash[0], portfolios, token[0], owner, chainlink[0], objs.weth, 1);
         tUSDC = new TestUtils(escrow, futureCash[1], portfolios, token[1], owner, chainlink[1], objs.weth, 2);
 
-        const mockWbtc = (await NotionalDeployer.deployContract(owner, MockWBTCArtifact, [], 1)) as ERC20;
-        const wbtcOracle = (await NotionalDeployer.deployContract(owner, MockAggregatorArtfiact, [], 1)) as MockAggregator;
+        const mockWbtc = (await NotionalDeployer.deployContract(owner, MockWBTCArtifact, [], 1)).contract as ERC20;
+        const wbtcOracle = (await NotionalDeployer.deployContract(owner, MockAggregatorArtfiact, [], 1)).contract as MockAggregator;
         await wbtcOracle.setAnswer(10e8);
 
         const wbtcCurrencyId = await notional.listCurrency(

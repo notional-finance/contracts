@@ -13,5 +13,16 @@
   "libraries": {
     "Liquidation": "0x0290FB167208Af455bB137780163b7B7a9a10C16",
     "RiskFramework": "0x9b1f7F645351AF3631a656421eD2e40f2802E6c0"
-  }
+  },
+  "deployedCodeHash": {
+    "Liquidation": "0xa52cb48153cc542081112e442de1d6c1f2b7c31a785355dd9063c3cdf7064fed",
+    "RiskFramework": "0xc467ac9a743101c9a60194602c62165a1e1b3f93f9dba384d0a56366f603e0d1",
+    "Directory": "0x081ac9368fe5dd38ab9d62078763c174b7eb93d4e19a73678d92b0b8ea6aec9b",
+    "Escrow": "0x6cbb50c64442ba8de4012f1dfbac773467d14bc66d00065abf4c2026e31fab39",
+    "Portfolios": "0x399214346441b8d356f34ff5475098af9d9858f3ffd21d59da8f80838ec90ef7",
+    "ERC1155Token": "0xeb05d0d18f4b242a43577d0d4240d652bf7a30fcc007e9c1662c8cfed702de9f",
+    "ERC1155Trade": "0x2c28738dcb6140b7481be66cf21454074b30eb310ebc78558a5ca642d2ceb12f",
+    "CashMarket": "0x109dd3cc0598b0eb7649f39b00226b50f4b1f58e8f4f6678cfd11c07bcee49a4"
+  },
+  "gitHash": "1682d8830409654b4b8b68cf53a420e49be8370f"
 }

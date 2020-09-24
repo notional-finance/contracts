@@ -491,6 +491,7 @@ library Liquidation {
         Common.FreeCollateralFactors memory fc,
         RateParameters memory rateParam
     ) internal pure returns (uint128, uint128, uint128) {
+        require(fc.collateralNetAvailable > 0, $$(ErrorCode(INSUFFICIENT_BALANCE)));
 
         uint128 localToPurchase;
         uint128 amountToRaise;

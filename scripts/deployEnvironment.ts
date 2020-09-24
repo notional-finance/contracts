@@ -27,12 +27,12 @@ export async function deployTestEnvironment(
 ): Promise<Environment> {
     log("Deploying test environment");
 
-    const dai = (await NotionalDeployer.deployContract(deployWallet, MockDaiArtifact, [], confirmations)) as ERC20;
-    const usdc = (await NotionalDeployer.deployContract(deployWallet, MockUSDCArtifact, [], confirmations)) as ERC20;
+    const dai = (await NotionalDeployer.deployContract(deployWallet, MockDaiArtifact, [], confirmations)).contract as ERC20;
+    const usdc = (await NotionalDeployer.deployContract(deployWallet, MockUSDCArtifact, [], confirmations)).contract as ERC20;
 
-    const daiOracle = (await NotionalDeployer.deployContract(deployWallet, MockAggregatorArtfiact, [], confirmations)) as MockAggregator;
+    const daiOracle = (await NotionalDeployer.deployContract(deployWallet, MockAggregatorArtfiact, [], confirmations)).contract as MockAggregator;
     await NotionalDeployer.txMined(daiOracle.setAnswer(parseEther("0.01")), confirmations);
-    const usdcOracle = (await NotionalDeployer.deployContract(deployWallet, MockAggregatorArtfiact, [], confirmations)) as MockAggregator;
+    const usdcOracle = (await NotionalDeployer.deployContract(deployWallet, MockAggregatorArtfiact, [], confirmations)).contract as MockAggregator;
     await NotionalDeployer.txMined(usdcOracle.setAnswer(new BigNumber(0.01e6)), confirmations);
 
 
@@ -50,8 +50,8 @@ export async function deployTestEnvironment(
 
 export async function deployLocal(deployWallet: Wallet): Promise<Environment> {
     log("Deploying to local environment");
-    const weth = (await NotionalDeployer.deployContract(deployWallet, WETHArtifact, [], 1)) as IWETH;
-    const registry = (await NotionalDeployer.deployContract(deployWallet, ERC1820RegistryArtifact, [], 1)) as IERC1820Registry;
+    const weth = (await NotionalDeployer.deployContract(deployWallet, WETHArtifact, [], 1)).contract as IWETH;
+    const registry = (await NotionalDeployer.deployContract(deployWallet, ERC1820RegistryArtifact, [], 1)).contract as IERC1820Registry;
     const proxyFactory = await deployProxyFactory(deployWallet, 1);
 
     return await deployTestEnvironment(deployWallet, weth.address, registry.address, proxyFactory.address, 1);
@@ -60,10 +60,10 @@ export async function deployLocal(deployWallet: Wallet): Promise<Environment> {
 export async function deployProxyFactory(deployWallet: Wallet, confirmations: number) {
     const proxyFactory = (await NotionalDeployer.deployContract(
         deployWallet,
-        NotionalDeployer.loadArtifact("CreateProxyFactory"),
+       "CreateProxyFactory",
         [],
         confirmations
-    )) as CreateProxyFactory;
+    )).contract as CreateProxyFactory;
 
     return proxyFactory;
 }
