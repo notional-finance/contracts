@@ -7,9 +7,9 @@ import "../lib/SafeMath.sol";
 import "../utils/Governed.sol";
 import "../utils/Common.sol";
 import "../interface/IPortfoliosCallable.sol";
+import "../storage/PortfoliosStorage.sol";
 
 import "../CashMarket.sol";
-
 import "@openzeppelin/contracts/utils/SafeCast.sol";
 
 /**
@@ -37,7 +37,6 @@ library RiskFramework {
      */
     function getRequirement(
         Common.Asset[] memory portfolio,
-        uint128 liquidityHaircut,
         address Portfolios
     ) public view returns (Common.Requirement[] memory) {
         Common._sortPortfolio(portfolio);
@@ -48,7 +47,14 @@ library RiskFramework {
             IPortfoliosCallable(Portfolios)
         );
 
-        int256[] memory npv = _getCashLadders(portfolio, cashGroups, ladders, liquidityHaircut);
+        int256[] memory cashClaims = _getCashLadders(
+            portfolio,
+            cashGroups,
+            ladders,
+            PortfoliosStorageSlot._liquidityHaircut(),
+            PortfoliosStorageSlot._fCashHaircut(),
+            PortfoliosStorageSlot._fCashMaxHaircut()
+        );
 
         // We now take the per cash group cash ladder and summarize it into a single requirement. The future
         // cash group requirements will be aggregated into a single currency requirement in the free collateral function
@@ -56,12 +62,11 @@ library RiskFramework {
 
         for (uint256 i; i < ladders.length; i++) {
             requirements[i].currency = ladders[i].currency;
-            requirements[i].npv = npv[i];
+            requirements[i].cashClaim = cashClaims[i];
 
             for (uint256 j; j < ladders[i].cashLadder.length; j++) {
-                if (ladders[i].cashLadder[j] < 0) {
-                    requirements[i].requirement = requirements[i].requirement.add(ladders[i].cashLadder[j].neg());
-                }
+                requirements[i].netfCashValue = requirements[i].netfCashValue
+                    .add(ladders[i].cashLadder[j]);
             }
         }
 
@@ -78,12 +83,14 @@ library RiskFramework {
         Common.Asset[] memory portfolio,
         Common.CashGroup[] memory cashGroups,
         CashLadder[] memory ladders,
-        uint128 liquidityHaircut
+        uint128 liquidityHaircut,
+        uint128 fCashHaircut,
+        uint128 fCashMaxHaircut
     ) internal view returns (int256[] memory) {
         uint32 blockTime = uint32(block.timestamp);
 
-        // This will hold the current collateral balance.
-        int256[] memory npv = new int256[](ladders.length);
+        // This will hold the current cash claims balance
+        int256[] memory cashClaims = new int256[](ladders.length);
 
         // Set up the first group's cash ladder before we iterate
         uint256 groupIndex;
@@ -95,50 +102,94 @@ library RiskFramework {
                 groupIndex++;
             }
 
-            (int256 cashAmount, int256 npvAmount) = _calculateAssetValue(
+            (int256 fCashAmount, int256 cashClaimAmount) = _calculateAssetValue(
                 portfolio[i],
                 cashGroups[groupIndex],
                 blockTime,
-                liquidityHaircut
+                liquidityHaircut,
+                fCashHaircut,
+                fCashMaxHaircut
             );
 
-            npv[groupIndex] = npv[groupIndex].add(npvAmount);
+            cashClaims[groupIndex] = cashClaims[groupIndex].add(cashClaimAmount);
             if (portfolio[i].maturity <= blockTime) {
-                // If asset has matured then all the fCash is considered NPV
-                npv[groupIndex] = npv[groupIndex].add(cashAmount);
+                // If asset has matured then all the fCash is considered a current cash claim. This branch will only be
+                // reached when calling this function as a view. During liquidation and settlement calls we ensure that
+                // all matured assets have been settled to cash first.
+                cashClaims[groupIndex] = cashClaims[groupIndex].add(fCashAmount);
             } else {
                 uint256 offset = (portfolio[i].maturity - blockTime) / cashGroups[groupIndex].maturityLength;
 
                 if (cashGroups[groupIndex].cashMarket == address(0)) {
                     // We do not allow positive fCash to net out negative fCash for idiosyncratic trades
                     // so we zero out positive cash at this point.
-                    cashAmount = cashAmount > 0 ? 0 : cashAmount;
+                    fCashAmount = fCashAmount > 0 ? 0 : fCashAmount;
                 }
 
-                ladders[groupIndex].cashLadder[offset] = ladders[groupIndex].cashLadder[offset].add(cashAmount);
+                ladders[groupIndex].cashLadder[offset] = ladders[groupIndex].cashLadder[offset].add(fCashAmount);
             }
         }
 
-        return npv;
+        return cashClaims;
     }
 
     function _calculateAssetValue(
         Common.Asset memory asset,
         Common.CashGroup memory cg,
         uint32 blockTime,
-        uint128 liquidityHaircut
+        uint128 liquidityHaircut,
+        uint128 fCashHaircut,
+        uint128 fCashMaxHaircut
     ) internal view returns (int256, int256) {
         // This is the offset in the cash ladder
-        int256 npv;
+        int256 cashClaim;
         int256 fCash;
 
         if (Common.isLiquidityToken(asset.assetType)) {
-            (npv, fCash) = _calculateLiquidityTokenClaims(asset, cg.cashMarket, blockTime, liquidityHaircut);
-        } else if (Common.isCash(asset.assetType)) {
-            fCash = Common.isPayer(asset.assetType) ? int256(asset.notional).neg() : asset.notional;
+            (cashClaim, fCash) = _calculateLiquidityTokenClaims(asset, cg.cashMarket, blockTime, liquidityHaircut);
+        } else if (Common.isCashPayer(asset.assetType)) {
+            fCash = int256(asset.notional).neg();
+        } else if (Common.isCashReceiver(asset.assetType)) {
+            fCash = _calculateReceiverValue(asset, blockTime, fCashHaircut, fCashMaxHaircut);
         }
 
-        return (fCash, npv);
+        return (fCash, cashClaim);
+    }
+
+    function _calculateReceiverValue(
+        Common.Asset memory asset,
+        uint32 blockTime,
+        uint128 fCashHaircut,
+        uint128 fCashMaxHaircut
+    ) internal pure returns (int256) {
+        if (asset.maturity <= blockTime) {
+            return int256(asset.notional);
+        }
+
+        int256 fCash = int256(asset.notional);
+
+        // As we roll down to maturity the haircut value will decrease until
+        // we hit the maxPostHaircutValue where we cap this.
+        // fCash - fCash * haircut * timeToMaturity / secondsInYear
+        int256 postHaircutValue = fCash.sub(
+            fCash
+                .mul(fCashHaircut)
+                .mul(asset.maturity - blockTime)
+                .div(Common.SECONDS_IN_YEAR)
+                // fCashHaircut is in 1e18
+                .div(Common.DECIMALS)
+        );
+
+        int256 maxPostHaircutValue = fCash
+            // This will be set to something like 0.95e18
+            .mul(fCashMaxHaircut)
+            .div(Common.DECIMALS);
+
+        if (postHaircutValue < maxPostHaircutValue) {
+            return postHaircutValue;
+        } else {
+            return maxPostHaircutValue;
+        }
     }
 
     function _calculateLiquidityTokenClaims(
@@ -149,7 +200,7 @@ library RiskFramework {
     ) internal view returns (uint128, uint128) {
         CashMarket.Market memory market = CashMarket(cashMarket).getMarket(asset.maturity);
 
-        uint256 collateralClaim;
+        uint256 cashClaim;
         uint256 fCashClaim;
 
         if (blockTime < asset.maturity) {
@@ -157,7 +208,7 @@ library RiskFramework {
             // when it comes to reclaim the liquidity token. For example, there may be less collateral in the pool
             // relative to fCash due to trades that have happened between the initial free collateral check
             // and the liquidation.
-            collateralClaim = uint256(market.totalCurrentCash)
+            cashClaim = uint256(market.totalCurrentCash)
                 .mul(asset.notional)
                 .mul(liquidityHaircut)
                 .div(Common.DECIMALS)
@@ -169,7 +220,7 @@ library RiskFramework {
                 .div(Common.DECIMALS)
                 .div(market.totalLiquidity);
         } else {
-            collateralClaim = uint256(market.totalCurrentCash)
+            cashClaim = uint256(market.totalCurrentCash)
                 .mul(asset.notional)
                 .div(market.totalLiquidity);
 
@@ -178,7 +229,7 @@ library RiskFramework {
                 .div(market.totalLiquidity);
         }
 
-        return (SafeCast.toUint128(collateralClaim), SafeCast.toUint128(fCashClaim));
+        return (SafeCast.toUint128(cashClaim), SafeCast.toUint128(fCashClaim));
     }
 
     function _fetchCashGroups(

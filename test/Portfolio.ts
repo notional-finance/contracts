@@ -1,6 +1,6 @@
 import chai from "chai";
 import { solidity } from "ethereum-waffle";
-import { fixture, wallets, fixtureLoader, provider, CURRENCY, fastForwardToMaturity } from "./fixtures";
+import { fixture, wallets, fixtureLoader, provider, CURRENCY, fastForwardToMaturity, fastForwardToTime } from "./fixtures";
 import { Wallet } from "ethers";
 import { WeiPerEther } from "ethers/constants";
 
@@ -64,6 +64,33 @@ describe("Portfolio", () => {
         expect(await t.checkMarketIntegrity([owner, wallet, wallet2], maturities)).to.be.true;
     });
 
+    it("fcash value is capped at 95%", async () => {
+        await t.setupLiquidity();
+        await t.lendAndWithdraw(wallet, parseEther("100"));
+        // When time to maturity is small fCashValue will be capped at 95%
+        await fastForwardToTime(provider, maturities[0] - 100);
+
+        const fCashValue = (await portfolios.freeCollateralView(wallet.address))[1][1];
+        expect(fCashValue).to.equal(parseEther("95"));
+    });
+
+    it("fcash value is scaled relative to timeToMaturity", async () => {
+        await t.setupLiquidity(owner, 0.5, parseEther("100000"), [1]);
+        await t.lendAndWithdraw(wallet, parseEther("100"), 1);
+
+        const blockTime = (await provider.getBlock("latest")).timestamp;
+        const fCashValue = (await portfolios.freeCollateralView(wallet.address))[1][1];
+
+        const expectedValue = parseEther("100").sub(
+            parseEther("100")
+                .mul(parseEther("0.5"))
+                .mul(maturities[1] - blockTime)
+                .div(31536000)
+                .div(WeiPerEther)
+        );
+        expect(fCashValue).to.equal(expectedValue);
+    });
+
     it("returns the proper free collateral amount pre and post maturity", async () => {
         await t.setupLiquidity();
         await t.setupLiquidity(wallet, 0.5, parseEther("50"));
@@ -123,21 +150,22 @@ describe("Portfolio", () => {
 
         beforeEach(async () => { 
             await t.setupLiquidity(owner, 0.5, parseEther("10000"), [0, 1, 2]);
-            await portfolios.setHaircut(WeiPerEther);
+            // Setting the haircut so maxfCashValue is always true
+            await portfolios.setHaircuts(WeiPerEther, parseEther("0"), parseEther("0.95"));
         })
 
-        it("cash = 0, npv = 0, requirement = 100 | available = -100", async () => {
+        it("cash = 0, cashClaim = 0, netfCashValue = -100 | available = -100", async () => {
             await t.borrowAndWithdraw(wallet, parseEther("100"));
             await checkFC(parseEther("-1.3"), parseEther("-100"));
         });
 
-        it("cash = 0, npv = 50, requirement = 100 | available = -50", async () => {
+        it("cash = 0, cashClaim = 50, netfCashValue = -100 | available = -50", async () => {
             await t.borrowAndWithdraw(wallet, parseEther("100"));
             await t.setupLiquidity(wallet, 0.5, parseEther("50"), [1]);
             await checkFC(parseEther("-0.65"), parseEther("-50"));
         });
 
-        it("cash = 25, npv = 50, requirement = 100 | available = -25", async () => {
+        it("cash = 25, cashClaim = 50, netfCashValue = -100 | available = -25", async () => {
             // This sets up a 25 dai cash balance
             await escrow.connect(wallet).deposit(dai.address, parseEther("25"));
 
@@ -147,14 +175,14 @@ describe("Portfolio", () => {
             await checkFC(parseEther("-0.325"), parseEther("-25"));
         });
 
-        it("cash = 125, npv = 0, requirement = 100 | available = 25", async () => {
+        it("cash = 125, cashClaim = 0, netfCashValue = -100 | available = 25", async () => {
             await escrow.connect(wallet).deposit(dai.address, parseEther("125"));
             const [ethAmount, ] = await t.borrowAndWithdraw(wallet, parseEther("100"), 1.5, 1);
             await escrow.connect(wallet).withdraw(weth.address, ethAmount);
             await checkFC(parseEther("0.25"), parseEther("25"));
         });
 
-        it("cash = 125, npv = 50, requirement = 100 | available = 75", async () => {
+        it("cash = 125, cashClaim = 50, netfCashValue = -100 | available = 75", async () => {
             // This sets up a 100 dai cash balance
             await escrow.connect(wallet).deposit(dai.address, parseEther("125"));
             const [ethAmount, ] = await t.borrowAndWithdraw(wallet, parseEther("100"), 1.5, 1);
@@ -162,6 +190,17 @@ describe("Portfolio", () => {
 
             await t.setupLiquidity(wallet, 0.5, parseEther("50"), [2]);
             await checkFC(parseEther("0.75"), parseEther("75"));
+        });
+
+        it("cash = 0, cashClaim = 50, netfCashValue = 90 | available = 140", async () => {
+            // Tests that borrows and fCash net out
+            const [ethAmount, ] = await t.borrowAndWithdraw(wallet, parseEther("100"), 1.5, 1);
+
+            await t.lendAndWithdraw(wallet, parseEther("200"), 0);
+            await t.setupLiquidity(wallet, 0.5, parseEther("50"), [2]);
+            await escrow.connect(wallet).withdraw(weth.address, ethAmount);
+
+            await checkFC(parseEther("1.4"), parseEther("140"));
         });
     });
 });

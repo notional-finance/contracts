@@ -64,8 +64,10 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
     /**
      * @notice Notice for setting haircut amount for liquidity tokens
      * @param liquidityHaircut amount of haircut applied to liquidity token claims 
+     * @param fCashHaircut amount of negative haircut applied to fcash
+     * @param fCashMaxHaircut max haircut amount applied to fcash
      */
-    event SetLiquidityHaircut(uint128 liquidityHaircut);
+    event SetHaircuts(uint128 liquidityHaircut, uint128 fCashHaircut, uint128 fCashMaxHaircut);
 
     /**
      * @dev skip
@@ -90,13 +92,17 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
      * @notice Sets the haircut amount for liquidity token claims, this is set to a percentage
      * less than 1e18, for example, a 5% haircut will be set to 0.95e18.
      * @dev governance
-     * @param haircut amount of negative haircut applied to debt
+     * @param liquidityHaircut amount of negative haircut applied to token claims
+     * @param fCashHaircut amount of negative haircut applied to fcash
+     * @param fCashMaxHaircut max haircut amount applied to fcash
      */
-    function setHaircut(uint128 haircut) external onlyOwner {
-        G_LIQUIDITY_HAIRCUT = haircut;
-        Escrow().setLiquidityHaircut(haircut);
+    function setHaircuts(uint128 liquidityHaircut, uint128 fCashHaircut, uint128 fCashMaxHaircut) external onlyOwner {
+        PortfoliosStorageSlot._setLiquidityHaircut(liquidityHaircut);
+        PortfoliosStorageSlot._setfCashHaircut(fCashHaircut);
+        PortfoliosStorageSlot._setfCashMaxHaircut(fCashMaxHaircut);
+        Escrow().setLiquidityHaircut(liquidityHaircut);
 
-        emit SetLiquidityHaircut(haircut);
+        emit SetHaircuts(liquidityHaircut, fCashHaircut, fCashMaxHaircut);
     }
 
     /**
@@ -297,19 +303,31 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
     }
 
     /**
-     * @notice Stateful version of free collateral that does not emit a SettleAccount event, used during
-     * liquidation to ensure that off chain syncing with the graph protocol does not have race conditions
-     * due to two events proclaiming changes to an account.
+     * @notice Stateful version of free collateral called during settlement and liquidation.
      * @dev skip
      * @param account address of account to get free collateral for
-     * @return (net free collateral position, an array of the net currency available)
+     * @param localCurrency local currency for the liquidation
+     * @param collateralCurrency collateral currency for the liquidation
+     * @return FreeCollateralFactors object
      */
-    function freeCollateralNoEmit(address account) public override returns (int256, int256[] memory, int256[] memory) {
+    function freeCollateralFactors(
+        address account,
+        uint256 localCurrency,
+        uint256 collateralCurrency
+    ) public override returns (Common.FreeCollateralFactors memory) {
         require(calledByEscrow(), $$(ErrorCode(UNAUTHORIZED_CALLER)));
-        // This will emit an event, which is the correct action here.
+        // This will not emit an event, which is the correct action here.
         _settleMaturedAssets(account);
 
-        return freeCollateralView(account);
+        (int256 fc, int256[] memory netCurrencyAvailable, int256[] memory cashClaims) = freeCollateralView(account);
+
+        return Common.FreeCollateralFactors(
+            fc,
+            netCurrencyAvailable[localCurrency],
+            netCurrencyAvailable[collateralCurrency],
+            cashClaims[localCurrency],
+            cashClaims[collateralCurrency]
+        );
     }
 
     /**
@@ -325,20 +343,19 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
 
     function _freeCollateral(address account, int256[] memory balances) internal view returns (int256, int256[] memory, int256[] memory) {
         Common.Asset[] memory portfolio = _accountAssets[account];
-        int256[] memory npv = new int256[](balances.length);
+        int256[] memory cashClaims = new int256[](balances.length);
 
         if (portfolio.length > 0) {
             // This returns the net requirement in each currency held by the portfolio.
             Common.Requirement[] memory requirements = RiskFramework.getRequirement(
                 portfolio,
-                G_LIQUIDITY_HAIRCUT,
                 address(this)
             );
 
             for (uint256 i; i < requirements.length; i++) {
                 uint256 currency = uint256(requirements[i].currency);
-                npv[currency] = npv[currency].add(requirements[i].npv);
-                balances[currency] = balances[currency].add(requirements[i].npv).sub(requirements[i].requirement);
+                cashClaims[currency] = cashClaims[currency].add(requirements[i].cashClaim);
+                balances[currency] = balances[currency].add(requirements[i].cashClaim).add(requirements[i].netfCashValue);
             }
         }
 
@@ -351,7 +368,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
             fc = fc.add(ethBalances[i]);
         }
 
-        return (fc, balances, npv);
+        return (fc, balances, cashClaims);
     }
 
     /***** Public Authenticated Methods *****/
@@ -651,14 +668,21 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
         uint16 currency,
         uint128 amount
     ) external override returns (uint128) {
-        return _tradePortfolio(account, currency, amount, Common.getLiquidityToken());
+        // Sorting the portfolio ensures that as we iterate through it we see each cash group
+        // in batches. However, this means that we won't be able to track the indexes to remove correctly.
+        Common.Asset[] memory portfolio = Common._sortPortfolio(_accountAssets[account]);
+        TradePortfolioState memory state = _tradePortfolio(account, currency, amount, Common.getLiquidityToken(), portfolio);
+
+        return state.amountRemaining;
     }
 
     /**
-     * @notice Looks for ways to take cash from the portfolio and return it to the escrow contract during
-     * cash settlement.
+     * @notice Trades cash receiver in the portfolio for cash. Only possible if there are no liquidity tokens in the portfolio
+     * as required by `settlefCash` and `liquidatefCash`. If fCash assets cannot be sold in the CashMarket, sells the fCash to
+     * the liquidator at a discount.
      * @dev skip
      * @param account the account to extract cash from
+     * @param liquidator the account that is initiating the action
      * @param currency the currency that the token should be denominated in
      * @param amount the amount of cash to extract from the portfolio
      * @return returns the amount of remaining cash value (if any) that the function was unable
@@ -666,10 +690,135 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
      */
     function raiseCurrentCashViaCashReceiver(
         address account,
+        address liquidator,
         uint16 currency,
         uint128 amount
-    ) external override returns (uint128) {
-        return _tradePortfolio(account, currency, amount, Common.getCashReceiver());
+    ) external override returns (uint128, uint128) {
+        // Sorting the portfolio ensures that as we iterate through it we see each cash group
+        // in batches. However, this means that we won't be able to track the indexes to remove correctly.
+        Common.Asset[] memory portfolio = Common._sortPortfolio(_accountAssets[account]);
+
+        // If a portfolio has liquidity tokens then it still has an asset that can be converted to cash more directly than fCash
+        // receiver tokens. Will not proceed until the portfolio does not have liquidity tokens.
+        uint256 fCashReceivers;
+        for (uint256 i; i < portfolio.length; i++) {
+            require(!Common.isLiquidityToken(portfolio[i].assetType), $$(ErrorCode(PORTFOLIO_HAS_LIQUIDITY_TOKENS)));
+
+            // Technically we should check for the proper currency here but we do this inside
+            // _tradefCashLiquidator. Not doing it here to save some SLOAD calls. This serves as
+            // an upper bound for the receivers in the portfolio.
+            if (Common.isCashReceiver(portfolio[i].assetType)) fCashReceivers++;
+        }
+
+        require(fCashReceivers > 0, $$(ErrorCode(PORTFOLIO_HAS_NO_RECEIVERS)));
+        TradePortfolioState memory state = _tradePortfolio(account, currency, amount, Common.getCashReceiver(), portfolio);
+
+        uint128 liquidatorPayment;
+        if (fCashReceivers > state.indexCount && state.amountRemaining > 0) {
+            // This means that there are fCashRecievers in the portfolio that were unable to be traded on the market. In this case
+            // we will allow the caller to purchase a portion of the fCashReceiver at a heavily discounted amount.
+
+            (state.amountRemaining, liquidatorPayment) = _tradefCashLiquidator(
+                _accountAssets[account],
+                _accountAssets[liquidator],
+                state.amountRemaining,
+                currency
+            );
+        }
+
+        return (state.amountRemaining, liquidatorPayment);
+    }
+
+    /**
+     * @notice Trades fCash receivers to the liquidator at a discount. Transfers the assets between portfolios and returns
+     * the amount that the liquidator must pay in return for the assets.
+     */
+    function _tradefCashLiquidator(
+        Common.Asset[] storage portfolio,
+        Common.Asset[] storage liquidatorPortfolio,
+        uint128 amountRemaining,
+        uint16 currency
+    ) internal returns (uint128, uint128) {
+        uint128 liquidatorPayment;
+        uint128 notionalToTransfer;
+
+        uint256 length = portfolio.length;
+        Common.CashGroup memory cg;
+        uint128 fCashHaircut = PortfoliosStorageSlot._fCashHaircut();
+        uint128 fCashMaxHaircut = PortfoliosStorageSlot._fCashMaxHaircut();
+
+        for (uint256 i; i < length; i++) {
+            Common.Asset memory asset = portfolio[i];
+            if (Common.isCashReceiver(asset.assetType)) {
+                cg = cashGroups[asset.cashGroupId];
+                if (cg.currency != currency) continue;
+                 
+                (liquidatorPayment, notionalToTransfer, amountRemaining) = _calculateNotionalToTransfer(
+                    fCashHaircut,
+                    fCashMaxHaircut,
+                    liquidatorPayment,
+                    amountRemaining,
+                    asset
+                );
+
+                if (notionalToTransfer == asset.notional) {
+                    // This is a full transfer and we will remove the asset, we need to update the loop
+                    // variables as well.
+                    _removeAsset(portfolio, i);
+                    i--;
+                    length = length == 0 ? 0 : length - 1;
+                } else {
+                    // This is a partial transfer and it means that state.amountRemaining is now
+                    // equal to zero and we will exit the loop.
+                    _reduceAsset(portfolio, portfolio[i], i, notionalToTransfer);
+                }
+
+                asset.notional = notionalToTransfer;
+                _upsertAsset(liquidatorPortfolio, asset);
+            }
+
+            if (amountRemaining == 0) break;
+        }
+
+        return (amountRemaining, liquidatorPayment);
+    }
+
+    function _calculateNotionalToTransfer(
+        uint128 fCashHaircut,
+        uint128 fCashMaxHaircut,
+        uint128 liquidatorPayment,
+        uint128 amountRemaining,
+        Common.Asset memory asset
+    ) internal view returns (uint128, uint128, uint128) {
+        // blockTime is in here because of the stack size
+        uint32 blockTime = uint32(block.timestamp);
+        uint128 notionalToTransfer;
+        uint128 assetValue;
+        int256 tmp = RiskFramework._calculateReceiverValue(
+            asset,
+            blockTime,
+            fCashHaircut,
+            fCashMaxHaircut
+        );
+        // Asset values will always be positive.
+        require(tmp >= 0);
+        assetValue = uint128(tmp);
+   
+        if (assetValue >= amountRemaining) {
+            notionalToTransfer = SafeCast.toUint128(
+                uint256(asset.notional)
+                    .mul(amountRemaining)
+                    .div(assetValue)
+            );
+            liquidatorPayment = liquidatorPayment.add(amountRemaining);
+            amountRemaining = 0;
+        } else {
+            notionalToTransfer = asset.notional;
+            amountRemaining = amountRemaining - assetValue;
+            liquidatorPayment = liquidatorPayment.add(assetValue);
+        }
+ 
+        return (liquidatorPayment, notionalToTransfer, amountRemaining);
     }
 
     /**
@@ -683,15 +832,11 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
         address account,
         uint16 currency,
         uint128 amount,
-        bytes1 tradeType
-    ) internal returns (uint128) {
+        bytes1 tradeType,
+        Common.Asset[] memory portfolio
+    ) internal returns (TradePortfolioState memory) {
         // Only Escrow can execute actions to trade the portfolio
         require(calledByEscrow(), $$(ErrorCode(UNAUTHORIZED_CALLER)));
-
-        // Sorting the portfolio ensures that as we iterate through it we see each cash group
-        // in batches. However, this means that we won't be able to track the indexes to remove correctly.
-        Common.Asset[] memory portfolio = Common._sortPortfolio(_accountAssets[account]);
-        if (portfolio.length == 0) return amount;
 
         TradePortfolioState memory state = TradePortfolioState(
             amount,
@@ -701,6 +846,8 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
             // changes where we update both liquidity tokens as well as cash obligations.
             new Common.Asset[](portfolio.length * 2)
         );
+
+        if (portfolio.length == 0) return state;
 
         // We initialize these cash groups here knowing that there is at least one asset in the portfolio
         uint8 cashGroupId = portfolio[0].cashGroupId;
@@ -746,11 +893,11 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
 
         Common.Asset[] storage accountStorage = _accountAssets[account];
         for (uint256 i; i < state.indexCount; i++) {
-            // This bypasses the free cash check which is required here.
+            // This bypasses the free collateral check that we do not need to do here
             _upsertAsset(accountStorage, state.portfolioChanges[i]);
         }
 
-        return state.amountRemaining;
+        return state;
     }
 
     /**

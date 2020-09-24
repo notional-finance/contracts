@@ -157,13 +157,10 @@ describe("Generic Tests", () => {
                 .connect(wallet)
                 .transferAccountAsset(wallet.address, AddressZero, "0x00", 1, 0, 1000, WeiPerEther)
         ).to.be.revertedWith(ErrorDecoder.decodeError(ErrorCodes.UNAUTHORIZED_CALLER));
-        await expect(portfolios.connect(wallet).freeCollateralNoEmit(wallet.address)).to.be.revertedWith(
+        await expect(portfolios.connect(wallet).freeCollateralFactors(wallet.address, 1, 0)).to.be.revertedWith(
             ErrorDecoder.decodeError(ErrorCodes.UNAUTHORIZED_CALLER)
         );
 
-        await expect(
-            portfolios.connect(wallet).raiseCurrentCashViaCashReceiver(wallet.address, 1, WeiPerEther)
-        ).to.be.revertedWith(ErrorDecoder.decodeError(ErrorCodes.UNAUTHORIZED_CALLER));
         await expect(
             portfolios.connect(wallet).raiseCurrentCashViaLiquidityToken(wallet.address, 1, WeiPerEther)
         ).to.be.revertedWith(ErrorDecoder.decodeError(ErrorCodes.UNAUTHORIZED_CALLER));
@@ -222,5 +219,16 @@ describe("Generic Tests", () => {
                 WeiPerEther
             )
         ).to.be.revertedWith(ErrorDecoder.decodeError(ErrorCodes.UNAUTHORIZED_CALLER));
+
+        // This takes a little work to ensure that we get the right revert
+        const maturities = await futureCash.getActiveMaturities();
+        await escrow.deposit(dai.address, parseEther("1000"));
+        await futureCash.addLiquidity(maturities[0], parseEther("1000"), parseEther("1000"), 0, 100_000_000, BLOCK_TIME_LIMIT);
+        await escrow.connect(wallet).deposit(dai.address, parseEther("1"));
+        await futureCash.connect(wallet).takefCash(maturities[0], parseEther("1"), BLOCK_TIME_LIMIT, 0);
+        await expect(
+            portfolios.connect(wallet).raiseCurrentCashViaCashReceiver(wallet.address, owner.address, 1, WeiPerEther)
+        ).to.be.revertedWith(ErrorDecoder.decodeError(ErrorCodes.UNAUTHORIZED_CALLER));
+
     });
 });

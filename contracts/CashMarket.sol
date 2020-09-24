@@ -26,7 +26,6 @@ contract CashMarket is Governed {
     int64 internal constant LN_1E18 = 0x09a667e259;
     bool internal constant CHECK_FC = true;
     bool internal constant DEFER_CHECK = false;
-    uint32 internal constant SECONDS_IN_YEAR = 31536000;
 
     /**
      * @dev skip
@@ -329,7 +328,7 @@ contract CashMarket is Governed {
                     uint256(G_RATE_ANCHOR)
                         .sub(INSTRUMENT_PRECISION)
                         .mul(timeToMaturity)
-                        .div(SECONDS_IN_YEAR)
+                        .div(Common.SECONDS_IN_YEAR)
                         .add(INSTRUMENT_PRECISION)
                 );
                 market.rateScalar = G_RATE_SCALAR;

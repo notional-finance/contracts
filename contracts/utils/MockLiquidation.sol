@@ -6,37 +6,82 @@ import "../lib/SafeMath.sol";
 import "../interface/IPortfoliosCallable.sol";
 
 import "./Liquidation.sol";
+import "../storage/EscrowStorage.sol";
 
-contract MockLiquidation {
-    event TradeCollateralCurrency(uint128 localToPurchase, uint128 collateralToSell, int256 newPayerBalance);
+contract MockLiquidation is EscrowStorage {
+
+    function setParameters(
+        uint128 liquidityHaircut,
+        uint128 liquidationDiscount,
+        uint128 settlementDiscount,
+        uint128 repoIncentive
+    ) external {
+        EscrowStorageSlot._setLiquidityHaircut(liquidityHaircut);
+        EscrowStorageSlot._setLiquidationDiscount(liquidationDiscount);
+        EscrowStorageSlot._setSettlementDiscount(settlementDiscount);
+        EscrowStorageSlot._setLiquidityTokenRepoIncentive(repoIncentive);
+    }
+
+    event TradeCollateralCurrency(
+        uint128 netLocalCurrencyPayer,
+        int256 netLocalCurrencyLiquidator,
+        uint128 collateralTransfer,
+        int256 payerCollateralBalance
+    );
+
+    function liquidateCollateralCurrency(
+        address payer,
+        uint128 localCurrencyRequired,
+        uint128 liquidityHaircut,
+        Liquidation.TransferAmounts memory transfer,
+        Common.FreeCollateralFactors memory fc,
+        Liquidation.RateParameters memory rateParam,
+        address Portfolios
+    ) public {
+        Liquidation._liquidateCollateralCurrency(payer, localCurrencyRequired, liquidityHaircut, transfer, fc, rateParam, Portfolios);
+
+        emit TradeCollateralCurrency(
+            transfer.netLocalCurrencyPayer,
+            transfer.netLocalCurrencyLiquidator,
+            transfer.collateralTransfer,
+            transfer.payerCollateralBalance
+        );
+    }
+
     function tradeCollateralCurrency(
         address payer,
-        int256 payerBalance,
-        Liquidation.CollateralCurrencyParameters memory param,
-        Liquidation.RateParameters memory rateParam
+        uint128 localCurrencyRequired,
+        uint128 liquidityHaircut,
+        uint128 discountFactor,
+        Liquidation.TransferAmounts memory transfer,
+        Common.FreeCollateralFactors memory fc,
+        Liquidation.RateParameters memory rateParam,
+        address Portfolios
     ) public returns (uint128, uint128, int256) {
-        (uint128 localToPurchase, uint128 collateralToSell, int256 newPayerBalance) = 
-            Liquidation._tradeCollateralCurrency(payer, payerBalance, param, rateParam);
+        Liquidation._tradeCollateralCurrency(payer, localCurrencyRequired, liquidityHaircut, discountFactor, transfer, fc, rateParam, Portfolios);
 
-        emit TradeCollateralCurrency(localToPurchase, collateralToSell, newPayerBalance);
+        emit TradeCollateralCurrency(
+            transfer.netLocalCurrencyPayer,
+            transfer.netLocalCurrencyLiquidator,
+            transfer.collateralTransfer,
+            transfer.payerCollateralBalance
+        );
     }
 
     event LiquidityTokenTrade(uint128 cashClaimWithdrawn, uint128 localCurrencyRaised);
     function localLiquidityTokenTrade(
-        address account,
-        uint16 currency,
+        address payer,
+        uint16 localCurrency,
         uint128 localCurrencyRequired,
         uint128 liquidityHaircut,
-        uint128 liquidityRepoIncentive,
-        address Portfolios
+        IPortfoliosCallable Portfolios
     ) public {
         (uint128 cashClaimWithdrawn, uint128 localCurrencyRaised) = 
             Liquidation._localLiquidityTokenTrade(
-                account,
-                currency,
+                payer,
+                localCurrency,
                 localCurrencyRequired,
                 liquidityHaircut,
-                liquidityRepoIncentive,
                 IPortfoliosCallable(Portfolios)
             );
 
@@ -69,24 +114,12 @@ contract MockLiquidation {
         return Liquidation._calculateLiquidityTokenHaircut(postHaircutCashClaim, liquidityHaircut);
     }
 
-    function calculatePurchaseAmounts(
-        uint128 haircutClaim,
-        uint128 maxLocalCurrencyToTrade,
-        Liquidation.CollateralCurrencyParameters memory param,
-        Liquidation.RateParameters memory rateParam
-    ) public pure returns (uint128, uint128, uint128) {
-        return Liquidation._calculatePurchaseAmounts(haircutClaim, maxLocalCurrencyToTrade, param, rateParam);
-    }
-
     function calculateCollateralToSell(
-        uint256 rate,
-        uint256 rateDecimals,
         uint128 discountFactor,
         uint128 localCurrencyRequired,
-        uint256 localDecimals,
-        uint256 collateralDecimals
+        Liquidation.RateParameters memory rateParam
     ) public pure returns (uint128) {
-        return Liquidation._calculateCollateralToSell(rate, rateDecimals, discountFactor, localCurrencyRequired, localDecimals, collateralDecimals);
+        return Liquidation._calculateCollateralToSell(discountFactor, localCurrencyRequired, rateParam);
     }
 
     function calculateCollateralBalances(

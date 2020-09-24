@@ -1,12 +1,25 @@
-import { Wallet } from "ethers";
+import { Contract, Wallet } from "ethers";
 import { JsonRpcProvider } from "ethers/providers";
 import { NotionalDeployer, Environment } from "./NotionalDeployer";
 import { BigNumber, parseEther } from "ethers/utils";
 import { config } from "dotenv";
 import { WeiPerEther } from 'ethers/constants';
 import Debug from "debug";
-import { deployLocal, deployTestEnvironment } from './deployEnvironment';
+import { deployLocal } from './deployEnvironment';
 import path from 'path';
+
+import WETHArtifact from "../mocks/WETH9.json";
+import ERC1820RegistryArtifact from "../mocks/ERC1820Registry.json";
+import CreateProxyFactoryArtifact from "../build/CreateProxyFactory.json";
+import MockDaiArtifact from "../mocks/MockDai.json";
+import MockUSDCArtifact from "../mocks/MockUSDC.json";
+import MockAggregatorArtfiact from "../mocks/MockAggregator.json"
+
+import { Ierc1820Registry as IERC1820Registry } from "../typechain/Ierc1820Registry";
+import { Iweth as IWETH } from '../typechain/Iweth';
+import { Ierc20 as ERC20 } from "../typechain/Ierc20";
+import { IAggregator } from '../typechain/IAggregator';
+import { CreateProxyFactory } from '../typechain/CreateProxyFactory';
 
 const log = Debug("notional:deploy");
 const ONE_MONTH = 2592000;
@@ -42,13 +55,16 @@ async function main() {
                 process.env.TESTNET_PRIVATE_KEY as string,
                 new JsonRpcProvider(process.env.TESTNET_PROVIDER)
             );
-            environment = await deployTestEnvironment(
-                deployWallet,
-                process.env.WETH_ADDRESS as string,
-                process.env.ERC1820_REGISTRY_ADDRESS as string,
-                process.env.PROXY_FACTORY as string,
-                confirmations
-            );
+            environment = {
+                deploymentWallet: deployWallet,
+                WETH: new Contract(process.env.WETH_ADDRESS as string, WETHArtifact.abi, deployWallet) as IWETH,
+                ERC1820: new Contract(process.env.ERC1820_REGISTRY_ADDRESS as string, ERC1820RegistryArtifact.abi, deployWallet) as IERC1820Registry,
+                DAI: new Contract(process.env.DAI_ADDRESS as string, MockDaiArtifact.abi, deployWallet) as ERC20,
+                USDC: new Contract(process.env.USDC_ADDRESS as string, MockUSDCArtifact.abi, deployWallet) as ERC20,
+                DAIETHOracle: new Contract(process.env.DAI_ORACLE as string, MockAggregatorArtfiact.abi, deployWallet) as IAggregator,
+                USDCETHOracle: new Contract(process.env.USDC_ORACLE as string, MockAggregatorArtfiact.abi, deployWallet) as IAggregator,
+                proxyFactory: new Contract(process.env.PROXY_FACTORY as string, CreateProxyFactoryArtifact.abi, deployWallet) as CreateProxyFactory
+            };
             break;
         default:
             log(`Unknown chain id: ${chainId}, quitting`);
@@ -63,6 +79,8 @@ async function main() {
         parseEther("1.02"),
         parseEther("0.80"),
         parseEther("1.01"),
+        parseEther("0.50"),
+        parseEther("0.95"),
         confirmations
     );
 

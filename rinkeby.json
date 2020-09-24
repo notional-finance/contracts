@@ -1,17 +1,17 @@
 {
   "chainId": 4,
   "networkName": "rinkeby",
-  "escrow": "0xE7A1eCeE73eE84816AA0B18e4546766b064Fe040",
-  "portfolios": "0xB92bA96564012eC0E40729229709DfB6372CBca8",
-  "proxyAdmin": "0x11F8a09F0b8F4E3D9c174A42Ef488Ae89b1573D9",
+  "escrow": "0x9abd0b8868546105F6F48298eaDC1D9c82f7f683",
+  "portfolios": "0x0A4721117040ABF319b954aBF13F654505C34920",
+  "proxyAdmin": "0x25d27646Ea585Ee7Ef308d14f4C0D2b094790Acb",
   "proxyFactory": "0xc981D9E52684A25e528ba63552dF122Af8327D4E",
-  "directory": "0xb5B4760FE6F064db5e547D0602600CE2bd10c2DC",
-  "erc1155": "0xB1AE6b4fc767777bcE9687cB3Be4657d26B6d4c9",
-  "erc1155trade": "0x24782E712E42cf8Ce03CBfF73BBf9Be4bcFe11F3",
-  "startBlock": 7197697,
+  "directory": "0xdce848258dFB1bBf34C346Fbe40F10F8a42d2526",
+  "erc1155": "0x3a31b8121D810B1D7b3004f94f205E6DFC1bf8d9",
+  "erc1155trade": "0xBbA899578bd3fA3DAa863A340f5600797993eF08",
+  "startBlock": 7237041,
   "defaultConfirmations": 3,
   "libraries": {
-    "Liquidation": "0x967Dc123A0fFb474DCACFCEd897C66047C0e8a6d",
-    "RiskFramework": "0x3Be6202fA6DBcDd1e5426E3AED113C67581Ae900"
+    "Liquidation": "0xfc2F1fE9837E22B1D072140bd0784a7515D2BFA8",
+    "RiskFramework": "0xd5d8661733106b0a7C982E44a81b7229a9e2dde2"
   }
 }

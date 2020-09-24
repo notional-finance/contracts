@@ -22,7 +22,9 @@ const CONTRACTS = [
     "Escrow",
     "Portfolios",
     "ERC1155Token",
-    "ERC1155Trade"
+    "ERC1155Trade",
+    "Liquidation",
+    "RiskFramework"
 ];
 
 task("codeSize", "Prints the code size of all contracts")
@@ -48,6 +50,9 @@ module.exports = {
             enabled: true,
             runs: 200
         }
+    },
+    mocha: {
+        timeout: 50000
     },
     paths: {
         artifacts: "./build"

@@ -22,11 +22,15 @@ interface IPortfoliosCallable {
 
     function freeCollateral(address account) external returns (int256, int256[] memory, int256[] memory);
 
-    function freeCollateralNoEmit(address account) external returns (int256, int256[] memory, int256[] memory);
-
     function freeCollateralView(address account) external view returns (int256, int256[] memory, int256[] memory);
 
     function freeCollateralAggregateOnly(address account) external returns (int256);
+
+    function freeCollateralFactors(
+        address account,
+        uint256 localCurrency,
+        uint256 collateralCurrency
+    ) external returns (Common.FreeCollateralFactors memory);
 
     function setNumCurrencies(uint16 numCurrencies) external;
 
@@ -56,7 +60,8 @@ interface IPortfoliosCallable {
 
     function raiseCurrentCashViaCashReceiver(
         address account,
+        address liquidator,
         uint16 currency,
         uint128 amount
-    ) external returns (uint128);
+    ) external returns (uint128, uint128);
 }

@@ -6,9 +6,11 @@ import { NotionalDeployer } from '../scripts/NotionalDeployer';
 import MockLiquidationArtifact from '../build/MockLiquidation.json';
 import { MockLiquidation } from '../typechain/MockLiquidation';
 import MockPortfoliosArtifact from '../build/MockPortfolios.json';
+import MockAggregatorArtifact from '../mocks/MockAggregator.json';
 import { MockPortfolios } from '../typechain/MockPortfolios';
 import { AddressZero, WeiPerEther } from 'ethers/constants';
 import { BigNumber, parseEther } from 'ethers/utils';
+import { MockAggregator } from '../mocks/MockAggregator';
 
 chai.use(solidity);
 const { expect } = chai;
@@ -17,6 +19,8 @@ describe("Liquidation Calculations", () => {
   let owner: Wallet;
   let liquidation: MockLiquidation;
   let portfolios: MockPortfolios;
+  let chainlink: MockAggregator;
+  let defaultRateParams: any;
   const defaultLiquidityHaircut = parseEther("0.8");
   const defaultRepoIncentive = parseEther("1.10");
   const defaultLiquidationDiscount = parseEther("1.06");
@@ -46,7 +50,37 @@ describe("Liquidation Calculations", () => {
       1
     ) as MockPortfolios;
 
-    await portfolios.setHaircut(defaultLiquidityHaircut);
+    chainlink = await NotionalDeployer.deployContract(
+      owner,
+      MockAggregatorArtifact,
+      [],
+      1
+    ) as MockAggregator;
+    // This is the localToETH rate oracle
+    await chainlink.setAnswer(1e4);
+
+    defaultRateParams = {
+      rate: 1e6,
+      localCurrency: 1,
+      collateralCurrency: 2,
+      localDecimals: WeiPerEther,
+      collateralDecimals: 1e6,
+      localToETH: {
+        rateOracle: chainlink.address,
+        rateDecimals: 1e6,
+        mustInvert: false,
+        buffer: parseEther("1.3")
+      }
+    }
+
+    await liquidation.setParameters(
+      defaultLiquidityHaircut,
+      defaultLiquidationDiscount,
+      parseEther("1.02"),
+      defaultRepoIncentive
+    );
+
+    await portfolios.setHaircut(parseEther("0.8"));
   })
 
   it("calculates claims properly", async () => {
@@ -71,7 +105,6 @@ describe("Liquidation Calculations", () => {
         CURRENCY.DAI,
         parseEther("1000"),
         defaultLiquidityHaircut,
-        defaultRepoIncentive,
         portfolios.address
       )).to.emit(liquidation, "LiquidityTokenTrade")
         .withArgs(
@@ -91,7 +124,6 @@ describe("Liquidation Calculations", () => {
         CURRENCY.DAI,
         1000e6,
         defaultLiquidityHaircut,
-        defaultRepoIncentive,
         portfolios.address
       )).to.emit(liquidation, "LiquidityTokenTrade")
         .withArgs(
@@ -115,7 +147,6 @@ describe("Liquidation Calculations", () => {
         CURRENCY.DAI,
         parseEther("1000"),
         defaultLiquidityHaircut,
-        defaultRepoIncentive,
         portfolios.address
       )).to.emit(liquidation, "LiquidityTokenTrade")
         .withArgs(
@@ -139,7 +170,6 @@ describe("Liquidation Calculations", () => {
         CURRENCY.DAI,
         1000e6,
         defaultLiquidityHaircut,
-        defaultRepoIncentive,
         portfolios.address
       )).to.emit(liquidation, "LiquidityTokenTrade")
         .withArgs(
@@ -163,7 +193,6 @@ describe("Liquidation Calculations", () => {
         CURRENCY.DAI,
         parseEther("1000"),
         defaultLiquidityHaircut,
-        defaultRepoIncentive,
         portfolios.address
       )).to.emit(liquidation, "LiquidityTokenTrade")
         .withArgs(
@@ -294,12 +323,21 @@ describe("Liquidation Calculations", () => {
   describe("calculate deposit to sell", async () => {
     it("base case", async () => {
       const value = await liquidation.calculateCollateralToSell(
-        parseEther("0.01"),
-        WeiPerEther,
         defaultLiquidationDiscount,
         parseEther("1000"),
-        WeiPerEther,
-        1e6
+        {
+          rate: parseEther("0.01"),
+          localCurrency: 1,
+          collateralCurrency: 2,
+          localDecimals: WeiPerEther,
+          collateralDecimals: 1e6,
+          localToETH: {
+            rateOracle: chainlink.address,
+            rateDecimals: WeiPerEther,
+            mustInvert: false,
+            buffer: parseEther("1.3")
+          }
+        }
       );
 
       expect(value).to.equal(10.6e6)
@@ -308,12 +346,21 @@ describe("Liquidation Calculations", () => {
     it("small values, convert down", async () => {
       // When converting down from 18 decimals to 6 we cannot sell under some amount of dust
       const value = await liquidation.calculateCollateralToSell(
-        0.01e6,
-        1e6,
         defaultLiquidationDiscount,
         parseEther("0.0001"),
-        WeiPerEther,
-        1e6
+        {
+          rate: 0.01e6,
+          localCurrency: 1,
+          collateralCurrency: 2,
+          localDecimals: WeiPerEther,
+          collateralDecimals: 1e6,
+          localToETH: {
+            rateOracle: chainlink.address,
+            rateDecimals: 1e6,
+            mustInvert: false,
+            buffer: parseEther("1.3")
+          }
+        }
       );
 
       expect(value).to.equal(1)
@@ -322,12 +369,21 @@ describe("Liquidation Calculations", () => {
     it("small values, convert up", async () => {
       // When converting down from 18 decimals to 6 we cannot sell under some amount of dust
       const value = await liquidation.calculateCollateralToSell(
-        0.01e6,
-        1e6,
         defaultLiquidationDiscount,
         0.0001e6,
-        1e6,
-        WeiPerEther
+        {
+          rate: 0.01e6,
+          localCurrency: 1,
+          collateralCurrency: 2,
+          localDecimals: 1e6,
+          collateralDecimals: WeiPerEther,
+          localToETH: {
+            rateOracle: chainlink.address,
+            rateDecimals: 1e6,
+            mustInvert: false,
+            buffer: parseEther("1.3")
+          }
+        }
       );
 
       expect(value).to.equal(1.06e12)
@@ -335,29 +391,11 @@ describe("Liquidation Calculations", () => {
   });
 
   describe("transfer collateral currency", async () => {
-    // Keep rate 1-1 to make things easy
-    const rateParams = {
-      rate: 1e6,
-      rateDecimals: 1e6,
-      localDecimals: WeiPerEther,
-      collateralDecimals: 1e6
-    }
-
-    const depositParameters = {
-      // localCurrencyRequired 
-      // collateralCurrencyCashClaim
-      // collateralCurrencyAvailable
-      localCurrencyAvailable: 0, // This is unused in the calculations, required maxes out at available
-      collateralCurrency: CURRENCY.ETH,
-      discountFactor: defaultLiquidationDiscount,
-      liquidityHaircut: defaultLiquidityHaircut,
-    }
-
     const runTest = async (
       inputs: {
         balance: number,
         cashClaim: number,
-        requirement: number,
+        fCashValue: number,
         localRequired: number
       },
       outputs: {
@@ -365,27 +403,55 @@ describe("Liquidation Calculations", () => {
         collateralToSell: number,
         payerBalance: number,
         amountToRaise: number
-      }
+      },
+      revert = false
     ) => {
       const balance = new BigNumber(inputs.balance * 1e6);
+      const transfer = {
+        netLocalCurrencyLiquidator: 0,
+        netLocalCurrencyPayer: 0,
+        collateralTransfer: 0,
+        payerCollateralBalance: balance
+      }
+
       await portfolios.setClaim(inputs.cashClaim * 1e6, 0);
       const claim = (await portfolios.getClaim())[0];
+      const available = balance.add(claim).add(new BigNumber(inputs.fCashValue * 1e6));
+      const fc = {
+        aggregate: -1, // unusued
+        localNetAvailable: 0, // unused
+        collateralNetAvailable: available,
+        localCashClaim: 0, // unused
+        collateralCashClaim: claim
+      }
+      
+      if (revert) {
+        await expect(liquidation.tradeCollateralCurrency(
+          AddressZero,
+          parseEther(inputs.localRequired.toString()),
+          defaultLiquidityHaircut,
+          defaultLiquidationDiscount,
+          transfer,
+          fc,
+          defaultRateParams,
+          portfolios.address
+        )).to.be.reverted;
 
-      const available = balance.add(claim).sub(new BigNumber(inputs.requirement * 1e6));
+        return;
+      }
 
       await expect(liquidation.tradeCollateralCurrency(
         AddressZero,
-        balance,
-        {
-          ...depositParameters,
-          localCurrencyRequired: parseEther(inputs.localRequired.toString()),
-          collateralCurrencyCashClaim: claim,
-          collateralCurrencyAvailable: available,
-          Portfolios: portfolios.address
-        },
-        rateParams
+        parseEther(inputs.localRequired.toString()),
+        defaultLiquidityHaircut,
+        defaultLiquidationDiscount,
+        transfer,
+        fc,
+        defaultRateParams,
+        portfolios.address
       )).to.emit(liquidation, "TradeCollateralCurrency")
         .withArgs(
+          parseEther(outputs.localToPurchase.toString()),
           parseEther(outputs.localToPurchase.toString()),
           outputs.collateralToSell * 1e6,
           outputs.payerBalance * 1e6
@@ -399,7 +465,7 @@ describe("Liquidation Calculations", () => {
         let payerBalance = new BigNumber(outputs.payerBalance * 1e6);
 
         // Net currency available cannot dip below zero after trading
-        expect(payerBalance.add(postClaim)).to.be.gte(new BigNumber(inputs.requirement * 1e6))
+        expect(payerBalance.add(postClaim).add(new BigNumber(inputs.fCashValue * 1e6))).to.be.gte(0)
       } else {
         expect(await portfolios._wasCalled()).to.be.false;
       }
@@ -410,7 +476,7 @@ describe("Liquidation Calculations", () => {
         {
           balance: 110,
           cashClaim: 0,
-          requirement: 0,
+          fCashValue: 0,
           localRequired: 100
         },
         {
@@ -428,7 +494,7 @@ describe("Liquidation Calculations", () => {
           {
             balance: 106,
             cashClaim: 0,
-            requirement: 0,
+            fCashValue: 0,
             localRequired: 200
           },
           {
@@ -448,24 +514,33 @@ describe("Liquidation Calculations", () => {
 
         await expect(liquidation.tradeCollateralCurrency(
           AddressZero,
-          balance,
+          parseEther("200"),
+          defaultLiquidityHaircut,
+          defaultLiquidationDiscount,
           {
-            ...depositParameters,
-            localCurrencyRequired: parseEther("200"),
-            collateralCurrencyCashClaim: cashClaim,
-            collateralCurrencyAvailable: available,
-            Portfolios: portfolios.address
+            netLocalCurrencyLiquidator: 0,
+            netLocalCurrencyPayer: 0,
+            collateralTransfer: 0,
+            payerCollateralBalance: balance
           },
-          rateParams
+          {
+            aggregate: -1,
+            localCashClaim: 0,
+            localNetAvailable: 0,
+            collateralCashClaim: cashClaim,
+            collateralNetAvailable: available
+          },
+          defaultRateParams,
+          portfolios.address
         )).to.be.reverted;
       });
 
-      it("no trading, balance sufficient, requirement", async () => {
+      it("no trading, balance sufficient, negative fCashValue", async () => {
         await runTest(
           {
             balance: 206,
             cashClaim: 0,
-            requirement: 100,
+            fCashValue: -100,
             localRequired: 200
           },
           {
@@ -477,12 +552,12 @@ describe("Liquidation Calculations", () => {
         )
       });
 
-      it("no trading, balance insufficient, requirement", async () => {
+      it("no trading, balance insufficient, negative fCashValue", async () => {
         await runTest(
           {
             balance: 153,
             cashClaim: 0,
-            requirement: 100,
+            fCashValue: -100,
             localRequired: 200
           },
           {
@@ -491,6 +566,76 @@ describe("Liquidation Calculations", () => {
             payerBalance: 100,
             amountToRaise: 0
           }
+        )
+      });
+
+      it("no trading, balance sufficient, positive fCashValue", async () => {
+        await runTest(
+          {
+            balance: 106,
+            cashClaim: 0,
+            fCashValue: 100,
+            localRequired: 100
+          },
+          {
+            localToPurchase: 100,
+            collateralToSell: 106,
+            payerBalance: 0,
+            amountToRaise: 0
+          }
+        )
+      });
+
+      it("no trading, balance insufficient, positive fCashValue", async () => {
+        await runTest(
+          {
+            balance: 53,
+            cashClaim: 0,
+            fCashValue: 100,
+            localRequired: 200
+          },
+          {
+            localToPurchase: 50,
+            collateralToSell: 53,
+            payerBalance: 0,
+            amountToRaise: 0
+          }
+        )
+      });
+
+      it("no trading, balance negative, positive fCashValue", async () => {
+        await runTest(
+          {
+            balance: -100,
+            cashClaim: 0,
+            fCashValue: 200,
+            localRequired: 200
+          },
+          {
+            localToPurchase: 0,
+            collateralToSell: 0,
+            payerBalance: -100,
+            amountToRaise: 0
+          },
+          true
+        )
+      });
+
+      it("no trading, balance negative, positive fCashValue", async () => {
+        await runTest(
+          {
+            balance: -10,
+            cashClaim: 0,
+            fCashValue: 200,
+            localRequired: 200
+          },
+          {
+            localToPurchase: 0,
+            collateralToSell: 0,
+            payerBalance: -100,
+            amountToRaise: 0
+          },
+          true
         )
       });
     });
@@ -503,7 +648,7 @@ describe("Liquidation Calculations", () => {
           {
             balance: 0,
             cashClaim: 140,
-            requirement: 0,
+            fCashValue: 0,
             localRequired: 100
           },
           {
@@ -520,7 +665,7 @@ describe("Liquidation Calculations", () => {
           {
             balance: 50,
             cashClaim: 140,
-            requirement: 0,
+            fCashValue: 0,
             localRequired: 100
           },
           {
@@ -537,7 +682,7 @@ describe("Liquidation Calculations", () => {
           {
             balance: -50,
             cashClaim: 200,
-            requirement: 0,
+            fCashValue: 0,
             localRequired: 100
           },
           {
@@ -554,7 +699,7 @@ describe("Liquidation Calculations", () => {
           {
             balance: 110,
             cashClaim: 200,
-            requirement: 0,
+            fCashValue: 0,
             localRequired: 100
           },
           {
@@ -566,12 +711,12 @@ describe("Liquidation Calculations", () => {
         )
       });
 
-      it("requirement, no balance", async () => {
+      it("negative fCashValue, no balance", async () => {
         await runTest(
           {
             balance: 0,
             cashClaim: 210,
-            requirement: 100,
+            fCashValue: -100,
             localRequired: 100
           },
           {
@@ -583,12 +728,12 @@ describe("Liquidation Calculations", () => {
         )
       });
 
-      it("requirement, sufficient balance", async () => {
+      it("negative fCashValue, sufficient balance", async () => {
         await runTest(
           {
             balance: 106,
             cashClaim: 210,
-            requirement: 100,
+            fCashValue: -100,
             localRequired: 100
           },
           {
@@ -600,12 +745,12 @@ describe("Liquidation Calculations", () => {
         )
       });
 
-      it("requirement, partial balance", async () => {
+      it("negative fCashValue, partial balance", async () => {
         await runTest(
           {
             balance: 50,
             cashClaim: 210,
-            requirement: 100,
+            fCashValue: -100,
             localRequired: 100
           },
           {
@@ -617,12 +762,12 @@ describe("Liquidation Calculations", () => {
         )
       });
 
-      it("requirement, negative balance", async () => {
+      it("negative fCashValue, negative balance", async () => {
         await runTest(
           {
             balance: -50,
             cashClaim: 300,
-            requirement: 100,
+            fCashValue: -100,
             localRequired: 100
           },
           {
@@ -630,6 +775,91 @@ describe("Liquidation Calculations", () => {
             collateralToSell: 106,
             payerBalance: 0,
             amountToRaise: 156
+          }
+        )
+      });
+
+      it("positive fCashValue, no balance", async () => {
+        await runTest(
+          {
+            balance: 0,
+            cashClaim: 110,
+            fCashValue: 100,
+            localRequired: 100
+          },
+          {
+            localToPurchase: 100,
+            collateralToSell: 106,
+            payerBalance: 0,
+            amountToRaise: 106
+          }
+        )
+      });
+
+      it("positive fCashValue, sufficient balance", async () => {
+        await runTest(
+          {
+            balance: 106,
+            cashClaim: 110,
+            fCashValue: 100,
+            localRequired: 100
+          },
+          {
+            localToPurchase: 100,
+            collateralToSell: 106,
+            payerBalance: 0,
+            amountToRaise: 0
+          }
+        )
+      });
+
+      it("positive fCashValue, partial balance", async () => {
+        await runTest(
+          {
+            balance: 50,
+            cashClaim: 110,
+            fCashValue: 100,
+            localRequired: 100
+          },
+          {
+            localToPurchase: 100,
+            collateralToSell: 106,
+            payerBalance: 0,
+            amountToRaise: 56
+          }
+        )
+      });
+
+      it("positive fCashValue above negative balance", async () => {
+        await runTest(
+          {
+            balance: -50,
+            cashClaim: 200,
+            fCashValue: 100,
+            localRequired: 100
+          },
+          {
+            localToPurchase: 100,
+            collateralToSell: 106,
+            payerBalance: -50,
+            amountToRaise: 106
+          }
+        )
+      });
+
+      it("positive fCashValue below negative balance", async () => {
+        await runTest(
+          {
+            balance: -50,
+            cashClaim: 200,
+            fCashValue: 10,
+            localRequired: 100
+          },
+          {
+            localToPurchase: 100,
+            collateralToSell: 106,
+            payerBalance: -10,
+            amountToRaise: 146
           }
         )
       });
@@ -641,7 +871,7 @@ describe("Liquidation Calculations", () => {
           {
             balance: 0,
             cashClaim: 120,
-            requirement: 0,
+            fCashValue: 0,
             localRequired: 100
           },
           {
@@ -658,7 +888,7 @@ describe("Liquidation Calculations", () => {
           {
             balance: 1,
             cashClaim: 120,
-            requirement: 0,
+            fCashValue: 0,
             localRequired: 100
           },
           {
@@ -675,7 +905,7 @@ describe("Liquidation Calculations", () => {
           {
             balance: -1,
             cashClaim: 120,
-            requirement: 0,
+            fCashValue: 0,
             localRequired: 100
           },
           {
@@ -692,7 +922,7 @@ describe("Liquidation Calculations", () => {
           {
             balance: 110,
             cashClaim: 120,
-            requirement: 0,
+            fCashValue: 0,
             localRequired: 100
           },
           {
@@ -704,12 +934,12 @@ describe("Liquidation Calculations", () => {
         )
       });
 
-      it("no balance, requirement", async () => {
+      it("no balance, negative fCashValue", async () => {
         await runTest(
           {
             balance: 0,
             cashClaim: 130,
-            requirement: 20,
+            fCashValue: -20,
             localRequired: 100
           },
           {
@@ -721,12 +951,12 @@ describe("Liquidation Calculations", () => {
         )
       });
 
-      it("partial balance, requirement", async () => {
+      it("partial balance, negative fCashValue", async () => {
         await runTest(
           {
             balance: 1,
             cashClaim: 129,
-            requirement: 20,
+            fCashValue: -20,
             localRequired: 100
           },
           {
@@ -738,12 +968,12 @@ describe("Liquidation Calculations", () => {
         )
       });
 
-      it("negative balance, requirement", async () => {
+      it("negative balance, negative fCashValue", async () => {
         await runTest(
           {
             balance: -1,
             cashClaim: 131,
-            requirement: 20,
+            fCashValue: -20,
             localRequired: 100
           },
           {
@@ -756,12 +986,12 @@ describe("Liquidation Calculations", () => {
       });
 
 
-      it("sufficient balance, requirement", async () => {
+      it("sufficient balance, negative fCashValue", async () => {
         await runTest(
           {
             balance: 100,
             cashClaim: 26,
-            requirement: 20,
+            fCashValue: -20,
             localRequired: 100
           },
           {
@@ -769,6 +999,74 @@ describe("Liquidation Calculations", () => {
             collateralToSell: 106,
             payerBalance: 20,
             amountToRaise: 26
+          }
+        )
+      });
+
+      it("sufficient balance, positive fCashValue", async () => {
+        await runTest(
+          {
+            balance: 100,
+            cashClaim: 26,
+            fCashValue: 20,
+            localRequired: 100
+          },
+          {
+            localToPurchase: 100,
+            collateralToSell: 106,
+            payerBalance: 0,
+            amountToRaise: 6
+          }
+        )
+      });
+
+      it("partial balance, positive fCashValue", async () => {
+        await runTest(
+          {
+            balance: 1,
+            cashClaim: 129,
+            fCashValue: 20,
+            localRequired: 100
+          },
+          {
+            localToPurchase: 100,
+            collateralToSell: 106,
+            payerBalance: 0,
+            amountToRaise: 105
+          }
+        )
+      });
+
+      it("partial balance, positive fCashValue", async () => {
+        await runTest(
+          {
+            balance: -21,
+            cashClaim: 129,
+            fCashValue: 20,
+            localRequired: 100
+          },
+          {
+            localToPurchase: 100,
+            collateralToSell: 106,
+            payerBalance: -20,
+            amountToRaise: 107
+          }
+        )
+      });
+
+      it("no balance, positive fCashValue", async () => {
+        await runTest(
+          {
+            balance: 0,
+            cashClaim: 110,
+            fCashValue: 20,
+            localRequired: 100
+          },
+          {
+            localToPurchase: 100,
+            collateralToSell: 106,
+            payerBalance: 0,
+            amountToRaise: 106
           }
         )
       });
@@ -781,7 +1079,7 @@ describe("Liquidation Calculations", () => {
           {
             balance: 0,
             cashClaim: 106,
-            requirement: 0,
+            fCashValue: 0,
             localRequired: 120
           },
           {
@@ -798,7 +1096,7 @@ describe("Liquidation Calculations", () => {
           {
             balance: 6,
             cashClaim: 100,
-            requirement: 0,
+            fCashValue: 0,
             localRequired: 120
           },
           {
@@ -815,7 +1113,7 @@ describe("Liquidation Calculations", () => {
           {
             balance: -47,
             cashClaim: 100,
-            requirement: 0,
+            fCashValue: 0,
             localRequired: 120
           },
           {
@@ -832,7 +1130,7 @@ describe("Liquidation Calculations", () => {
           {
             balance: 150,
             cashClaim: 100,
-            requirement: 0,
+            fCashValue: 0,
             localRequired: 120
           },
           {
@@ -844,12 +1142,12 @@ describe("Liquidation Calculations", () => {
         )
       });
 
-      it("no balance, requirement", async () => {
+      it("no balance, negative fCashValue", async () => {
         await runTest(
           {
             balance: 0,
             cashClaim: 126,
-            requirement: 20,
+            fCashValue: -20,
             localRequired: 120
           },
           {
@@ -861,12 +1159,12 @@ describe("Liquidation Calculations", () => {
         )
       });
 
-      it("partial balance, requirement", async () => {
+      it("partial balance, negative fCashValue", async () => {
         await runTest(
           {
             balance: 1,
             cashClaim: 125,
-            requirement: 20,
+            fCashValue: -20,
             localRequired: 120
           },
           {
@@ -878,12 +1176,12 @@ describe("Liquidation Calculations", () => {
         )
       });
 
-      it("negative balance, requirement", async () => {
+      it("negative balance, negative fCashValue", async () => {
         await runTest(
           {
             balance: -1,
             cashClaim: 127,
-            requirement: 20,
+            fCashValue: -20,
             localRequired: 120
           },
           {
@@ -895,12 +1193,80 @@ describe("Liquidation Calculations", () => {
         )
       });
 
-      it("sufficient balance, requirement", async () => {
+      it("sufficient balance, negative fCashValue", async () => {
         await runTest(
           {
             balance: 140,
             cashClaim: 127,
-            requirement: 20,
+            fCashValue: -20,
+            localRequired: 120
+          },
+          {
+            localToPurchase: 120,
+            collateralToSell: 127.2,
+            payerBalance: 12.8,
+            amountToRaise: 0
+          }
+        );
+      });;
+
+      it("no balance, positive fCashValue", async () => {
+        await runTest(
+          {
+            balance: 0,
+            cashClaim: 110,
+            fCashValue: 20,
+            localRequired: 100
+          },
+          {
+            localToPurchase: 100,
+            collateralToSell: 106,
+            payerBalance: 0,
+            amountToRaise: 106
+          }
+        )
+      });
+
+      it("partial balance, positive fCashValue", async () => {
+        await runTest(
+          {
+            balance: 1,
+            cashClaim: 105,
+            fCashValue: 20,
+            localRequired: 100
+          },
+          {
+            localToPurchase: 100,
+            collateralToSell: 106,
+            payerBalance: 0,
+            amountToRaise: 105
+          }
+        )
+      });
+
+      it("negative balance, positive fCashValue", async () => {
+        await runTest(
+          {
+            balance: -41,
+            cashClaim: 127,
+            fCashValue: 20,
+            localRequired: 120
+          },
+          {
+            localToPurchase: 100,
+            collateralToSell: 106,
+            payerBalance: -20,
+            amountToRaise: 127
+          }
+        )
+      });
+
+      it("sufficient balance, positive fCashValue", async () => {
+        await runTest(
+          {
+            balance: 140,
+            cashClaim: 127,
+            fCashValue: 20,
             localRequired: 120
           },
           {

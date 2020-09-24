@@ -22,6 +22,7 @@ library Common {
     uint128 internal constant DECIMALS = 1e18;
     uint128 internal constant MAX_UINT_128 = (2**128) - 1;
     uint32 internal constant MAX_UINT_32 = (2**32) - 1;
+    uint32 internal constant SECONDS_IN_YEAR = 31536000;
 
     /**
      * The collateral requirement per currency in the portfolio. Only used as an
@@ -30,10 +31,10 @@ library Common {
     struct Requirement {
         // The currency group id that this requirement is for
         uint16 currency;
-        // The required collateral in this currency
-        int256 requirement;
-        // The net present value of the assets in the portfolio in this currency
-        int256 npv;
+        // The net fCash value in this particular currency
+        int256 netfCashValue;
+        // Post haircut cash claims on liquidity tokens
+        int256 cashClaim;
     }
 
     /**
@@ -54,6 +55,20 @@ library Common {
         // The notional for this asset
         uint128 notional;
         // uint32 unused space
+    }
+
+    // These are the factors we used to determine how to settle or liquidate an account
+    struct FreeCollateralFactors {
+        // Aggregate amount of free collateral
+        int256 aggregate;
+        // Net available amounts in local currency
+        int256 localNetAvailable;
+        // Net available amounts in collateral currency
+        int256 collateralNetAvailable;
+        // Cash claim amount in local currency
+        int256 localCashClaim;
+        // Cash claim amount in collateral currency
+        int256 collateralCashClaim;
     }
 
     /**

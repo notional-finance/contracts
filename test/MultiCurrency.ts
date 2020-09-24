@@ -1,6 +1,6 @@
 import chai from "chai";
 import {solidity} from "ethereum-waffle";
-import {fixture, wallets, fixtureLoader, provider, fastForwardToMaturity, CURRENCY} from "./fixtures";
+import {fixture, wallets, fixtureLoader, provider, fastForwardToMaturity, CURRENCY, fastForwardToTime} from "./fixtures";
 import {Wallet} from "ethers";
 
 import {Ierc20 as ERC20} from "../typechain/Ierc20";
@@ -146,10 +146,13 @@ describe("Multi Currency", () => {
     });
 
     afterEach(async () => {
+        let max = daiMaturities.concat(usdcMaturities).concat(tNewMaturities);
+        await fastForwardToMaturity(provider, Math.max(...max));
+        await portfolios.settleMaturedAssetsBatch([owner.address, wallet.address, wallet2.address, reserve.address]);
         expect(await tDai.checkEthBalanceIntegrity([owner, wallet, wallet2])).to.be.true;
 
-        expect(await tDai.checkBalanceIntegrity([owner, wallet, wallet2, reserve], tDaiOneYear.futureCash.address)).to.be.true;
         expect(await tUSDC.checkBalanceIntegrity([owner, wallet, wallet2, reserve])).to.be.true;
+        expect(await tDai.checkBalanceIntegrity([owner, wallet, wallet2, reserve], tDaiOneYear.futureCash.address)).to.be.true;
 
         expect(await tDai.checkMarketIntegrity([owner, wallet, wallet2, reserve], daiMaturities)).to.be.true;
         expect(await tUSDC.checkMarketIntegrity([owner, wallet, wallet2, reserve], usdcMaturities)).to.be.true;
@@ -243,18 +246,6 @@ describe("Multi Currency", () => {
             // Expect ETH to be cleaned out
             expect(await escrow.cashBalances(CURRENCY.ETH, wallet.address)).to.equal(0);
         });
-    }).timeout(50000);
-
-    // See flow chart at ../docs/SettleCash.png
-    describe("settle cash situations [4-8]", async () => {
-        it("[4] does not settle cash with the reserve account if the account has collateral", async () => {
-            await setupTest();
-            await wbtc.chainlink.setAnswer(new BigNumber(1e8));
-            await escrow
-                .connect(wallet2)
-                .settleCashBalance(CURRENCY.DAI, wbtc.currencyId, wallet.address, parseEther("100"));
-            expect(await escrow.cashBalances(CURRENCY.DAI, wallet.address)).to.equal(parseEther("-100"));
-        });
 
         it("[6] settles cash with a secondary collateral currency", async () => {
             await setupTest();
@@ -262,48 +253,270 @@ describe("Multi Currency", () => {
                 .connect(wallet2)
                 .settleCashBalance(CURRENCY.DAI, wbtc.currencyId, wallet.address, parseEther("100"));
         });
+        
+        it("it must settle matured collateral assets before liquidating", async () => {
+            await tDai.setupLiquidity()
+            await tUSDC.setupLiquidity(owner, 0.5, parseEther("10000"), [1]);
 
-        it("[7] settles cash with the reserve account when the account is insolvent", async () => {
-            await setupTest();
-            await wbtc.chainlink.setAnswer(new BigNumber(1e8));
-            // liquidate to clear out the BTC
-            await escrow.connect(wallet2).liquidate(wallet.address, CURRENCY.DAI, wbtc.currencyId);
+            await escrow.connect(wallet).deposit(tDai.token.address, parseEther("100"));
+            await tDai.futureCash.connect(wallet).takefCash(daiMaturities[0], parseEther("100"), BLOCK_TIME_LIMIT, 0);
 
-            // deposit eth
-            expect(await escrow.cashBalances(CURRENCY.WBTC, wallet.address)).to.equal(0);
-            const cashBalance = await escrow.cashBalances(CURRENCY.DAI, wallet.address);
-            const reserveBalance = await escrow.cashBalances(tDai.currencyId, reserve.address);
+            const cashBalances = await escrow.cashBalances(CURRENCY.DAI, wallet.address);
+            await escrow.connect(wallet).withdraw(tDai.token.address, cashBalances);
 
-            // This will settle via the reserve account
-            await escrow
-                .connect(wallet2)
-                .settleCashBalance(CURRENCY.DAI, wbtc.currencyId, wallet.address, cashBalance.mul(-1));
-            expect(await escrow.cashBalances(tDai.currencyId, reserve.address)).to.equal(
-                reserveBalance.add(cashBalance)
-            );
+            await tUSDC.borrowAndWithdraw(wallet, new BigNumber(100e6), 1.05, 1);
+            await escrow.connect(wallet).withdraw(weth.address, parseEther("1"));
+
+            await fastForwardToMaturity(provider, usdcMaturities[1]);
+            await tUSDC.chainlink.setAnswer(0.05e6);
+
+            // All dai balances comes from settled fCash asset
+            expect(await escrow.cashBalances(CURRENCY.DAI, wallet.address)).to.equal(0);
+            await escrow.liquidate(wallet.address, CURRENCY.USDC, CURRENCY.DAI);
         });
 
-        it("[8] does not settle cash with the reserve account if the account has fCash", async () => {
-            await setupTest();
+        it("it must settle matured collateral assets before settle cash", async () => {
+            await tDai.setupLiquidity()
+            await tUSDC.setupLiquidity(owner, 0.5, parseEther("10000"), [1]);
 
-            await tUSDC.setupLiquidity(owner, 0.5, new BigNumber(10000e6), [1]);
-            await escrow.connect(wallet).deposit(tUSDC.token.address, new BigNumber(100e6));
-            const maturities = await tUSDC.futureCash.getActiveMaturities();
-            await tUSDC.futureCash.connect(wallet).takefCash(maturities[1], new BigNumber(100e6), BLOCK_TIME_LIMIT, 0);
+            await escrow.connect(wallet).deposit(tDai.token.address, parseEther("100"));
+            await tDai.futureCash.connect(wallet).takefCash(daiMaturities[0], parseEther("100"), BLOCK_TIME_LIMIT, 0);
 
-            await wbtc.chainlink.setAnswer(new BigNumber(1.5e8));
+            const cashBalances = await escrow.cashBalances(CURRENCY.DAI, wallet.address);
+            await escrow.connect(wallet).withdraw(tDai.token.address, cashBalances);
 
-            // liquidate to clear out the BTC
-            await escrow.connect(wallet2).liquidate(wallet.address, CURRENCY.DAI, wbtc.currencyId);
+            await tUSDC.borrowAndWithdraw(wallet, new BigNumber(100e6), 1.05, 1);
+            await fastForwardToMaturity(provider, usdcMaturities[1]);
 
-            const cashBalance = await escrow.cashBalances(tDai.currencyId, wallet.address);
-            await escrow
-                .connect(wallet2)
-                .settleCashBalance(CURRENCY.DAI, wbtc.currencyId, wallet.address, cashBalance.mul(-1));
+            // All dai balances comes from settled fCash asset
+            expect(await escrow.cashBalances(CURRENCY.DAI, wallet.address)).to.equal(0);
+            await escrow.settleCashBalance(CURRENCY.USDC, CURRENCY.DAI, wallet.address, 100e6);
+        });
+    }).timeout(50000);
 
-            expect(await escrow.cashBalances(CURRENCY.DAI, wallet.address)).to.equal(cashBalance)
-            // This fast forwards for the after each check
-            await fastForwardToMaturity(provider, maturities[1]);
+    describe("multicurrency settle and liquidate fCash", async () => {
+        beforeEach(async () => {
+            await tDai.setupLiquidity(owner, 0.5, parseEther("10000"), [0, 1, 2]);
+            await tUSDC.setupLiquidity(owner, 0.5, parseEther("10000"), [0]);
+        })
+
+        it("should settle fCash in collateral currency, only trading", async () => {
+            await tDai.setupSellFutureCash(wallet, undefined, parseEther("130"));
+            let settleAmount = await tUSDC.setupSellFutureCash(wallet, new BigNumber(96e6), undefined, undefined, CURRENCY.USDC);
+
+            const cashBalances = await escrow.cashBalances(CURRENCY.USDC, wallet.address);
+            await escrow.connect(wallet).withdraw(tUSDC.token.address, cashBalances);
+
+            await fastForwardToTime(provider, usdcMaturities[0]);
+            const futureCashPrice = await tDai.futureCash.getfCashToCurrentCashAtTime(
+                daiMaturities[1],
+                parseEther("130"),
+                usdcMaturities[0]
+            );
+
+            const daiBalance = futureCashPrice.sub(
+                new BigNumber(96e6)
+                    .mul(parseEther("1.02"))
+                    .mul(WeiPerEther)
+                    .div(1e6)
+                    .div(WeiPerEther)
+            )
+
+            await escrow.settlefCash(wallet.address, CURRENCY.USDC, CURRENCY.DAI, settleAmount.add(cashBalances));
+
+            expect(await portfolios.getAssets(wallet.address)).to.have.lengthOf(0);
+            expect(await escrow.cashBalances(CURRENCY.USDC, wallet.address)).to.equal(0);
+            expect(await escrow.cashBalances(CURRENCY.DAI, wallet.address)).to.be.equal(daiBalance);
+        });
+
+        it("should settle fCash in collateral currency, only liquidator payments", async () => {
+            await tDai.setupSellFutureCash(wallet, undefined, undefined, parseEther("140"));
+            let settleAmount = await tUSDC.setupSellFutureCash(wallet, new BigNumber(96e6), undefined, undefined, CURRENCY.USDC);
+
+            const cashBalances = await escrow.cashBalances(CURRENCY.USDC, wallet.address);
+            await escrow.connect(wallet).withdraw(tUSDC.token.address, cashBalances);
+
+            await fastForwardToTime(provider, usdcMaturities[0]);
+            const [, remaining] = await tDai.getfCashValue(
+                parseEther("140"),
+                settleAmount.add(cashBalances),
+                daiMaturities[2],
+                usdcMaturities[0]
+            );
+            await escrow.settlefCash(wallet.address, CURRENCY.USDC, CURRENCY.DAI, settleAmount.add(cashBalances));
+
+            expect(await tDai.hasCashReceiver(wallet, daiMaturities[2], remaining));
+            expect(await escrow.cashBalances(CURRENCY.USDC, wallet.address)).to.equal(0);
+            expect(await escrow.cashBalances(CURRENCY.DAI, wallet.address)).to.be.equal(0);
+        });
+
+        it("should settle fCash in collateral currency, both", async () => {
+            await tDai.setupSellFutureCash(wallet, undefined, parseEther("70"), parseEther("70"));
+            let settleAmount = await tUSDC.setupSellFutureCash(wallet, new BigNumber(96e6), undefined, undefined, CURRENCY.USDC);
+
+            const cashBalances = await escrow.cashBalances(CURRENCY.USDC, wallet.address);
+            await escrow.connect(wallet).withdraw(tUSDC.token.address, cashBalances);
+
+            await fastForwardToTime(provider, usdcMaturities[0]);
+            const futureCashPrice = await tDai.futureCash.getfCashToCurrentCashAtTime(
+                daiMaturities[1],
+                parseEther("70"),
+                usdcMaturities[0]
+            );
+
+            const daiBalance = futureCashPrice.sub(
+                new BigNumber(96e6)
+                    .mul(parseEther("1.02"))
+                    .mul(WeiPerEther)
+                    .div(1e6)
+                    .div(WeiPerEther)
+            )
+
+            const [, remaining] = await tDai.getfCashValue(
+                parseEther("70"),
+                settleAmount.add(cashBalances).sub(daiBalance),
+                daiMaturities[2],
+                usdcMaturities[0]
+            );
+            await escrow.settlefCash(wallet.address, CURRENCY.USDC, CURRENCY.DAI, settleAmount.add(cashBalances));
+
+            expect(await tDai.hasCashReceiver(wallet, daiMaturities[2], remaining));
+            expect(await escrow.cashBalances(CURRENCY.USDC, wallet.address)).to.equal(0);
+            expect(await escrow.cashBalances(CURRENCY.DAI, wallet.address)).to.be.equal(0);
+        });
+
+        it("should liquidate fCash in collateral currency, only trading", async () => {
+            await tDai.setupSellFutureCash(wallet, undefined, parseEther("130"));
+            await tUSDC.setupSellFutureCash(wallet, new BigNumber(96e6), undefined, undefined, CURRENCY.USDC);
+
+            const cashBalances = await escrow.cashBalances(CURRENCY.USDC, wallet.address);
+            await escrow.connect(wallet).withdraw(tUSDC.token.address, cashBalances);
+            await tDai.chainlink.setAnswer(parseEther("0.0095"));
+
+            const timestamp = await fastForwardToTime(provider);
+            const futureCashPrice = await tDai.futureCash.getfCashToCurrentCashAtTime(
+                daiMaturities[1],
+                parseEther("130"),
+                timestamp
+            );
+
+            const fcBefore = await portfolios.freeCollateralView(wallet.address);
+            const fcShortfall = fcBefore[0]
+                .mul(-1)
+                .mul(parseEther("1.01")) // buffer
+                .div(WeiPerEther)
+                .mul(1e6)
+                .mul(1e6)
+                .div(0.01e6) // invert the rate
+                .div(parseEther("0.14"));
+
+            const daiBalanceCalculated = futureCashPrice.sub(
+                fcShortfall
+                    .mul(parseEther("1.06"))
+                    .mul(WeiPerEther)
+                    .div(parseEther("0.95"))
+                    .div(1e6)
+            )
+
+            await escrow.liquidatefCash(wallet.address, CURRENCY.USDC, CURRENCY.DAI);
+            expect(await tDai.hasCashReceiver(wallet)).to.be.false;
+
+            // These are different by small amounts
+            const usdcBalance = await escrow.cashBalances(CURRENCY.USDC, wallet.address);
+            expect(usdcBalance.sub(fcShortfall).abs()).to.be.below(50);
+
+            const daiBalance = await escrow.cashBalances(CURRENCY.DAI, wallet.address);
+            expect(daiBalance.sub(daiBalanceCalculated).div(1e12).abs()).to.be.below(50);
+            expect(await tDai.isCollateralized(wallet)).to.be.true;
+        });
+
+        it("should liquidate fCash in collateral currency, liquidator payments", async () => {
+            await tDai.setupSellFutureCash(wallet, undefined, undefined, parseEther("135"));
+            await tUSDC.setupSellFutureCash(wallet, new BigNumber(96e6), undefined, undefined, CURRENCY.USDC);
+
+            const cashBalances = await escrow.cashBalances(CURRENCY.USDC, wallet.address);
+            await escrow.connect(wallet).withdraw(tUSDC.token.address, cashBalances);
+            await tDai.chainlink.setAnswer(parseEther("0.0090"));
+
+            await escrow.liquidatefCash(wallet.address, CURRENCY.USDC, CURRENCY.DAI);
+            expect(await tDai.hasCashReceiver(wallet, daiMaturities[2])).to.be.true;
+            expect(await tDai.isCollateralized(wallet)).to.be.true;
+        });
+
+        it("should liquidate fCash in collateral currency, both", async () => {
+            await tDai.setupSellFutureCash(wallet, undefined, parseEther("10"), parseEther("125"));
+            await tUSDC.setupSellFutureCash(wallet, new BigNumber(96e6), undefined, undefined, CURRENCY.USDC);
+
+            const cashBalances = await escrow.cashBalances(CURRENCY.USDC, wallet.address);
+            await escrow.connect(wallet).withdraw(tUSDC.token.address, cashBalances);
+            await tDai.chainlink.setAnswer(parseEther("0.0090"));
+
+            await escrow.connect(wallet2).liquidatefCash(wallet.address, CURRENCY.USDC, CURRENCY.DAI);
+            expect(await tDai.hasCashReceiver(wallet, daiMaturities[1])).to.be.false;
+            expect(await tDai.hasCashReceiver(wallet, daiMaturities[2])).to.be.true;
+            expect(await tDai.hasCashReceiver(wallet2, daiMaturities[2])).to.be.true;
+            expect(await tDai.isCollateralized(wallet)).to.be.true;
+        });
+
+        it("should liquidate fCash in collateral currency, shortfall", async () => {
+            await tDai.setupSellFutureCash(wallet, undefined, parseEther("75"));
+            await tUSDC.setupSellFutureCash(wallet, new BigNumber(96e6), undefined, undefined, CURRENCY.USDC);
+
+            await tDai.chainlink.setAnswer(parseEther("0.10"));
+            const cashBalances = await escrow.cashBalances(CURRENCY.USDC, wallet.address);
+            await escrow.connect(wallet).withdraw(tUSDC.token.address, cashBalances);
+            await tDai.chainlink.setAnswer(parseEther("0.01"));
+
+            const daiBalanceBefore = await tDai.token.balanceOf(owner.address);
+            const usdcBalanceBefore = await tUSDC.token.balanceOf(owner.address);
+            const usdcRequired = new BigNumber(96e6);
+            const daiRequired = new BigNumber(96e6)
+                .mul(parseEther("1.06"))
+                .mul(WeiPerEther)
+                .div(1e6)
+                .div(WeiPerEther);
+            await escrow.liquidatefCash(wallet.address, CURRENCY.USDC, CURRENCY.DAI);
+            const daiBalanceAfter = await tDai.token.balanceOf(owner.address);
+            const usdcBalanceAfter = await tUSDC.token.balanceOf(owner.address);
+
+            const daiSoldRatio = daiBalanceAfter.sub(daiBalanceBefore).mul(WeiPerEther).div(daiRequired).div(1e12);
+            const usdcPurchaseRatio = usdcBalanceBefore.sub(usdcBalanceAfter).mul(1e6).div(usdcRequired);
+
+            expect(daiSoldRatio).to.equal(usdcPurchaseRatio);
+        });
+
+        it("uses net collateral available on fcash liquidation", async () => {
+            await tUSDC.borrowAndWithdraw(wallet, new BigNumber(96e6));
+            await tDai.borrowAndWithdraw(wallet, parseEther("100"));
+
+            await escrow.connect(wallet).deposit(tDai.token.address, parseEther("130"));
+            await tDai.futureCash
+                .connect(wallet)
+                .takefCash(daiMaturities[1], parseEther("130"), BLOCK_TIME_LIMIT, 0);
+            const cashBalances = await escrow.cashBalances(CURRENCY.DAI, wallet.address);
+            await escrow.connect(wallet).withdraw(tDai.token.address, cashBalances);
+
+            await tUSDC.chainlink.setAnswer(1e6);
+            await escrow.liquidate(wallet.address, CURRENCY.USDC, CURRENCY.ETH);
+            await tUSDC.chainlink.setAnswer(1e4);
+
+            await tDai.chainlink.setAnswer(parseEther("1"));
+            const usdcBalances = await escrow.cashBalances(CURRENCY.USDC, wallet.address);
+            await escrow.connect(wallet).withdraw(tUSDC.token.address, usdcBalances);
+            await tDai.chainlink.setAnswer(parseEther("0.01"));
+
+            await fastForwardToTime(provider, usdcMaturities[0]);
+            await portfolios.settleMaturedAssets(wallet.address);
+
+            const fcBefore = await portfolios.freeCollateralView(wallet.address);
+            await escrow.liquidatefCash(wallet.address, CURRENCY.USDC, CURRENCY.DAI);
+            const fcAfter = await portfolios.freeCollateralView(wallet.address);
+
+            // Cash receiver was sold to partially offset the USDC balance but keeps Dai in balance
+            expect(await tDai.hasCashReceiver(wallet)).to.be.false;
+            expect(fcAfter[0]).to.be.above(fcBefore[0]);
+            expect(fcAfter[1][1]).to.be.above(0);
+            expect(fcAfter[1][2]).to.be.above(new BigNumber(-96e6));
         });
     }).timeout(50000);
 
@@ -349,7 +562,7 @@ describe("Multi Currency", () => {
         const fcAfter = await portfolios.freeCollateralView(wallet.address);
         // If there is sufficient collateral available, free collateral should be zero (or here under the amount
         // of usdc dust)
-        expect(fcAfter[0]).to.be.below(1e12);
+        expect(fcAfter[0]).to.be.above(0);
     });
 
     it("removes liquidity tokens in the collateral currency in order to liquidate", async () => {

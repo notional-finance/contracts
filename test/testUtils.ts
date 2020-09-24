@@ -50,6 +50,21 @@ export class TestUtils {
         }
     }
 
+    public async lendAndWithdraw(
+        wallet: Wallet,
+        lendfCash: BigNumber,
+        maturityOffset = 0,
+        impliedRateLimit = 0
+    ) {
+        const maturities = await this.futureCash.getActiveMaturities();
+        await this.escrow.connect(wallet).deposit(this.token.address, lendfCash);
+        await this.futureCash.connect(wallet).takefCash(maturities[maturityOffset], lendfCash, BLOCK_TIME_LIMIT, impliedRateLimit);
+        const balance = await this.escrow.cashBalances(this.currencyId, wallet.address);
+        await this.escrow.connect(wallet).withdraw(this.token.address, balance);
+
+        return lendfCash.sub(balance);
+    }
+
     public async borrowAndWithdraw(
         wallet: Wallet,
         borrowFutureCash: BigNumber,
@@ -273,23 +288,80 @@ export class TestUtils {
     }
 
     public async setupSellFutureCash(
-        reserve: Wallet,
         wallet: Wallet,
-        borrowAmount: BigNumber,
-        futureCashAmount: BigNumber
+        borrowAmount?: BigNumber,
+        tradefCashAmount?: BigNumber,
+        liquidatefCashAmount?: BigNumber,
+        currency = CURRENCY.DAI
     ) {
-        await this.escrow.setReserveAccount(reserve.address);
-        await this.escrow.connect(reserve).deposit(this.token.address, WeiPerEther.mul(1000));
 
+        // This sets up a negative cash balance
         const maturities = await this.futureCash.getActiveMaturities();
-        await this.borrowAndWithdraw(wallet, borrowAmount);
+        if (borrowAmount) {
+            await this.borrowAndWithdraw(wallet, borrowAmount);
+        }
 
-        await this.escrow.connect(wallet).deposit(this.token.address, futureCashAmount);
-        await this.futureCash
-            .connect(wallet)
-            .takefCash(maturities[1], futureCashAmount, BLOCK_TIME_LIMIT, 0);
+        // This creates the fCash receiver
+        if (tradefCashAmount) {
+            await this.escrow.connect(wallet).deposit(this.token.address, tradefCashAmount);
+            await this.futureCash
+                .connect(wallet)
+                .takefCash(maturities[1], tradefCashAmount, BLOCK_TIME_LIMIT, 0);
+        }
 
-        await this.chainlink.setAnswer(WeiPerEther);
-        await this.escrow.liquidate(wallet.address, CURRENCY.DAI, CURRENCY.ETH);
+        if (liquidatefCashAmount) {
+            await this.escrow.connect(wallet).deposit(this.token.address, liquidatefCashAmount);
+            await this.futureCash
+                .connect(wallet)
+                .takefCash(maturities[2], liquidatefCashAmount, BLOCK_TIME_LIMIT, 0);
+
+            const market = await this.futureCash.getMarket(maturities[2])
+            await this.futureCash.removeLiquidity(maturities[2], market.totalLiquidity, BLOCK_TIME_LIMIT);
+        }
+
+        const cashBalances = await this.escrow.cashBalances(currency, wallet.address);
+        if (cashBalances.gt(0)) {
+            await this.escrow.connect(wallet).withdraw(this.token.address, cashBalances);
+        }
+
+        if (borrowAmount) {
+            const answer = await this.chainlink.latestAnswer();
+            await this.chainlink.setAnswer(answer.mul(100));
+            await this.escrow.liquidate(wallet.address, currency, CURRENCY.ETH);
+            await this.chainlink.setAnswer(answer);
+
+            const cb = await this.escrow.cashBalances(currency, wallet.address);
+            return borrowAmount.sub(cb);
+        } else {
+            return new BigNumber(0);
+        }
+    }
+
+    public async getfCashValue(
+        notional: BigNumber,
+        settleAmount: BigNumber,
+        maturity: number,
+        blockTime: number
+    ) {
+        const haircut = await this.portfolios.G_FCASH_HAIRCUT();
+        const maxHaircut = await this.portfolios.G_FCASH_MAX_HAIRCUT();
+
+        let futureCashValue = notional
+            .sub(notional
+                .mul(haircut)
+                .mul(maturity - blockTime)
+                .div(31536000)
+                .div(WeiPerEther)
+            );
+
+        const maxValue = notional
+            .mul(maxHaircut)
+            .div(WeiPerEther);
+
+        if (futureCashValue.gt(maxValue)) futureCashValue = maxValue;
+
+        const remaining = notional.sub(notional.mul(settleAmount).div(futureCashValue));
+
+        return [futureCashValue, remaining]
     }
 }

@@ -41,6 +41,8 @@ export async function fixture(provider: providers.Provider, [owner]: Wallet[]) {
         parseEther("1.02"),
         parseEther("0.80"),
         parseEther("1.10"),
+        parseEther("0.50"),
+        parseEther("0.95"),
         1
     );
 

@@ -2,11 +2,14 @@ pragma solidity ^0.6.4;
 pragma experimental ABIEncoderV2;
 
 import "./Common.sol";
+import "./ExchangeRate.sol";
 
 import "../lib/SafeInt256.sol";
 import "../lib/SafeMath.sol";
 import "../lib/SafeUInt128.sol";
+
 import "../interface/IPortfoliosCallable.sol";
+import "../storage/EscrowStorage.sol";
 
 import "@openzeppelin/contracts/utils/SafeCast.sol";
 
@@ -15,13 +18,15 @@ library Liquidation {
     using SafeInt256 for int256;
     using SafeUInt128 for uint128;
 
-    struct LocalTokenParameters {
-        uint16 localCurrency;
-        uint128 localCurrencyRequired;
-        uint128 liquidityHaircut;
-        uint128 liquidityRepoIncentive;
-        int256 localCurrencyNetAvailable;
-        IPortfoliosCallable Portfolios;
+    // This buffer is used to account for the potential of decimal truncation causing accounts to be
+    // permanently undercollateralized.
+    int256 public constant LIQUIDATION_BUFFER = 1.01e18;
+
+    struct TransferAmounts {
+        int256 netLocalCurrencyLiquidator;
+        uint128 netLocalCurrencyPayer;
+        uint128 collateralTransfer;
+        int256 payerCollateralBalance;
     }
 
     struct CollateralCurrencyParameters {
@@ -37,55 +42,54 @@ library Liquidation {
 
     struct RateParameters {
         uint256 rate;
-        uint256 rateDecimals;
+        uint16 localCurrency;
+        uint16 collateralCurrency;
         uint256 localDecimals;
         uint256 collateralDecimals;
+        ExchangeRate.Rate localToETH;
     }
 
     /**
      * @notice Given an account that has liquidity tokens denominated in the currency, liquidates only enough to
      * recollateralize the account.
-     * @param account to liquidate
-     * @param parameters paramaters required to complete the calculations
-     * @return (localCurrencyCredit to the account, localCurrencySold by the liquidator, localCurrencyRequired after action, localCurrencyNetAvailable
-     * after the action)
+     * @param payer account that will be liquidated
+     * @param localCurrency that the tokens will be denominated in
+     * @param localCurrencyRequired the amount that we need to liquidate
+     * @param liquidityHaircut the haircut on liquidity tokens
+     * @param localCurrencyNetAvailable the amount of local currency we can liquidate up to
+     * @param Portfolios the portfolio contract to call
+     * @return (
+     *   netLocalCurrencyLiquidator
+     *   netLocalCurrencyPayer
+     *   localCurrencyNetAvailable after the action,
+     *   localCurrencyRequired after action
+     *  )
      */
-    function liquidateLocalLiquidityTokens(
-        address account,
-        LocalTokenParameters memory parameters
-    ) public returns (uint128, int256, uint128, int256) {
-        // The amount of local currency that will be credited back to the account
-        uint128 localCurrencyCredit;
-        // The amount of local currency the liquidator has "sold". This will be negative because they will
-        // receive the incentive amount. The reason for the inverted logic here is for the second step of liquidation
-        // where local currency is traded and the liquidator will have their account debited.
-        int256 localCurrencySold;
-
+    function _liquidateLocalLiquidityTokens(
+        address payer,
+        uint16 localCurrency,
+        uint128 localCurrencyRequired,
+        uint128 liquidityHaircut,
+        int256 localCurrencyNetAvailable,
+        IPortfoliosCallable Portfolios
+    ) internal returns (int256, uint128, int256, uint128) {
         // Calculate amount of liquidity tokens to withdraw and do the action.
         (uint128 cashClaimWithdrawn, uint128 localCurrencyRaised) = Liquidation._localLiquidityTokenTrade(
-            account,
-            parameters.localCurrency,
-            parameters.localCurrencyRequired,
-            parameters.liquidityHaircut,
-            parameters.liquidityRepoIncentive,
-            parameters.Portfolios
+            payer,
+            localCurrency,
+            localCurrencyRequired,
+            liquidityHaircut,
+            Portfolios
         );
 
         // Calculates relevant parameters post trade.
-        (
-            localCurrencySold,
-            localCurrencyCredit,
-            parameters.localCurrencyNetAvailable,
-            parameters.localCurrencyRequired
-        ) = Liquidation._calculatePostTradeFactors(
+        return _calculatePostTradeFactors(
             cashClaimWithdrawn,
-            parameters.localCurrencyNetAvailable,
-            parameters.localCurrencyRequired,
+            localCurrencyNetAvailable,
+            localCurrencyRequired,
             localCurrencyRaised,
-            parameters.liquidityHaircut
+            liquidityHaircut
         );
-
-        return (localCurrencyCredit, localCurrencySold, parameters.localCurrencyRequired, parameters.localCurrencyNetAvailable);
     }
 
     /** @notice Trades liquidity tokens in order to attempt to raise `localCurrencyRequired` */
@@ -94,9 +98,10 @@ library Liquidation {
         uint16 currency,
         uint128 localCurrencyRequired,
         uint128 liquidityHaircut,
-        uint128 liquidityRepoIncentive,
         IPortfoliosCallable Portfolios
     ) internal returns (uint128, uint128) {
+        uint128 liquidityRepoIncentive = EscrowStorageSlot._liquidityTokenRepoIncentive();
+
         // We can only recollateralize the local currency using the part of the liquidity token that
         // between the pre-haircut cash claim and the post-haircut cash claim.
         // cashClaim - cashClaim * haircut = required * (1 + incentive)
@@ -155,7 +160,6 @@ library Liquidation {
         uint128 incentive = haircutClaimAmount.sub(localCurrencyRaised);
 
         return (
-            // This is negative because we use it to offset what the liquidator may deposit into the account
             int256(incentive).neg(),
             // This is what will be credited back to the account
             cashClaimWithdrawn.sub(incentive),
@@ -170,35 +174,137 @@ library Liquidation {
     }
 
     /**
-     * @notice Trades local currency for collateral currency for a payer in order to recollateralize the account.
+     * @notice Liquidates an account, first attempting to extract liquidity tokens then moving on to collateral.
      * @param payer account that is being liquidated
-     * @param payerBalance payer's collateral currency account balance
-     * @param localCurrencyBuffer the haircut given to a local currency
-     * @param param collateral currency parameters
+     * @param payerCollateralBalance payer's collateral currency account balance
+     * @param fc free collateral factors object
      * @param rateParam collateral currency exchange rate parameters
+     * @param Portfolios address of portfolio contract to call
      */
     function liquidate(
         address payer,
-        int256 payerBalance,
-        uint128 localCurrencyBuffer,
-        CollateralCurrencyParameters memory param,
+        int256 payerCollateralBalance,
+        Common.FreeCollateralFactors memory fc,
+        RateParameters memory rateParam,
+        address Portfolios
+    ) public returns (TransferAmounts memory) {
+        uint128 localCurrencyRequired = _fcAggregateToLocal(fc.aggregate, rateParam);
+
+        TransferAmounts memory transfer = TransferAmounts(0, 0, 0, payerCollateralBalance);
+        uint128 liquidityHaircut = EscrowStorageSlot._liquidityHaircut();
+        if (fc.localCashClaim > 0) {
+            // Account has a local currency cash claim denominated in liquidity tokens. We first extract that here.
+            (
+                transfer.netLocalCurrencyLiquidator,
+                transfer.netLocalCurrencyPayer,
+                fc.localNetAvailable,
+                localCurrencyRequired
+            ) = _liquidateLocalLiquidityTokens(
+                payer,
+                rateParam.localCurrency,
+                localCurrencyRequired,
+                liquidityHaircut,
+                fc.localNetAvailable,
+                IPortfoliosCallable(Portfolios)
+            );
+        }
+
+
+        // If we still require more local currency and we have debts in the local currency then we will trade
+        // collateral currency for local currency here.
+        if (localCurrencyRequired > 0 && fc.localNetAvailable < 0) {
+            _liquidateCollateralCurrency(
+                payer,
+                localCurrencyRequired,
+                liquidityHaircut,
+                transfer,
+                fc,
+                rateParam,
+                Portfolios
+            );
+        }
+
+        return transfer;
+    }
+
+
+    function _fcAggregateToLocal(
+        int256 fcAggregate,
         RateParameters memory rateParam
-    ) public returns (uint128, uint128, int256) {
-        require(param.localCurrencyAvailable < 0, $$(ErrorCode(INSUFFICIENT_LOCAL_CURRENCY_DEBT)));
+    ) internal view returns (uint128) {
+        // Safety check
+        require(fcAggregate < 0);
 
-        param.localCurrencyRequired = _calculateLocalCurrencyToTrade(
-            param.localCurrencyRequired,
-            param.discountFactor,
-            localCurrencyBuffer,
-            uint128(param.localCurrencyAvailable.neg())
+        return uint128(
+            ExchangeRate._convertETHTo(
+                rateParam.localToETH,
+                rateParam.localDecimals,
+                fcAggregate.mul(LIQUIDATION_BUFFER).div(Common.DECIMALS).neg()
+            )
         );
+    }
 
-        return _tradeCollateralCurrency(
-            payer,
-            payerBalance,
-            param,
-            rateParam
-        );
+    /**
+     * @notice Settles current debts using collateral currency. First attempst to raise cash in local currency liquidity tokens before moving
+     * on to collateral currency.
+     * @param payer account that has current debts
+     * @param payerCollateralBalance payer's collateral currency account balance
+     * @param fc free collateral factors object
+     * @param rateParam collateral currency exchange rate parameters
+     * @param Portfolios address of portfolio contract to call
+     */
+    function settle(
+        address payer,
+        int256 payerCollateralBalance,
+        uint128 valueToSettle,
+        Common.FreeCollateralFactors memory fc,
+        RateParameters memory rateParam,
+        address Portfolios
+    ) public returns (TransferAmounts memory) {
+        TransferAmounts memory transfer = TransferAmounts(0, 0, 0, payerCollateralBalance);
+        if (fc.localCashClaim > 0) {
+            uint128 remainder = IPortfoliosCallable(Portfolios).raiseCurrentCashViaLiquidityToken(
+                payer,
+                rateParam.localCurrency,
+                valueToSettle
+            );
+
+            transfer.netLocalCurrencyPayer = valueToSettle.sub(remainder);
+
+            if (transfer.netLocalCurrencyPayer > fc.localCashClaim) {
+                // If this is the case then we've raised cash that sits inside the haircut of the liquidity token
+                // and it will add collateral to the account. We calculate these factors here before moving on.
+                uint128 haircutAmount = transfer.netLocalCurrencyPayer.sub(uint128(fc.localCashClaim));
+
+                int256 netFC = ExchangeRate._convertToETH(
+                    rateParam.localToETH,
+                    rateParam.localDecimals,
+                    haircutAmount,
+                    fc.localNetAvailable < 0
+                );
+
+                fc.aggregate = fc.aggregate.add(netFC);
+            }
+        }
+
+        if (valueToSettle > transfer.netLocalCurrencyPayer && fc.aggregate >= 0) {
+            uint128 liquidityHaircut = EscrowStorageSlot._liquidityHaircut();
+            uint128 settlementDiscount = EscrowStorageSlot._settlementDiscount();
+            uint128 localCurrencyRequired = valueToSettle.sub(transfer.netLocalCurrencyPayer);
+
+            _tradeCollateralCurrency(
+                payer,
+                localCurrencyRequired,
+                liquidityHaircut,
+                settlementDiscount,
+                transfer,
+                fc,
+                rateParam,
+                Portfolios
+            );
+        }
+
+        return transfer;
     }
 
     function _calculateLocalCurrencyToTrade(
@@ -241,57 +347,123 @@ library Liquidation {
         return localCurrencyToTrade;
     }
 
-    function settle(
+    function _liquidateCollateralCurrency(
         address payer,
-        int256 payerBalance,
-        CollateralCurrencyParameters memory param,
-        RateParameters memory rateParam
-   ) public returns (uint128, uint128, int256) {
-        return _tradeCollateralCurrency(
+        uint128 localCurrencyRequired,
+        uint128 liquidityHaircut,
+        TransferAmounts memory transfer,
+        Common.FreeCollateralFactors memory fc,
+        RateParameters memory rateParam,
+        address Portfolios
+    ) internal {
+        uint128 discountFactor = EscrowStorageSlot._liquidationDiscount();
+        localCurrencyRequired = _calculateLocalCurrencyToTrade(
+            localCurrencyRequired,
+            discountFactor,
+            rateParam.localToETH.buffer,
+            uint128(fc.localNetAvailable.neg())
+        );
+
+        _tradeCollateralCurrency(
             payer,
-            payerBalance,
-            param,
-            rateParam
+            localCurrencyRequired,
+            liquidityHaircut,
+            discountFactor,
+            transfer,
+            fc,
+            rateParam,
+            Portfolios
         );
     }
 
     function _tradeCollateralCurrency(
         address payer,
-        int256 payerBalance,
-        CollateralCurrencyParameters memory param,
-        RateParameters memory rateParam
-    ) internal returns (uint128, uint128, int256) {
-        require(param.collateralCurrencyAvailable > 0, $$(ErrorCode(INSUFFICIENT_BALANCE)));
+        uint128 localCurrencyRequired,
+        uint128 liquidityHaircut,
+        uint128 discountFactor,
+        TransferAmounts memory transfer,
+        Common.FreeCollateralFactors memory fc,
+        RateParameters memory rateParam,
+        address Portfolios
+    ) internal {
         uint128 amountToRaise;
         uint128 localToPurchase;
-        uint128 collateralToSell;
 
         uint128 haircutClaim = _calculateLiquidityTokenHaircut(
-            param.collateralCurrencyCashClaim,
-            param.liquidityHaircut
+            fc.collateralCashClaim,
+            liquidityHaircut
         );
 
-        (
-            amountToRaise,
-            localToPurchase,
-            collateralToSell
-        ) = _calculatePurchaseAmounts(
+        int256 collateralToSell = _calculateCollateralToSell(
+            discountFactor,
+            localCurrencyRequired,
+            rateParam
+        );
+        
+        int256 balanceAdjustment;
+        (fc.collateralNetAvailable, balanceAdjustment) = _calculatePostfCashValue(fc, transfer);
+        require(fc.collateralNetAvailable > 0, $$(ErrorCode(INSUFFICIENT_BALANCE)));
+
+        (amountToRaise, localToPurchase, transfer.collateralTransfer) = _calculatePurchaseAmounts(
+            localCurrencyRequired,
+            discountFactor,
+            liquidityHaircut,
             haircutClaim,
-            param.localCurrencyRequired,
-            param,
+            collateralToSell,
+            fc,
             rateParam
         );
 
-        int256 newPayerBalance = _calculateCollateralBalances(
+        // The result of this calculation is a new collateral currency balance for the payer.
+        transfer.payerCollateralBalance = _calculateCollateralBalances(
             payer,
-            payerBalance,
-            param.collateralCurrency,
-            collateralToSell,
+            transfer.payerCollateralBalance.add(balanceAdjustment),
+            rateParam.collateralCurrency,
+            transfer.collateralTransfer,
             amountToRaise,
-            param.Portfolios
+            IPortfoliosCallable(Portfolios)
         );
 
-        return (localToPurchase, collateralToSell, newPayerBalance);
+        transfer.payerCollateralBalance = transfer.payerCollateralBalance.sub(balanceAdjustment);
+        transfer.netLocalCurrencyPayer = transfer.netLocalCurrencyPayer.add(localToPurchase);
+        transfer.netLocalCurrencyLiquidator = transfer.netLocalCurrencyLiquidator.add(localToPurchase);
+    }
+
+    /**
+     * @notice Calculates collateralNetAvailable and payerCollateralBalance post fCashValue. We do not trade fCashValue
+     * in this scenario so we want to only allow fCashValue to net out against negative collateral balance and no more.
+     */
+    function _calculatePostfCashValue(
+        Common.FreeCollateralFactors memory fc,
+        TransferAmounts memory transfer
+    ) internal pure returns (int256, int256) {
+        int256 fCashValue = fc.collateralNetAvailable
+            .sub(transfer.payerCollateralBalance)
+            .sub(fc.collateralCashClaim);
+
+        if (fCashValue <= 0) {
+            // If we have negative fCashValue then no adjustments are required.
+            return (fc.collateralNetAvailable, 0);
+        }
+
+        if (transfer.payerCollateralBalance > 0) {
+            // If payer has a positive collateral balance then we don't need to net off against it. We remove
+            // the fCashValue from net available.
+            return (fc.collateralNetAvailable.sub(fCashValue), 0);
+        }
+
+        // In these scenarios the payer has a negative collateral balance and we need to partially offset the balance
+        // so that the payer gets the benefit of their positive fCashValue.
+        int256 netBalanceWithfCashValue = transfer.payerCollateralBalance.add(fCashValue);
+        if (netBalanceWithfCashValue > 0) {
+            // We have more fCashValue than required to net out the balance. We remove the excess from collateralNetAvailable
+            // and adjust the netPayerBalance to zero.
+            return (fc.collateralNetAvailable.sub(netBalanceWithfCashValue), transfer.payerCollateralBalance.neg());
+        } else {
+            // We don't have enough fCashValue to net out the balance. collateralNetAvailable is unchanged because it already takes
+            // into account this netting. We adjust the balance to account for fCash only
+            return (fc.collateralNetAvailable, fCashValue);
+        }
     }
 
     function _calculateLiquidityTokenHaircut(
@@ -311,70 +483,52 @@ library Liquidation {
     }
 
     function _calculatePurchaseAmounts(
+        uint128 localCurrencyRequired,
+        uint128 discountFactor,
+        uint128 liquidityHaircut,
         uint128 haircutClaim,
-        uint128 maxLocalCurrencyToTrade,
-        CollateralCurrencyParameters memory param,
+        int256 collateralToSell,
+        Common.FreeCollateralFactors memory fc,
         RateParameters memory rateParam
     ) internal pure returns (uint128, uint128, uint128) {
-
-        int256 collateralToSell = _calculateCollateralToSell(
-            rateParam.rate,
-            rateParam.rateDecimals,
-            param.discountFactor,
-            maxLocalCurrencyToTrade,
-            rateParam.localDecimals,
-            rateParam.collateralDecimals
-        );
 
         uint128 localToPurchase;
         uint128 amountToRaise;
         // This calculation is described in Appendix B of the whitepaper. It is split between this function and
         // _calculateCollateralBalances to deal with stack issues.
-        if (param.collateralCurrencyAvailable >= collateralToSell) {
+        if (fc.collateralNetAvailable >= collateralToSell) {
             // We have enough collateral currency available to fulfill the purchase. It is either locked up inside
             // liquidity tokens or in the account's balance. If the account's balance is negative then we will have
             // to raise additional amount to fulfill collateralToSell.
-            localToPurchase = maxLocalCurrencyToTrade;
-        } else if (param.collateralCurrencyAvailable.add(haircutClaim) >= collateralToSell) {
+            localToPurchase = localCurrencyRequired;
+        } else if (fc.collateralNetAvailable.add(haircutClaim) >= collateralToSell) {
             // We have enough collateral currency available if we account for the liquidity token haircut that
-            // is not part of the collateralCurrencyAvailable figure. Here we raise an additional amount. 
+            // is not part of the collateralNetAvailable figure. Here we raise an additional amount. 
 
             // This has to be scaled to the preHaircutCashClaim amount:
             // haircutClaim = preHaircutCashClaim - preHaircutCashClaim * haircut
             // haircutClaim = preHaircutCashClaim * (1 - haircut)
             // liquidiytTokenHaircut / (1 - haircut) = preHaircutCashClaim
             amountToRaise = SafeCast.toUint128(
-                uint256(collateralToSell.sub(param.collateralCurrencyAvailable))
+                uint256(collateralToSell.sub(fc.collateralNetAvailable))
                     .mul(Common.DECIMALS)
-                    .div(Common.DECIMALS.sub(param.liquidityHaircut))
+                    .div(Common.DECIMALS.sub(liquidityHaircut))
             );
-            localToPurchase = maxLocalCurrencyToTrade;
-        } else if (collateralToSell > param.collateralCurrencyAvailable.add(haircutClaim)) {
+            localToPurchase = localCurrencyRequired;
+        } else if (collateralToSell > fc.collateralNetAvailable.add(haircutClaim)) {
             // There is not enough value collateral currency in the account to fulfill the purchase, we
             // specify the maximum amount that we can get from the account to partially settle.
-            collateralToSell = param.collateralCurrencyAvailable.add(haircutClaim);
-            amountToRaise = SafeCast.toUint128(
-                uint256(haircutClaim)
-                    .mul(Common.DECIMALS)
-                    .div(Common.DECIMALS.sub(param.liquidityHaircut))
-            );
+            collateralToSell = fc.collateralNetAvailable.add(haircutClaim);
+
+            // stack frame isn't big enough for this calculation
+            // haircutClaim * 1e18 / (1e18 - liquidityHaircut), this is the maximum amountToRaise
+            uint256 x = haircutClaim.mul(Common.DECIMALS);
+            x = x.div(Common.DECIMALS.sub(liquidityHaircut));
+            amountToRaise = SafeCast.toUint128(x);
 
             // In this case we partially settle the collateralToSell amount.
-            // collateralDecimals * rateDecimals * 1e18 * localDecimals
-            //         / (rateDecimals * 1e18 * collateralDecimals) = localDecimals
-            uint256 x = uint256(collateralToSell)
-                .mul(rateParam.rateDecimals)
-                // Discount factor uses 1e18 as its decimal precision
-                .mul(Common.DECIMALS);
-
-            x = x
-                .mul(rateParam.localDecimals)
-                .div(rateParam.rate);
-
-            localToPurchase = SafeCast.toUint128(x
-                    .div(param.discountFactor)
-                    .div(rateParam.collateralDecimals)
-            );
+            require(collateralToSell > 0);
+            localToPurchase = _calculateLocalCurrencyAmount(discountFactor, uint128(collateralToSell), rateParam);
         }
 
         require(collateralToSell > 0);
@@ -382,26 +536,45 @@ library Liquidation {
         return (amountToRaise, localToPurchase, uint128(collateralToSell));
     }
 
+    function _calculateLocalCurrencyAmount(
+        uint128 discountFactor,
+        uint128 collateralToSell,
+        RateParameters memory rateParam
+    ) internal pure returns (uint128) {
+        // collateralDecimals * rateDecimals * 1e18 * localDecimals
+        //         / (rateDecimals * 1e18 * collateralDecimals) = localDecimals
+        uint256 x = uint256(collateralToSell)
+            .mul(rateParam.localToETH.rateDecimals)
+            // Discount factor uses 1e18 as its decimal precision
+            .mul(Common.DECIMALS);
+
+        x = x
+            .mul(rateParam.localDecimals)
+            .div(rateParam.rate);
+
+        return SafeCast.toUint128(x
+            .div(discountFactor)
+            .div(rateParam.collateralDecimals)
+        );
+    }
+
     function _calculateCollateralToSell(
-        uint256 rate,
-        uint256 rateDecimals,
         uint128 discountFactor,
         uint128 localCurrencyRequired,
-        uint256 localDecimals,
-        uint256 collateralDecimals
+        RateParameters memory rateParam
     ) internal pure returns (uint128) {
-        uint256 x = rate
+        uint256 x = rateParam.rate
             .mul(localCurrencyRequired)
             .mul(discountFactor);
 
         x = x
-            .div(rateDecimals)
-            .div(localDecimals);
+            .div(rateParam.localToETH.rateDecimals)
+            .div(rateParam.localDecimals);
         
         // Splitting calculation to handle stack depth
         return SafeCast.toUint128(x
             // Multiplying to the quote decimal precision (may not be the same as the rate precision)
-            .mul(collateralDecimals)
+            .mul(rateParam.collateralDecimals)
             // discountFactor uses 1e18 as its decimal precision
             .div(Common.DECIMALS)
         );
@@ -415,7 +588,7 @@ library Liquidation {
         uint128 amountToRaise,
         IPortfoliosCallable Portfolios
     ) internal returns (int256) {
-         // We must deterimine how to transfer collateral from the payer to msg.sender. The collateral may be in cashBalances
+        // We must deterimine how to transfer collateral from the payer to liquidator. The collateral may be in cashBalances
         // or it may be locked up in liquidity tokens.
         int256 balance = payerBalance;
         bool creditBalance;
@@ -426,8 +599,11 @@ library Liquidation {
         } else {
             // If amountToRaise is greater than (collateralToSell - balance) this means that we're tapping into the
             // haircut claim amount. We need to credit back the difference to the account to ensure that the collateral
-            // position does not get worse
-            uint128 tmp = uint128(int256(collateralToSell).sub(balance));
+            // position does not get worse.
+            int256 x = int256(collateralToSell).sub(balance);
+            require(x > 0);
+            uint128 tmp = uint128(x);
+
             if (amountToRaise > tmp) {
                 balance = int256(amountToRaise).sub(tmp);
             } else {
@@ -459,5 +635,127 @@ library Liquidation {
         }
 
         return balance;
+    }
+
+    /**
+     * @notice Settles fCash between local and collateral currency.
+     * @param payer address of account that has current cash debts
+     * @param liquidator address of account liquidating
+     * @param valueToSettle amount of local currency debt to settle
+     * @param collateralNetAvailable net amount of collateral available to trade
+     * @param rateParam exchange rate parameters
+     * @param Portfolios address of the portfolios contract
+     */
+    function settlefCash(
+        address payer,
+        address liquidator,
+        uint128 valueToSettle,
+        int256 collateralNetAvailable,
+        RateParameters memory rateParam,
+        address Portfolios
+    ) public returns (int256, uint128) {
+        uint128 discountFactor = EscrowStorageSlot._settlementDiscount();
+
+        return _tradefCash(
+            payer,
+            liquidator,
+            valueToSettle,
+            collateralNetAvailable,
+            discountFactor,
+            rateParam,
+            Portfolios
+        );
+    }
+
+    /**
+     * @notice Liquidates fCash between local and collateral currency.
+     * @param payer address of account that has current cash debts
+     * @param liquidator address of account liquidating
+     * @param fcAggregate free collateral shortfall denominated in ETH
+     * @param localNetAvailable amount of local currency debts available to recollateralize, dictates max trading amount
+     * @param collateralNetAvailable net amount of collateral available to trade
+     * @param rateParam exchange rate parameters
+     * @param Portfolios address of the portfolios contract
+     */
+    function liquidatefCash(
+        address payer,
+        address liquidator,
+        int256 fcAggregate,
+        int256 localNetAvailable,
+        int256 collateralNetAvailable,
+        RateParameters memory rateParam,
+        address Portfolios
+    ) public returns (int256, uint128) {
+        uint128 localCurrencyRequired = _fcAggregateToLocal(fcAggregate, rateParam);
+        uint128 discountFactor = EscrowStorageSlot._liquidationDiscount();
+        require (localNetAvailable < 0, $$(ErrorCode(INSUFFICIENT_LOCAL_CURRENCY_DEBT)));
+
+        localCurrencyRequired = _calculateLocalCurrencyToTrade(
+            localCurrencyRequired,
+            discountFactor,
+            rateParam.localToETH.buffer,
+            uint128(localNetAvailable.neg())
+        );
+
+        return _tradefCash(
+            payer,
+            liquidator,
+            localCurrencyRequired,
+            collateralNetAvailable,
+            discountFactor,
+            rateParam,
+            Portfolios
+        );
+    }
+
+    /** @notice Trades fCash denominated in collateral currency in exchange for local currency. */
+    function _tradefCash(
+        address payer,
+        address liquidator,
+        uint128 localCurrencyRequired,
+        int256 collateralNetAvailable,
+        uint128 discountFactor,
+        RateParameters memory rateParam,
+        address Portfolios
+    ) internal returns (int256, uint128) {
+        require(collateralNetAvailable > 0, $$(ErrorCode(MUST_HAVE_NET_POSITIVE_COLLATERAL)));
+
+        uint128 collateralCurrencyRequired = _calculateCollateralToSell(discountFactor, localCurrencyRequired, rateParam);
+        if (collateralCurrencyRequired > collateralNetAvailable) {
+            // We limit trading to the amount of collateralNetAvailable so that we don't put the account further undercollateralized
+            // in the collateral currency.
+            collateralCurrencyRequired = uint128(collateralNetAvailable);
+            localCurrencyRequired = _calculateLocalCurrencyAmount(
+                discountFactor,
+                collateralCurrencyRequired,
+                rateParam
+            );
+        }
+
+        (uint128 shortfall, uint128 liquidatorPayment) = IPortfoliosCallable(Portfolios).raiseCurrentCashViaCashReceiver(
+            payer,
+            liquidator,
+            rateParam.collateralCurrency,
+            collateralCurrencyRequired
+        );
+
+        int256 netCollateralCurrencyLiquidator = int256(liquidatorPayment).sub(collateralCurrencyRequired.sub(shortfall));
+
+        uint128 netLocalCurrencyPayer = localCurrencyRequired;
+        if (shortfall > 0) {
+            // (rate * discountFactor * (localCurrencyRequired - localShortfall)) = (collateralToSell - shortfall)
+            // (rate * discountFactor * localShortfall) = shortfall
+            // shortfall / (rate * discountFactor) = localCurrencyShortfall
+            uint128 localCurrencyShortfall = 
+                _calculateLocalCurrencyAmount(
+                    discountFactor,
+                    shortfall,
+                    rateParam
+                );
+
+            netLocalCurrencyPayer = netLocalCurrencyPayer.sub(localCurrencyShortfall);
+        }
+
+        return (netCollateralCurrencyLiquidator, netLocalCurrencyPayer);
     }
 }

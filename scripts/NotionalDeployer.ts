@@ -211,6 +211,8 @@ export class NotionalDeployer {
         settlementDiscount: BigNumber,
         liquidityHaircut: BigNumber,
         repoDiscount: BigNumber,
+        fCashHaircut: BigNumber,
+        fCashMaxHaircut: BigNumber,
         confirmations = 3
     ) => {
         const startBlock = await owner.provider.getBlockNumber();
@@ -334,8 +336,8 @@ export class NotionalDeployer {
         log("Setting liquidation discounts");
         await NotionalDeployer.txMined(escrow.setDiscounts(liquidationDiscount, settlementDiscount, repoDiscount), confirmations);
 
-        log("Setting liquidity haircut");
-        await NotionalDeployer.txMined(portfolios.setHaircut(liquidityHaircut), confirmations);
+        log("Setting risk haircuts");
+        await NotionalDeployer.txMined(portfolios.setHaircuts(liquidityHaircut, fCashHaircut, fCashMaxHaircut), confirmations);
 
         return new NotionalDeployer(
             owner,
