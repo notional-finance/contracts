@@ -298,11 +298,13 @@ export class TestUtils {
         // This sets up a negative cash balance
         const maturities = await this.futureCash.getActiveMaturities();
         if (borrowAmount) {
+            log(`Setup sell future cash, calling takeCollateral with ${borrowAmount}`);
             await this.borrowAndWithdraw(wallet, borrowAmount);
         }
 
         // This creates the fCash receiver
         if (tradefCashAmount) {
+            log(`Setup sell future cash, calling takefCash with ${tradefCashAmount} for trading`);
             await this.escrow.connect(wallet).deposit(this.token.address, tradefCashAmount);
             await this.futureCash
                 .connect(wallet)
@@ -321,16 +323,21 @@ export class TestUtils {
 
         const cashBalances = await this.escrow.cashBalances(currency, wallet.address);
         if (cashBalances.gt(0)) {
+            log(`Setup sell future cash, withdrawing ${cashBalances}`);
             await this.escrow.connect(wallet).withdraw(this.token.address, cashBalances);
         }
 
         if (borrowAmount) {
             const answer = await this.chainlink.latestAnswer();
             await this.chainlink.setAnswer(answer.mul(100));
+            log(`Setup sell future cash, liquidating wallet ${wallet.address}. Free collateral position:`);
+            log(await this.portfolios.freeCollateralView(wallet.address));
             await this.escrow.liquidate(wallet.address, currency, CURRENCY.ETH);
             await this.chainlink.setAnswer(answer);
 
             const cb = await this.escrow.cashBalances(currency, wallet.address);
+            log(`Finish setup sell future cash, free collateral position:`);
+            log(await this.portfolios.freeCollateralView(wallet.address));
             return borrowAmount.sub(cb);
         } else {
             return new BigNumber(0);

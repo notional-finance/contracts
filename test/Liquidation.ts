@@ -96,6 +96,7 @@ describe("Liquidation", () => {
     });
 
     afterEach(async () => {
+        await fastForwardToMaturity(provider, maturities[3]);
         expect(await t.checkEthBalanceIntegrity([owner, wallet, wallet2])).to.be.true;
         expect(await t.checkBalanceIntegrity([owner, wallet, wallet2])).to.be.true;
         expect(await t.checkMarketIntegrity([owner, wallet, wallet2], maturities)).to.be.true;

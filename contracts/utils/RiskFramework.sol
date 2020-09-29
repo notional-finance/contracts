@@ -47,13 +47,16 @@ library RiskFramework {
             IPortfoliosCallable(Portfolios)
         );
 
+        uint128 fCashHaircut = PortfoliosStorageSlot._fCashHaircut();
+        uint128 fCashMaxHaircut = PortfoliosStorageSlot._fCashMaxHaircut();
+        uint32 blockTime = uint32(block.timestamp);
+
         int256[] memory cashClaims = _getCashLadders(
             portfolio,
             cashGroups,
             ladders,
             PortfoliosStorageSlot._liquidityHaircut(),
-            PortfoliosStorageSlot._fCashHaircut(),
-            PortfoliosStorageSlot._fCashMaxHaircut()
+            blockTime
         );
 
         // We now take the per cash group cash ladder and summarize it into a single requirement. The future
@@ -63,10 +66,23 @@ library RiskFramework {
         for (uint256 i; i < ladders.length; i++) {
             requirements[i].currency = ladders[i].currency;
             requirements[i].cashClaim = cashClaims[i];
+            uint32 initialMaturity;
+            if (blockTime % cashGroups[i].maturityLength == 0) {
+                // If this is true then blockTime = maturity at index 0 and we do not add an offset.
+                initialMaturity = blockTime;
+            } else {
+                initialMaturity = blockTime - (blockTime % cashGroups[i].maturityLength) + cashGroups[i].maturityLength;
+            }
 
             for (uint256 j; j < ladders[i].cashLadder.length; j++) {
-                requirements[i].netfCashValue = requirements[i].netfCashValue
-                    .add(ladders[i].cashLadder[j]);
+                int256 netfCash = ladders[i].cashLadder[j];
+                if (netfCash > 0) {
+                    uint32 maturity = initialMaturity + cashGroups[i].maturityLength * uint32(j);
+                    // If netfCash value is positive here then we have to haircut it.
+                    netfCash = _calculateReceiverValue(netfCash, maturity, blockTime, fCashHaircut, fCashMaxHaircut);
+                }
+
+                requirements[i].netfCashValue = requirements[i].netfCashValue.add(netfCash);
             }
         }
 
@@ -84,10 +100,8 @@ library RiskFramework {
         Common.CashGroup[] memory cashGroups,
         CashLadder[] memory ladders,
         uint128 liquidityHaircut,
-        uint128 fCashHaircut,
-        uint128 fCashMaxHaircut
+        uint32 blockTime
     ) internal view returns (int256[] memory) {
-        uint32 blockTime = uint32(block.timestamp);
 
         // This will hold the current cash claims balance
         int256[] memory cashClaims = new int256[](ladders.length);
@@ -106,9 +120,7 @@ library RiskFramework {
                 portfolio[i],
                 cashGroups[groupIndex],
                 blockTime,
-                liquidityHaircut,
-                fCashHaircut,
-                fCashMaxHaircut
+                liquidityHaircut
             );
 
             cashClaims[groupIndex] = cashClaims[groupIndex].add(cashClaimAmount);
@@ -137,11 +149,8 @@ library RiskFramework {
         Common.Asset memory asset,
         Common.CashGroup memory cg,
         uint32 blockTime,
-        uint128 liquidityHaircut,
-        uint128 fCashHaircut,
-        uint128 fCashMaxHaircut
+        uint128 liquidityHaircut
     ) internal view returns (int256, int256) {
-        // This is the offset in the cash ladder
         int256 cashClaim;
         int256 fCash;
 
@@ -150,23 +159,20 @@ library RiskFramework {
         } else if (Common.isCashPayer(asset.assetType)) {
             fCash = int256(asset.notional).neg();
         } else if (Common.isCashReceiver(asset.assetType)) {
-            fCash = _calculateReceiverValue(asset, blockTime, fCashHaircut, fCashMaxHaircut);
+            fCash = int256(asset.notional);
         }
 
         return (fCash, cashClaim);
     }
 
     function _calculateReceiverValue(
-        Common.Asset memory asset,
+        int256 fCash,
+        uint32 maturity,
         uint32 blockTime,
         uint128 fCashHaircut,
         uint128 fCashMaxHaircut
     ) internal pure returns (int256) {
-        if (asset.maturity <= blockTime) {
-            return int256(asset.notional);
-        }
-
-        int256 fCash = int256(asset.notional);
+        require(maturity > blockTime);
 
         // As we roll down to maturity the haircut value will decrease until
         // we hit the maxPostHaircutValue where we cap this.
@@ -174,7 +180,7 @@ library RiskFramework {
         int256 postHaircutValue = fCash.sub(
             fCash
                 .mul(fCashHaircut)
-                .mul(asset.maturity - blockTime)
+                .mul(maturity - blockTime)
                 .div(Common.SECONDS_IN_YEAR)
                 // fCashHaircut is in 1e18
                 .div(Common.DECIMALS)

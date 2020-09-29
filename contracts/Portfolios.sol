@@ -795,7 +795,8 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
         uint128 notionalToTransfer;
         uint128 assetValue;
         int256 tmp = RiskFramework._calculateReceiverValue(
-            asset,
+            asset.notional,
+            asset.maturity,
             blockTime,
             fCashHaircut,
             fCashMaxHaircut

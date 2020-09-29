@@ -54,9 +54,9 @@ library ExchangeRate {
         int256 result = int256(
             SafeCast.toUint128(rate
                 .mul(absBalance)
+                // Buffer has 18 decimal places of precision
                 .mul(buffer ? er.buffer : Common.DECIMALS)
                 .div(er.rateDecimals)
-                // Buffer has 18 decimal places of precision
                 .div(baseDecimals)
             )
         );

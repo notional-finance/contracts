@@ -202,5 +202,15 @@ describe("Portfolio", () => {
 
             await checkFC(parseEther("1.4"), parseEther("140"));
         });
+
+        it("liquidity claim that nets to positive fcash is haircut", async () => {
+            // no liquidity haircut in here
+            await t.setupLiquidity(wallet, 0.5, parseEther("100"));
+            await t.lendAndWithdraw(wallet, parseEther("75"));
+
+            const fc = await portfolios.freeCollateralView(wallet.address);
+            // fCash claim has some residual due to trading
+            expect(fc[1][1].sub(parseEther("171.25"))).to.be.above(0).and.below(WeiPerEther.div(10));
+        });
     });
 });
