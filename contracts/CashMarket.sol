@@ -1237,7 +1237,8 @@ contract CashMarket is Governed {
     }
 
     function _abdkMath(uint256 proportion) internal pure returns (uint64, bool) {
-        // This is the max 64 bit integer for ABDKMath
+        // This is the max 64 bit integer for ABDKMath. Note that this will fail when the
+        // market reaches a proportion of 9.2 due to the MAX64 value.
         if (proportion > MAX64) return (0, false);
 
         int128 abdkProportion = ABDKMath64x64.fromUInt(proportion);
