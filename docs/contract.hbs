@@ -7,7 +7,7 @@
 ## Methods
 {{#ownFunctions}}
 {{#if (isUserMethod visibility natspec) }}
-- [`{{name}}({{args}})`](#{{name}})
+- [{{name}}({{args}})](#{{name}})
 {{/if}}
 {{/ownFunctions}}
 {{/if}}
@@ -15,7 +15,7 @@
 {{#if (hasEvents ownEvents)}}
 ## Events
 {{#ownEvents}}
-- [`{{name}}({{args}})`](#{{name}})
+- [{{name}}({{args}})](#{{name}})
 {{/ownEvents}}
 {{/if}}
 
@@ -23,7 +23,7 @@
 ## Governance Methods
 {{#ownFunctions}}
 {{#if (isGovernance visibility natspec) }}
-- [`{{name}}({{args}})`](#{{name}})
+- [{{name}}({{args}})](#{{name}})
 {{/if}}
 {{/ownFunctions}}
 {{/if}}
@@ -31,12 +31,12 @@
 # Methods
 {{#ownFunctions}}
 {{#if (isUserMethod visibility natspec) }}
-### `{{name}}`
+### {{name}}
 > {{#if natspec.userdoc}}{{trim natspec.userdoc}}{{else}}No description{{/if}}
 {{#if natspec.params}}
 #### Parameters:
 {{#natspec.params}}
-- `{{param}}`: {{trim description}}
+- {{param}}: {{trim description}}
 {{/natspec.params}}
 {{/if}}
 {{#if natspec.returns}}
@@ -59,12 +59,12 @@
 {{#if (hasEvents ownEvents)}}
 # Events
 {{#ownEvents}}
-### `{{name}}`
+### {{name}}
 > {{#if natspec.userdoc}}{{trim natspec.userdoc}}{{else}}No description{{/if}}
 {{#if natspec.params}}
 #### Parameters:
 {{#natspec.params}}
-- `{{param}}`: {{trim description}}
+- {{param}}: {{trim description}}
 {{/natspec.params}}
 {{/if}}
 
@@ -77,12 +77,12 @@
 # Governance Methods
 {{#ownFunctions}}
 {{#if (isGovernance visibility natspec) }}
-### `{{name}}`
+### {{name}}
 > {{#if natspec.userdoc}}{{trim natspec.userdoc}}{{else}}No description{{/if}}
 {{#if natspec.params}}
 #### Parameters:
 {{#natspec.params}}
-- `{{param}}`: {{trim description}}
+- {{param}}: {{trim description}}
 {{/natspec.params}}
 {{/if}}
 {{#if natspec.returns}}

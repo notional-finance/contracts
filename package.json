@@ -13,12 +13,12 @@
         "test:gas": "gasprofile/rungas.sh",
         "test:gas:all": "export ALL_TESTS=true; gasprofile/rungas.sh",
         "test:coverage": "export COVERAGE=true; npx buidler coverage --network coverage",
-        "docs:build": "yarn run build && yarn run solidity-docgen -e cache/solpp-generated-contracts/lib,cache/solpp-generated-contracts/interface,cache/solpp-generated-contracts/upgradeable,cache/solpp-generated-contracts/storage,cache/solpp-generated-contracts/utils -i cache/solpp-generated-contracts -o docs -t docs -H docs/helpers.js",
+        "docs:build": "yarn run build && yarn run solidity-docgen -e cache/solpp-generated-contracts/lib,cache/solpp-generated-contracts/interface,cache/solpp-generated-contracts/upgradeable,cache/solpp-generated-contracts/storage,cache/solpp-generated-contracts/utils -i cache/solpp-generated-contracts -o ../../docs/contracts -t docs -H docs/helpers.js",
         "upgrade:kovan": "DEBUG=* DOTENV_CONFIG_PATH=.env.kovan ts-node scripts/upgrade.ts",
         "sloc": "rename 's/\\.sol/\\.c/' contracts/*.sol && scc contracts/* --wide --by-file && rename 's/\\.c/\\.sol/' contracts/*.c"
     },
     "repository": {
-        "type": "git",
+        "type": "git" ,
         "url": "git+https://github.com/notional-finance/notional.git"
     },
     "homepage": "https://notional.finance",
