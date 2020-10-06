@@ -1213,27 +1213,30 @@ contract CashMarket is Governed {
         proportion = proportion.mul(Common.DECIMALS).div(uint256(Common.DECIMALS).sub(proportion));
 
         // (1 / scalar) * ln(proportion') + anchor_rate
-        (int64 abdkResult, bool success) = _abdkMath(proportion);
+        (int256 abdkResult, bool success) = _abdkMath(proportion);
 
         if (!success) return (0, false);
 
         // The rate scalar will increase towards maturity, this will lower the impact of changes
         // to the proportion as we get towards maturity.
-        uint256 rateScalar = uint256(market.rateScalar).mul(G_MATURITY_LENGTH).div(timeToMaturity);
+        int256 rateScalar = int256(market.rateScalar).mul(G_MATURITY_LENGTH).div(timeToMaturity);
         if (rateScalar > Common.MAX_UINT_32) return (0, false);
 
-        // This is ln(1e18), subtract this to scale proportion back
-        int64 rate = (((abdkResult - LN_1E18) / int64(rateScalar)) + market.rateAnchor);
-
+        // This is ln(1e18), subtract this to scale proportion back. There is no potential for overflow
+        // in int256 space with the addition and subtraction here.
+        int256 rate = ((abdkResult - LN_1E18) / rateScalar) + market.rateAnchor;
+        
         // These checks simply prevent math errors, not negative interest rates.
         if (rate < 0) {
+            return (0, false);
+        } else if (rate > Common.MAX_UINT_32) {
             return (0, false);
         } else {
             return (uint32(rate), true);
         }
     }
 
-    function _abdkMath(uint256 proportion) internal pure returns (int64, bool) {
+    function _abdkMath(uint256 proportion) internal pure returns (uint64, bool) {
         // This is the max 64 bit integer for ABDKMath
         if (proportion > MAX64) return (0, false);
 
@@ -1243,14 +1246,16 @@ contract CashMarket is Governed {
         if (abdkProportion <= 0) return (0, false);
 
         int256 abdkLog = ABDKMath64x64.ln(abdkProportion);
-        // This is the ABDK 64x64 multiplication with the 64x64 represenation of 1e18
+        // This is the 64x64 multiplication with the 64x64 represenation of 1e9. The max value of
+        // this due to MAX64 is ln(MAX64) * 1e9 = 43668272375
         int256 result = (abdkLog * PRECISION_64x64) >> 64;
 
         if (result < ABDKMath64x64.MIN_64x64 || result > ABDKMath64x64.MAX_64x64) {
             return (0, false);
         }
 
-        // Will pass int128 conversion after the overflow checks above.
-        return (ABDKMath64x64.toInt(int128(result)), true);
+        // Will pass int128 conversion after the overflow checks above. We convert to a uint here because we have
+        // already checked that proportion is positive and so we cannot return a negative log.
+        return (ABDKMath64x64.toUInt(int128(result)), true);
     }
 }

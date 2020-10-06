@@ -140,6 +140,22 @@ describe("Portfolio", () => {
       ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.PORTFOLIO_TOO_LARGE));
     });
 
+    it("allows liquidation to add past max assets", async () => {
+        await t.setupLiquidity(owner, 0.5, parseEther("100000"), [0, 1]);
+
+        await escrow.connect(wallet).deposit(dai.address, parseEther("200"));
+        await futureCash.connect(wallet).addLiquidity(maturities[1], parseEther("100"), parseEther("100"), 0, 100_000_000, BLOCK_TIME_LIMIT);
+        await futureCash.connect(wallet).takefCash(maturities[1], parseEther("100"), BLOCK_TIME_LIMIT, 0);
+        await t.borrowAndWithdraw(wallet, parseEther("200"));
+
+        await portfolios.setMaxAssets(2);
+        await t.chainlink.setAnswer(parseEther("0.05"));
+
+        await escrow.liquidate(wallet.address, CURRENCY.DAI, CURRENCY.ETH);
+        const portfolio = await portfolios.getAssets(wallet.address);
+        expect(portfolio).to.have.lengthOf(3);
+    });
+
     describe("free collateral calculation scenarios", async () => {
         const checkFC = async (eth: BigNumber, dai: BigNumber) => {
             const fc = await portfolios.freeCollateralView(wallet.address);

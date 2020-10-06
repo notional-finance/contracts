@@ -399,6 +399,10 @@ library Liquidation {
             localCurrencyRequired,
             rateParam
         );
+
+        // It's possible that collateralToSell is zero even if localCurrencyRequired > 0, this can be caused
+        // by very small amounts of localCurrencyRequired
+        if (collateralToSell == 0) return;
         
         int256 balanceAdjustment;
         (fc.collateralNetAvailable, balanceAdjustment) = _calculatePostfCashValue(fc, transfer);
@@ -446,7 +450,7 @@ library Liquidation {
             return (fc.collateralNetAvailable, 0);
         }
 
-        if (transfer.payerCollateralBalance > 0) {
+        if (transfer.payerCollateralBalance >= 0) {
             // If payer has a positive collateral balance then we don't need to net off against it. We remove
             // the fCashValue from net available.
             return (fc.collateralNetAvailable.sub(fCashValue), 0);

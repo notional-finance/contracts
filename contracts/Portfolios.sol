@@ -391,7 +391,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
         require(msg.sender == cashMarket, $$(ErrorCode(UNAUTHORIZED_CALLER)));
 
         Common.Asset[] storage portfolio = _accountAssets[account];
-        _upsertAsset(portfolio, asset);
+        _upsertAsset(portfolio, asset, false);
 
         if (checkFreeCollateral) {
             (
@@ -432,7 +432,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
 
         Common.Asset[] storage portfolio = _accountAssets[account];
         for (uint256 i; i < assets.length; i++) {
-            _upsertAsset(portfolio, assets[i]);
+            _upsertAsset(portfolio, assets[i], false);
         }
 
         if (checkFreeCollateral) {
@@ -478,7 +478,8 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
         Common.Asset[] storage toPortfolio = _accountAssets[to];
         _upsertAsset(
             toPortfolio,
-            Common.Asset(cashGroupId, instrumentId, maturity, assetType, rate, value)
+            Common.Asset(cashGroupId, instrumentId, maturity, assetType, rate, value),
+            false
         );
 
         // All transfers of assets must pass a free collateral check.
@@ -487,10 +488,8 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
         ) = freeCollateral(from);
         require(fc >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL)));
 
-        (
-            fc, /* int256[] memory */, /* int256[] memory */
-        ) = freeCollateral(to);
-        require(fc >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL)));
+        // Receivers of transfers do not need to pass a free collateral check because we only allow transfers
+        // of positive value. Their free collateral position will always increase.
     }
 
     /**
@@ -513,16 +512,22 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
 
         Common.CashGroup memory fcg = cashGroups[cashGroupId];
 
+        uint32 maxMaturity;
         if (fcg.cashMarket != address(0)) {
             // This is a cash group that is traded on an AMM so we ensure that the maturity fits
             // the cadence.
             require(maturity % fcg.maturityLength == 0, $$(ErrorCode(INVALID_SWAP)));
-        }
 
-        uint32 maxMaturity = blockTime - (blockTime % fcg.maturityLength) + (fcg.maturityLength * fcg.numMaturities);
+            maxMaturity = blockTime - (blockTime % fcg.maturityLength) + (fcg.maturityLength * fcg.numMaturities);
+        } else {
+            // This is an idiosyncratic asset so its max maturity is simply relative to the current time
+            maxMaturity = blockTime + fcg.maturityLength;
+        }
         require(maturity <= maxMaturity, $$(ErrorCode(PAST_MAX_MATURITY)));
 
-        _upsertAsset(_accountAssets[payer],
+
+        _upsertAsset(
+            _accountAssets[payer],
             Common.Asset(
                 cashGroupId,
                 0,
@@ -530,9 +535,12 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
                 Common.getCashPayer(),
                 fcg.precision,
                 notional
-            ));
+            ),
+            false
+        );
 
-        _upsertAsset(_accountAssets[receiver],
+        _upsertAsset(
+            _accountAssets[receiver],
             Common.Asset(
                 cashGroupId,
                 0,
@@ -540,14 +548,15 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
                 Common.getCashReceiver(),
                 fcg.precision,
                 notional
-            ));
+            ),
+            false
+        );
 
         (int256 fc, /* int256[] memory */, /* int256[] memory */) = freeCollateral(payer);
         require(fc >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL)));
 
-        // NOTE: this check is not strictly necessary
-        (fc, /* int256[] memory */, /* int256[] memory */) = freeCollateral(receiver);
-        require(fc >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL)));
+        // NOTE: we do not check that the receiver has sufficient free collateral because their collateral
+        // position will always increase as a result.
     }
 
     /**
@@ -774,7 +783,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
                 }
 
                 asset.notional = notionalToTransfer;
-                _upsertAsset(liquidatorPortfolio, asset);
+                _upsertAsset(liquidatorPortfolio, asset, false);
             }
 
             if (amountRemaining == 0) break;
@@ -895,7 +904,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
         Common.Asset[] storage accountStorage = _accountAssets[account];
         for (uint256 i; i < state.indexCount; i++) {
             // This bypasses the free collateral check that we do not need to do here
-            _upsertAsset(accountStorage, state.portfolioChanges[i]);
+            _upsertAsset(accountStorage, state.portfolioChanges[i], true);
         }
 
         return state;
@@ -1038,8 +1047,13 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
      * as appropriate.
      * @param portfolio a list of assets
      * @param asset the new asset to add
+     * @param liquidateAllowAdd allows liquidate function to continue to add assets to the portfolio
      */
-    function _upsertAsset(Common.Asset[] storage portfolio, Common.Asset memory asset) internal {
+    function _upsertAsset(
+        Common.Asset[] storage portfolio,
+        Common.Asset memory asset,
+        bool liquidateAllowAdd
+    ) internal {
         (bool found, uint256 index, uint128 notional, bool isCounterparty) = _searchAsset(
             portfolio,
             asset.assetType,
@@ -1050,10 +1064,10 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
         );
 
         if (!found) {
-            // This is the NULL_ASSET so we append. This restriction should never work against extracting
-            // cash or liquidation because in those cases we will always be trading offsetting positions
-            // rather than adding new positions. (Index will return length when asset is not found)
-            require(index <= G_MAX_ASSETS, $$(ErrorCode(PORTFOLIO_TOO_LARGE)));
+            // If not found then we append to the portfolio. We won't allow it to grow past the max assets parameter
+            // except in the case of liquidating liquidity tokens. When doing so, we may need to add cash receiver tokens
+            // back into the portfolio.
+            require(index <= G_MAX_ASSETS || liquidateAllowAdd, $$(ErrorCode(PORTFOLIO_TOO_LARGE)));
 
             if (Common.isLiquidityToken(asset.assetType) && Common.isPayer(asset.assetType)) {
                 // You cannot have a payer liquidity token without an existing liquidity token entry in

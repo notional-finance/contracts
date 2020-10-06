@@ -404,7 +404,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
 
         TokenOptions memory options = tokenOptions[token];
         amount = _tokenDeposit(token, from, amount, options);
-        cashBalances[currencyId][from] = cashBalances[currencyId][from].add(amount);
+        if (!options.isERC777) cashBalances[currencyId][from] = cashBalances[currencyId][from].add(amount);
 
         emit Deposit(currencyId, from, amount);
     }

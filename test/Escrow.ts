@@ -16,6 +16,7 @@ import {Portfolios} from "../typechain/Portfolios";
 import {TestUtils} from "./testUtils";
 import {parseEther, BigNumber} from "ethers/utils";
 import {Ierc1820Registry as IERC1820Registry} from "../typechain/Ierc1820Registry";
+import {Ierc777 as IERC777} from "../typechain/Ierc777";
 import {MockAggregator} from "../mocks/MockAggregator";
 
 chai.use(solidity);
@@ -132,6 +133,15 @@ describe("Deposits and Withdraws", () => {
             escrow.listCurrency(dai.address, { isERC777: true, hasTransferFee: false })
         ).to.be.revertedWith(ErrorDecoder.decodeError(ErrorCodes.INVALID_CURRENCY));
     });
+
+    it("erc777 token deposits are not double counted", async () => {
+        const erc777 = await deployContract(owner, ERC777Artifact, [registry.address]) as IERC777;
+        await escrow.listCurrency(erc777.address, { isERC777: true, hasTransferFee: false });
+        await erc777.authorizeOperator(escrow.address);
+
+        await escrow.deposit(erc777.address, parseEther("0.000001"))
+        expect(await escrow.cashBalances(2, owner.address)).to.equal(parseEther("0.000001"));
+    })
 
     it("supports erc777 token transfers", async () => {
         const erc777 = await deployContract(owner, ERC777Artifact, [registry.address]);
