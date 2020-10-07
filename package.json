@@ -15,6 +15,7 @@
         "test:coverage": "export COVERAGE=true; npx buidler coverage --network coverage",
         "docs:build": "yarn run build && yarn run solidity-docgen -e cache/solpp-generated-contracts/lib,cache/solpp-generated-contracts/interface,cache/solpp-generated-contracts/upgradeable,cache/solpp-generated-contracts/storage,cache/solpp-generated-contracts/utils -i cache/solpp-generated-contracts -o ../../docs/contracts -t docs -H docs/helpers.js",
         "upgrade:kovan": "DEBUG=* DOTENV_CONFIG_PATH=.env.kovan ts-node scripts/upgrade.ts",
+        "upgrade:rinkeby": "DEBUG=* DOTENV_CONFIG_PATH=.env.rinkeby ts-node scripts/upgrade.ts",
         "sloc": "rename 's/\\.sol/\\.c/' contracts/*.sol && scc contracts/* --wide --by-file && rename 's/\\.c/\\.sol/' contracts/*.c"
     },
     "repository": {

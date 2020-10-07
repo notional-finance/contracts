@@ -20,6 +20,7 @@ import { Iweth as IWETH } from '../typechain/Iweth';
 import { Ierc20 as ERC20 } from "../typechain/Ierc20";
 import { IAggregator } from '../typechain/IAggregator';
 import { CreateProxyFactory } from '../typechain/CreateProxyFactory';
+import { RetryProvider } from './RetryProvider';
 
 const log = Debug("notional:deploy");
 const ONE_MONTH = 2592000;
@@ -53,7 +54,7 @@ async function main() {
             confirmations = 3;
             deployWallet = new Wallet(
                 process.env.TESTNET_PRIVATE_KEY as string,
-                new JsonRpcProvider(process.env.TESTNET_PROVIDER)
+                new RetryProvider(3, process.env.TESTNET_PROVIDER)
             );
             environment = {
                 deploymentWallet: deployWallet,
@@ -66,6 +67,25 @@ async function main() {
                 proxyFactory: new Contract(process.env.PROXY_FACTORY as string, CreateProxyFactoryArtifact.abi, deployWallet) as CreateProxyFactory
             };
             break;
+        case "1":
+            confirmations = 3;
+            deployWallet = new Wallet(
+                process.env.TESTNET_PRIVATE_KEY as string,
+                new RetryProvider(3, process.env.TESTNET_PROVIDER)
+            );
+
+            environment = {
+                deploymentWallet: deployWallet,
+                WETH: new Contract(process.env.WETH_ADDRESS as string, WETHArtifact.abi, deployWallet) as IWETH,
+                ERC1820: new Contract(process.env.ERC1820_REGISTRY_ADDRESS as string, ERC1820RegistryArtifact.abi, deployWallet) as IERC1820Registry,
+                DAI: new Contract(process.env.DAI_ADDRESS as string, MockDaiArtifact.abi, deployWallet) as ERC20,
+                USDC: new Contract(process.env.USDC_ADDRESS as string, MockUSDCArtifact.abi, deployWallet) as ERC20,
+                DAIETHOracle: new Contract(process.env.DAI_ORACLE as string, MockAggregatorArtfiact.abi, deployWallet) as IAggregator,
+                USDCETHOracle: new Contract(process.env.USDC_ORACLE as string, MockAggregatorArtfiact.abi, deployWallet) as IAggregator,
+                proxyFactory: new Contract(process.env.PROXY_FACTORY as string, CreateProxyFactoryArtifact.abi, deployWallet) as CreateProxyFactory
+            }
+            break;
+
         default:
             log(`Unknown chain id: ${chainId}, quitting`);
             process.exit(1);
@@ -91,7 +111,7 @@ async function main() {
         parseEther("1.4"),
         false,
         false,
-        WeiPerEther, // TODO: check this
+        WeiPerEther,
         false 
     )
 

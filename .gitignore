@@ -10,3 +10,4 @@ coverage
 coverage.json
 gasprofile/.cid
 gasprofile/gaslog.csv
+local.json

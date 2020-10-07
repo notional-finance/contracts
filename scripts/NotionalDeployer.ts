@@ -63,6 +63,7 @@ export class NotionalDeployer {
         public directory: Directory,
         public erc1155: ERC1155Token,
         public erc1155trade: ERC1155Trade,
+        public cashMarketLogicAddress: string,
         public startBlock: number,
         public libraries: Map<string, Contract>,
         public deployedCodeHash: Map<string, string>,
@@ -128,7 +129,7 @@ export class NotionalDeployer {
         confirmations: number,
         libraries?: Map<string, Contract>
     ) => {
-        let gasLimit;
+        let gasLimit: number | undefined;
         if (process.env.COVERAGE == "true") {
             gasLimit = 20_000_000;
         } else if (process.env.GAS_LIMIT != null) {
@@ -136,6 +137,7 @@ export class NotionalDeployer {
         } else {
             gasLimit = 6_000_000;
         }
+        log(`Gas limit setting ${process.env.GAS_LIMIT} and ${gasLimit}`)
 
         let artifact;
         if (typeof name == "string") {
@@ -151,11 +153,18 @@ export class NotionalDeployer {
 
         const factory = new ContractFactory(artifact.abi, artifact.bytecode, owner);
         const txn = factory.getDeployTransaction(...args);
-        txn.gasLimit = gasLimit;
+        if (gasLimit == -1) {
+            if (process.env.GAS_PRICE == undefined) throw new Error("Define gas price in environment")
+            txn.gasPrice = parseInt(process.env.GAS_PRICE);
+            log(`Gas price: ${txn.gasPrice}`)
+        } else {
+            txn.gasLimit = gasLimit;
+        }
+
         log(`Deploying ${artifact.contractName}...`);
         const receipt = await (await owner.sendTransaction(txn)).wait(confirmations);
         const contract = new Contract(receipt.contractAddress as string, artifact.abi, owner);
-        log(`Successfully deployed ${artifact.contractName} at ${contract.address}...`);
+        log(`Successfully deployed ${artifact.contractName} at ${contract.address}`);
 
         // We hash the bytecode in the artifact because the code on chain is not the same
         const bytecodeHash = ethers.utils.keccak256(artifact.bytecode);
@@ -177,9 +186,18 @@ export class NotionalDeployer {
         confirmations: number,
         proxyFactory?: CreateProxyFactory,
         salt?: string,
+        cashMarketLogicAddress?: string
     ) => {
-        const { contract: logic, bytecodeHash } = await NotionalDeployer.deployContract(owner, name, [], confirmations, libraries);
-        deployedCodeHash.set(name, bytecodeHash);
+        let logicAddress;
+
+        if (name != "CashMarket") {
+            const { contract: logic, bytecodeHash } = await NotionalDeployer.deployContract(owner, name, [], confirmations, libraries);
+            deployedCodeHash.set(name, bytecodeHash);
+            logicAddress = logic.address;
+        } else {
+            if (cashMarketLogicAddress == undefined) throw new Error("Cash market logic address undefined when deploying cash market")
+            logicAddress = cashMarketLogicAddress;
+        }
 
         const artifact = NotionalDeployer.loadArtifact(name);
         const abi = new ethers.utils.Interface(artifact.abi);
@@ -190,7 +208,7 @@ export class NotionalDeployer {
         if (proxyFactory == undefined) {
             // Deploy a proxy without the proxy factory, this will not have a predicatable address
             const { contract: proxy } = await NotionalDeployer.deployContract(owner, "AdminUpgradeabilityProxy", [
-                logic.address,
+                logicAddress,
                 proxyAdmin.address,
                 data
             ], confirmations);
@@ -201,7 +219,7 @@ export class NotionalDeployer {
             }
             proxyAddress = await proxyFactory.getDeploymentAddress(salt, owner.address);
             log(`Using proxy factory, got deployment address of ${proxyAddress} for ${artifact.contractName}`);
-            await NotionalDeployer.txMined(proxyFactory.deploy(salt, logic.address, proxyAdmin.address, data), confirmations);
+            await NotionalDeployer.txMined(proxyFactory.deploy(salt, logicAddress, proxyAdmin.address, data), confirmations);
         }
 
         log(`Deployed proxy for ${artifact.contractName} at ${proxyAddress}`);
@@ -238,6 +256,7 @@ export class NotionalDeployer {
         const libraries = new Map<string, Contract>();
         // Deploy transactions are used to determine if bytecode has changed
         const deployedCodeHash = new Map<string, string>();
+        let cashMarketLogicAddress: string;
         
         {
             let {contract, bytecodeHash} = await NotionalDeployer.deployContract(
@@ -260,6 +279,17 @@ export class NotionalDeployer {
             );
             libraries.set("RiskFramework", contract);
             deployedCodeHash.set("RiskFramework", bytecodeHash);
+        }
+
+        {
+            let {contract, bytecodeHash} = await NotionalDeployer.deployContract(
+                owner,
+                "CashMarket",
+                [],
+                confirmations
+            );
+            cashMarketLogicAddress = contract.address;
+            deployedCodeHash.set("CashMarket", bytecodeHash)
         }
 
         const proxyAdmin = (await NotionalDeployer.deployContract(
@@ -384,6 +414,7 @@ export class NotionalDeployer {
             directory,
             erc1155,
             erc1155trade,
+            cashMarketLogicAddress,
             startBlock,
             libraries,
             deployedCodeHash,
@@ -443,7 +474,10 @@ export class NotionalDeployer {
             this.proxyAdmin,
             new Map<string, Contract>(),
             this.deployedCodeHash,
-            this.defaultConfirmations
+            this.defaultConfirmations,
+            undefined,
+            undefined,
+            this.cashMarketLogicAddress
         )) as CashMarket;
         await NotionalDeployer.txMined(cashMarket.initializeDependencies(), this.defaultConfirmations);
 
@@ -499,12 +533,46 @@ export class NotionalDeployer {
         }
     }
 
+    public upgradeCashMarket = async (address: string, dryRun: boolean) => {
+        const shouldDeployLogic: boolean = await this.upgradeCheckCodeHash("CashMarket");
+
+        if (shouldDeployLogic) {
+            if (dryRun) {
+                log(`*** Would have deployed new CashMarket logic contract ***`)
+            } else {
+                const upgrade = await this.upgradeDeployLogic("CashMarket");
+                log(`Setting cash market logic address to: ${upgrade.address}`);
+                this.cashMarketLogicAddress = upgrade.address;
+            }
+        }
+
+        const implementationAddress = await this.proxyAdmin.getProxyImplementation(address);
+        if (implementationAddress != this.cashMarketLogicAddress) {
+            log(`Cash Market at proxy ${address} must upgrade logic to ${this.cashMarketLogicAddress}`);
+            await this.upgradeProxy("CashMarket", address, this.cashMarketLogicAddress, dryRun);
+        }
+    }
+
     public upgradeContract = async (name: CoreContracts, dryRun: boolean) => {
         const contractName = this.coreContractToName(name);
+        const contract = this.coreContractToContract(name);
 
+        const shouldDeploy: boolean = await this.upgradeCheckCodeHash(contractName);
+        if (!shouldDeploy) return;
+
+        if (!dryRun) {
+            const upgrade = await this.upgradeDeployLogic(contractName);
+            await this.upgradeProxy(contractName, contract.address, upgrade.address, dryRun);
+        } else {
+            log(`*** Would have deployed ${contractName} in dry run ***`);
+        }
+    };
+
+    private async upgradeCheckCodeHash(contractName: string) {
         // Check implementation bytecode
         const bytecodeHash = this.deployedCodeHash.get(contractName);
-        if (bytecodeHash == undefined) throw new Error(`Deploy transaction for ${name} not defined`);
+
+        if (bytecodeHash == undefined) throw new Error(`Deploy transaction for ${contractName} not defined`);
 
         let artifact = NotionalDeployer.loadArtifact(contractName);
         artifact = NotionalDeployer.link(artifact, this.libraries);
@@ -512,30 +580,43 @@ export class NotionalDeployer {
 
         if (bytecodeHash == localBytecodeHash) {
             log(`Bytecode unchanged for ${contractName}, do not deploy`);
+            return false;
+        }
+
+        return true;
+    }
+
+    private async upgradeDeployLogic(contractName: string) {
+        log("Deploying new logic contract");
+        const {contract: upgrade, bytecodeHash: newBytecodeHash} = await NotionalDeployer.deployContract(
+            this.owner,
+            contractName,
+            [],
+            this.defaultConfirmations,
+            this.libraries
+        );
+        this.deployedCodeHash.set(contractName, newBytecodeHash);
+
+        log(`Deployed new logic contract at ${upgrade.address}`);
+
+        return upgrade;
+    }
+
+    private async upgradeProxy(contractName: string, proxyAddress: string, newLogicAddress: string, dryRun: boolean) {
+        const proxyAdminOwner = await this.proxyAdmin.owner();
+        if (dryRun) {
+            log(`Did not upgrade ${contractName} proxy at ${proxyAddress} to new logic address ${newLogicAddress}, dry run.`)
             return;
         }
 
-        // Deploy the upgraded logic contract
-        if (!dryRun) {
-            log("Deploying new logic contract");
-            const {contract: upgrade, bytecodeHash: newBytecodeHash} = await NotionalDeployer.deployContract(
-                this.owner,
-                contractName,
-                [],
-                this.defaultConfirmations,
-                this.libraries
-            );
-            this.deployedCodeHash.set(contractName, newBytecodeHash);
-
-            log(`Deployed new logic contract at ${upgrade.address}`);
-            const contract = this.coreContractToContract(name);
-            const proxy = new ethers.Contract(contract.address, AdminUpgradeabilityProxyArtifact.abi, this.owner) as AdminUpgradeabilityProxy;
-            await NotionalDeployer.txMined(this.proxyAdmin.upgrade(proxy.address, upgrade.address), this.defaultConfirmations);
-            log(`Proxy Admin upgraded ${contractName}`);
+        if (proxyAdminOwner != this.owner.address) {
+            log(`Cannot upgrade proxy, must use proxyAdmin owner address ${proxyAdminOwner}`);
         } else {
-            log(`*** Would have deployed ${contractName} in dry run ***`)
+            const proxy = new ethers.Contract(proxyAddress, AdminUpgradeabilityProxyArtifact.abi, this.owner) as AdminUpgradeabilityProxy;
+            await NotionalDeployer.txMined(this.proxyAdmin.upgrade(proxy.address, newLogicAddress), this.defaultConfirmations);
+            log(`Proxy Admin upgraded ${contractName}`);
         }
-    };
+    }
 
     private transferOwnerOfContract = async (address: string, newOwner: string) => {
         const ownable = new Contract(address, OpenZeppelinUpgradesOwnableArtifact.abi, this.owner) as OpenZeppelinUpgradesOwnable;
@@ -582,6 +663,7 @@ export class NotionalDeployer {
         const directory = new Contract(addresses.directory, DirectoryArtifact.abi, owner) as Directory;
         const erc1155 = new Contract(addresses.erc1155, ERC1155TokenArtifact.abi, owner) as ERC1155Token;
         const erc1155trade = new Contract(addresses.erc1155trade, ERC1155TradeArtifact.abi, owner) as ERC1155Trade;
+        const cashMarketLogicAddress = addresses.cashMarketLogic as string;
         const libraries = Object.keys(addresses.libraries).reduce((obj, name) => {
             const contract = new Contract(addresses.libraries[name], NotionalDeployer.loadArtifact(name).abi, owner);
             obj.set(name, contract);
@@ -603,6 +685,7 @@ export class NotionalDeployer {
             directory,
             erc1155,
             erc1155trade,
+            cashMarketLogicAddress,
             addresses.startBlock,
             libraries,
             deployedCodeHash,
@@ -636,6 +719,7 @@ export class NotionalDeployer {
             directory: this.directory.address,
             erc1155: this.erc1155.address,
             erc1155trade: this.erc1155trade.address,
+            cashMarketLogic: this.cashMarketLogicAddress,
             startBlock: this.startBlock,
             defaultConfirmations: this.defaultConfirmations,
             libraries: libraries,

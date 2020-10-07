@@ -18,8 +18,8 @@ These are the chainlink oracles on Kovan:
 
 | Rate       | Address                                    | Default Rate | Decimals |
 |------------|--------------------------------------------|--------------|---------:|
-| DAI/ETH    | 0xC013D6Aa5b266F99fe6B282EE7732dB5Dd819628 | 0.01e18      | 18       |
-| USDC/ETH   | 0xA2828eff43D61F6347eF95A72A58115CE56e3Ef3 | 0.01e6       | 6        |
+| DAI/ETH    | 0x39315F1990CA0E61C84169b29f88350aEfF5443e | 0.01e18      | 18       |
+| USDC/ETH   | 0x7F27F5c26a16bcaC8BddAF1d79e1F66CB41b25C2 | 0.01e6       | 6        |
 
 
 ## Rinkeby
@@ -27,6 +27,6 @@ These are the chainlink oracles on Kovan:
 ```
 Dai=0x181D62Ff8C0aEeD5Bc2Bf77A88C07235c4cc6905
 USDC=0xF503D5cd87d10Ce8172F9e77f76ADE8109037b4c
-DAI/ETH=0xC013D6Aa5b266F99fe6B282EE7732dB5Dd819628
-USDC/ETH=0xA2828eff43D61F6347eF95A72A58115CE56e3Ef3
+DAI/ETH=0x2bEb7f2041F43f3e31eBCc33b7020D9642d1692c
+USDC/ETH=0xC9ec73e9369D20d13cA6B44587095A33B3B871Fd
 ```

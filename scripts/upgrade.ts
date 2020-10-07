@@ -2,8 +2,9 @@ import {CoreContracts, NotionalDeployer} from "./NotionalDeployer";
 import {config} from "dotenv";
 import Debug from "debug";
 import { Wallet } from "ethers";
-import { JsonRpcProvider } from "ethers/providers";
 import path from 'path';
+import { RetryProvider } from './RetryProvider';
+import { AddressZero } from 'ethers/constants';
 
 const log = Debug("notional:upgrade");
 
@@ -16,7 +17,7 @@ async function main() {
     log(`Upgrading on ${chainId} using ${process.env.TESTNET_PROVIDER}`);
     const owner = new Wallet(
         process.env.TESTNET_PRIVATE_KEY as string,
-        new JsonRpcProvider(process.env.TESTNET_PROVIDER)
+        new RetryProvider(3, process.env.TESTNET_PROVIDER) // Retry provider for alchemy API
     );
 
     const status = require('child_process')
@@ -53,9 +54,16 @@ async function main() {
     await notional.upgradeContract(CoreContracts.ERC1155Trade, dryRun);
     log(`Attempting to upgrade Portfolios contract on chain: ${chainId}`);
     await notional.upgradeContract(CoreContracts.Portfolios, dryRun);
-    log(`Completed at block height ${await owner.provider.getBlockNumber()}`);
 
-    // TODO: upgrading future cash contracts
+    const maxCashGroupId = await notional.portfolios.currentCashGroupId();
+    for (let i = 1; i <= maxCashGroupId; i++) {
+        const group = await notional.portfolios.getCashGroup(i);
+        if (group.cashMarket == AddressZero) continue;
+        log(`Attempting to upgrade cash group ${i} at address ${group.cashMarket}`)
+        await notional.upgradeCashMarket(group.cashMarket, dryRun);
+    }
+
+    log(`Completed at block height ${await owner.provider.getBlockNumber()}`);
     if (!dryRun) {
         const outputFile = path.join(__dirname, "../" + process.env.CONTRACTS_FILE as string);
         await notional.saveAddresses(outputFile);
