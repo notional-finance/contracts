@@ -35,7 +35,7 @@ contract MockUSDC is IERC20, OpenZeppelinUpgradesOwnable {
     event Approval(address indexed owner, address indexed spender, uint256 value);
 
     function name() external override view returns (string memory) {
-        return "USDC";
+        return "USD Coin";
     }
 
     function symbol() external override view returns (string memory) {

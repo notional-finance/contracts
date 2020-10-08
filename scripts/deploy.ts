@@ -105,7 +105,7 @@ async function main() {
     );
 
     // List DAI currency
-    const currencyId = await notional.listCurrency(
+    const daiId = await notional.listCurrency(
         environment.DAI.address,
         environment.DAIETHOracle,
         parseEther("1.4"),
@@ -116,7 +116,7 @@ async function main() {
     )
 
     await notional.deployCashMarket(
-        currencyId,
+        daiId,
         1,
         ONE_MONTH,
         parseEther("1000"),
@@ -127,7 +127,28 @@ async function main() {
     );
 
     await notional.deployCashMarket(
-        currencyId,
+        daiId,
+        2,
+        ONE_MONTH * 3,
+        parseEther("1000"),
+        new BigNumber(2.5 * BASIS_POINT * 3),
+        new BigNumber(0),
+        1_100_000_000,
+        85
+    );
+
+    const usdcId = await notional.listCurrency(
+        environment.USDC.address,
+        environment.USDCETHOracle,
+        parseEther("1.2"),
+        false,
+        false,
+        WeiPerEther,
+        false 
+    )
+
+    await notional.deployCashMarket(
+        usdcId,
         2,
         ONE_MONTH * 3,
         parseEther("1000"),
