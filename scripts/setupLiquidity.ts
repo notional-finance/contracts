@@ -9,7 +9,7 @@ import WETHArtifact from "../build/IWETH.json";
 import { JsonRpcProvider } from 'ethers/providers';
 import { CashMarket } from '../typechain/CashMarket';
 import { Ierc20 as Erc20 } from '../typechain/Ierc20';
-import { parseEther } from 'ethers/utils';
+import { BigNumber, parseEther } from 'ethers/utils';
 import defaultAccounts from "../test/defaultAccounts.json";
 import { Iweth } from '../typechain/Iweth';
 import { MaxUint256 } from 'ethers/constants';
@@ -40,11 +40,11 @@ async function main() {
   await txMined(daiToken.approve(notional.escrow.address, MaxUint256));
   await txMined(notional.escrow.deposit(daiToken.address, parseEther("6000000")));
   log("Adding $2M liquidity to 1M Dai market");
-  await initializeLiquidity(1, notional, account, 0);
+  await initializeLiquidity(1, notional, account, 0, parseEther("2000000"), parseEther("1800000"));
   log("Adding $2M liquidity to 3M Dai market");
-  await initializeLiquidity(2, notional, account, 0);
+  await initializeLiquidity(2, notional, account, 0, parseEther("2000000"), parseEther("2000000"));
   log("Adding $2M liquidity to 6M Dai market");
-  await initializeLiquidity(2, notional, account, 1);
+  await initializeLiquidity(2, notional, account, 1, parseEther("2000000"), parseEther("2200000"));
 
   const chainId = process.env.DEPLOY_CHAIN_ID as string;
   if (chainId == "1337") {
@@ -56,11 +56,11 @@ async function main() {
   }
 }
 
-async function initializeLiquidity(cashGroup: number, notional: NotionalDeployer, account: Wallet, offset: number) {
+async function initializeLiquidity(cashGroup: number, notional: NotionalDeployer, account: Wallet, offset: number, cash: BigNumber, fCash: BigNumber) {
   const fg = await notional.portfolios.getCashGroup(cashGroup);
   const futureCash = new Contract(fg.cashMarket, CashMarketArtifact.abi, account) as CashMarket;
   const maturities = await futureCash.getActiveMaturities();
-  await txMined(futureCash.addLiquidity(maturities[offset], parseEther("2000000"), parseEther("2000000"), 0, 100_000_000, BLOCK_TIME_LIMIT));
+  await txMined(futureCash.addLiquidity(maturities[offset], cash, fCash, 0, 100_000_000, BLOCK_TIME_LIMIT));
 }
 
 async function txMined(tx: Promise<ethers.ContractTransaction>) {
