@@ -1,0 +1,98 @@
+# {{ name }}
+
+{{{natspec.userdoc}}}
+{{{natspec.devdoc}}}
+
+{{#if ownFunctions}}
+## Methods
+{{#ownFunctions}}
+{{#if (isUserMethod visibility natspec) }}
+- [{{name}}({{args}})](#{{name}})
+{{/if}}
+{{/ownFunctions}}
+{{/if}}
+
+{{#if (hasEvents ownEvents)}}
+## Events
+{{#ownEvents}}
+- [{{name}}({{args}})](#{{name}})
+{{/ownEvents}}
+{{/if}}
+
+{{#if (hasGovernance ownFunctions)}}
+## Governance Methods
+{{#ownFunctions}}
+{{#if (isGovernance visibility natspec) }}
+- [{{name}}({{args}})](#{{name}})
+{{/if}}
+{{/ownFunctions}}
+{{/if}}
+
+# Methods
+{{#ownFunctions}}
+{{#if (isUserMethod visibility natspec) }}
+### {{name}}
+> {{#if natspec.userdoc}}{{trim natspec.userdoc}}{{else}}No description{{/if}}
+{{#if natspec.params}}
+#### Parameters:
+{{#natspec.params}}
+- {{param}}: {{trim description}}
+{{/natspec.params}}
+{{/if}}
+{{#if natspec.returns}}
+#### Return Values:
+{{#natspec.returns}}
+- {{param}} {{trim description}}
+{{/natspec.returns}}
+{{/if}}
+
+{{#if natspec.devdoc}}
+#### Error Codes:
+{{ trim natspec.devdoc }}
+{{/if}}
+
+***
+
+{{/if}}
+{{/ownFunctions}}
+
+{{#if (hasEvents ownEvents)}}
+# Events
+{{#ownEvents}}
+### {{name}}
+> {{#if natspec.userdoc}}{{trim natspec.userdoc}}{{else}}No description{{/if}}
+{{#if natspec.params}}
+#### Parameters:
+{{#natspec.params}}
+- {{param}}: {{trim description}}
+{{/natspec.params}}
+{{/if}}
+
+***
+
+{{/ownEvents}}
+{{/if}}
+
+{{#if (hasGovernance ownFunctions)}}
+# Governance Methods
+{{#ownFunctions}}
+{{#if (isGovernance visibility natspec) }}
+### {{name}}
+> {{#if natspec.userdoc}}{{trim natspec.userdoc}}{{else}}No description{{/if}}
+{{#if natspec.params}}
+#### Parameters:
+{{#natspec.params}}
+- {{param}}: {{trim description}}
+{{/natspec.params}}
+{{/if}}
+{{#if natspec.returns}}
+#### Return Values:
+{{#natspec.returns}}
+- {{param}} {{trim description}}
+{{/natspec.returns}}
+{{/if}}
+
+***
+{{/if}}
+{{/ownFunctions}}
+{{/if}}

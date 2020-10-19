@@ -1,0 +1,29 @@
+{
+  "chainId": 42,
+  "networkName": "kovan",
+  "escrow": "0x9abd0b8868546105F6F48298eaDC1D9c82f7f683",
+  "portfolios": "0x0A4721117040ABF319b954aBF13F654505C34920",
+  "proxyAdmin": "0x25d27646Ea585Ee7Ef308d14f4C0D2b094790Acb",
+  "proxyFactory": "0xc981D9E52684A25e528ba63552dF122Af8327D4E",
+  "directory": "0xdce848258dFB1bBf34C346Fbe40F10F8a42d2526",
+  "erc1155": "0x3a31b8121D810B1D7b3004f94f205E6DFC1bf8d9",
+  "erc1155trade": "0xBbA899578bd3fA3DAa863A340f5600797993eF08",
+  "cashMarketLogic": "0xd8E7A41898A936A23A132f0F5dd4065Ba6c3FA92",
+  "startBlock": 21065054,
+  "defaultConfirmations": 3,
+  "libraries": {
+    "Liquidation": "0x96d117e285E2b6357284C127Af51670E2190d52b",
+    "RiskFramework": "0xc20846f8d295C354f9EcB48a695d41D785C35e07"
+  },
+  "deployedCodeHash": {
+    "Liquidation": "0xf36bdfe65106d4addfa27de6d5200f61c16950bc7e286204184b2a132fe55331",
+    "RiskFramework": "0xf9453b18228638bee1e481aab7db30cd30df8ae5bfad3cbb6893cdd3c21281bb",
+    "CashMarket": "0x3d6b126d7bf72615b6a7e662c76bb340651dcccb80d6a6520e7ba6acc031b79b",
+    "Directory": "0xdb138f0d75fdc52b8516c5be3716c51c5770d86b68cc9b22213e61905863b413",
+    "Escrow": "0x182071f45a19edf0fa4d2d65a0d490e5bcb1f609c2ad64c840c0244b885e42ef",
+    "Portfolios": "0xeb21ab15cf0bfbd7fea1f211ba493fa431a7fe63695d9138241f120457488f3c",
+    "ERC1155Token": "0x26fbb2940acc7ee6c8574c38f6a0150f3c58094c006b7ccf00d851cfb387c701",
+    "ERC1155Trade": "0x395e77fb8c84e2f9eb3efdfc8f2b564c7080ef0d2b79613c14945c17ec312cdf"
+  },
+  "gitHash": "8b0fc2843c338aec086dfc34b843c646c0b709f3"
+}

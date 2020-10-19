@@ -1,0 +1,13 @@
+node_modules/
+cache/
+build/
+typechain/
+sandbox/chaindb
+sandbox/build
+.env*
+!.env.local
+coverage
+coverage.json
+gasprofile/.cid
+gasprofile/gaslog.csv
+local.json

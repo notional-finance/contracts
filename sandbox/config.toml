@@ -1,0 +1,13 @@
+[parity]
+no_consensus = true
+chain = "dev"
+
+[mining]
+reseal_min_period = 0
+min_gas_price = 0
+
+[rpc]
+interface = "0.0.0.0"
+cors = []
+apis = ["web3", "eth", "net", "traces", "rpc", "personal"]
+hosts = ["all"]
