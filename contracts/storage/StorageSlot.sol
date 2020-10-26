@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 pragma solidity ^0.6.0;
 
 /** @title Gets and sets parameters at a specified storage slot */

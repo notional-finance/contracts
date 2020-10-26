@@ -135,6 +135,18 @@ describe("Cash Market", () => {
             ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.OVER_MAX_FCASH));
         });
 
+        it("add liquidity slippage should be at the market rate", async () => {
+            await t.setupLiquidity();
+
+            await escrow.connect(wallet).deposit(dai.address, parseEther("100"));
+            const market = await futureCash.getMarket(maturities[0])
+            await expect(
+                futureCash
+                    .connect(wallet)
+                    .addLiquidity(maturities[0], parseEther("100"), parseEther("100"), market.lastImpliedRate - 1, market.lastImpliedRate + 1, BLOCK_TIME_LIMIT)
+            ).to.not.be.reverted;
+        });
+
         it("should prevent adding liquidity under implied rate slippage", async () => {
             await t.setupLiquidity();
 

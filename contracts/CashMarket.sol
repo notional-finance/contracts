@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 pragma solidity ^0.6.0;
 pragma experimental ABIEncoderV2;
 
@@ -322,17 +323,18 @@ contract CashMarket is Governed {
             // determine the initial exchange rate of the market (taking into account rateScalar and rateAnchor, of course).
             // Governance will never allow rateScalar to be set to 0.
             if (market.rateScalar == 0) {
-                // G_RATE_ANCHOR is stored as the annualized rate. Here we normalize it to the rate that is required given the
-                // time to maturity. (RATE_ANCHOR - 1) * timeToMaturity / SECONDS_IN_YEAR + 1
-                market.rateAnchor = SafeCast.toUint32(
-                    uint256(G_RATE_ANCHOR)
-                        .sub(INSTRUMENT_PRECISION)
-                        .mul(timeToMaturity)
-                        .div(Common.SECONDS_IN_YEAR)
-                        .add(INSTRUMENT_PRECISION)
-                );
                 market.rateScalar = G_RATE_SCALAR;
             }
+
+            // G_RATE_ANCHOR is stored as the annualized rate. Here we normalize it to the rate that is required given the
+            // time to maturity. (RATE_ANCHOR - 1) * timeToMaturity / SECONDS_IN_YEAR + 1
+            market.rateAnchor = SafeCast.toUint32(
+                uint256(G_RATE_ANCHOR)
+                    .sub(INSTRUMENT_PRECISION)
+                    .mul(timeToMaturity)
+                    .div(Common.SECONDS_IN_YEAR)
+                    .add(INSTRUMENT_PRECISION)
+            );
 
             market.totalfCash = maxfCash;
             market.totalCurrentCash = cash;
@@ -364,10 +366,9 @@ contract CashMarket is Governed {
             market.totalLiquidity = market.totalLiquidity.add(liquidityTokenAmount);
 
             // If this proportion has moved beyond what the liquidity provider is willing to pay then we
-            // will revert here.
-            uint32 impliedRate = _getImpliedRateRequire(market, timeToMaturity);
+            // will revert here. The implied rate will not change when liquidity is added.
             require(minImpliedRate <= maxImpliedRate 
-                && minImpliedRate <= impliedRate && impliedRate <= maxImpliedRate,
+                && minImpliedRate <= market.lastImpliedRate && market.lastImpliedRate <= maxImpliedRate,
                 $$(ErrorCode(OUT_OF_IMPLIED_RATE_BOUNDS))
             );
 

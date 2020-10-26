@@ -29,8 +29,10 @@ async function main() {
         process.exit(1)
     }
 
+    let contracts = process.argv[2].split(',')
+
     let dryRun = true;
-    if (process.argv[2] == "--yes-i-am-sure") {
+    if (process.argv[3] == "--yes-i-am-sure") {
         log(`You have confirmed you are sure you want to deploy`);
         dryRun = false;
     } else {
@@ -41,26 +43,41 @@ async function main() {
 
     // NOTE: because bytecode contains metadata hashes even whitespace change can result in bytecode changes.
     // see: https://solidity.readthedocs.io/en/v0.6.4/metadata.html
-    const changedLibraries = await notional.checkDeployedLibraries();
-    for (let l of changedLibraries) {
-        await notional.deployLibrary(l, dryRun);
+    if (contracts.includes("Escrow") || contracts.includes("Portfolios")) {
+        const changedLibraries = await notional.checkDeployedLibraries();
+        for (let l of changedLibraries) {
+            await notional.deployLibrary(l, dryRun);
+        }
     }
 
-    log(`Attempting to upgrade Escrow contract on chain: ${chainId}`);
-    await notional.upgradeContract(CoreContracts.Escrow, dryRun);
-    log(`Attempting to upgrade ERC1155 Token contract on chain: ${chainId}`);
-    await notional.upgradeContract(CoreContracts.ERC1155Token, dryRun);
-    log(`Attempting to upgrade ERC1155 Trade contract on chain: ${chainId}`);
-    await notional.upgradeContract(CoreContracts.ERC1155Trade, dryRun);
-    log(`Attempting to upgrade Portfolios contract on chain: ${chainId}`);
-    await notional.upgradeContract(CoreContracts.Portfolios, dryRun);
+    if (contracts.includes("Escrow")) {
+        log(`Attempting to upgrade Escrow contract on chain: ${chainId}`);
+        await notional.upgradeContract(CoreContracts.Escrow, dryRun);
+    }
 
-    const maxCashGroupId = await notional.portfolios.currentCashGroupId();
-    for (let i = 1; i <= maxCashGroupId; i++) {
-        const group = await notional.portfolios.getCashGroup(i);
-        if (group.cashMarket == AddressZero) continue;
-        log(`Attempting to upgrade cash group ${i} at address ${group.cashMarket}`)
-        await notional.upgradeCashMarket(group.cashMarket, dryRun);
+    if (contracts.includes("ERC1155Token")) {
+        log(`Attempting to upgrade ERC1155 Token contract on chain: ${chainId}`);
+        if (contracts.includes("ERC1155Token")) await notional.upgradeContract(CoreContracts.ERC1155Token, dryRun);
+    }
+
+    if (contracts.includes("ERC1155Trade")) {
+        log(`Attempting to upgrade ERC1155 Trade contract on chain: ${chainId}`);
+        await notional.upgradeContract(CoreContracts.ERC1155Trade, dryRun);
+    }
+
+    if (contracts.includes("Portfolios")) {
+        log(`Attempting to upgrade Portfolios contract on chain: ${chainId}`);
+        await notional.upgradeContract(CoreContracts.Portfolios, dryRun);
+    }
+
+    if (contracts.includes("CashMarket")) {
+        const maxCashGroupId = await notional.portfolios.currentCashGroupId();
+        for (let i = 1; i <= maxCashGroupId; i++) {
+            const group = await notional.portfolios.getCashGroup(i);
+            if (group.cashMarket == AddressZero) continue;
+            log(`Attempting to upgrade cash group ${i} at address ${group.cashMarket}`)
+            await notional.upgradeCashMarket(group.cashMarket, dryRun);
+        }
     }
 
     log(`Completed at block height ${await owner.provider.getBlockNumber()}`);

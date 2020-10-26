@@ -1,6 +1,14 @@
 {
-  "extends": "../tsconfig.settings.json",
   "compilerOptions": {
+    "declaration": true,
+    "importHelpers": true,
+    "module": "commonjs",
+    "strict": true,
+    "target": "es2017",
+    "sourceMap": true,
+    "noImplicitReturns": true,
+    "noUnusedLocals": true,
+    "typeRoots": ["../overrides", "../node_modules/@types"],
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "outDir": "dist"

@@ -1,6 +1,6 @@
 import {Provider} from "ethers/providers";
 import {readFileSync, writeFileSync} from "fs";
-import {BigNumber} from "ethers/utils";
+import {BigNumber, parseUnits} from "ethers/utils";
 import {Wallet, ContractFactory, Contract, ethers} from "ethers";
 import { WeiPerEther } from 'ethers/constants';
 
@@ -155,7 +155,7 @@ export class NotionalDeployer {
         const txn = factory.getDeployTransaction(...args);
         if (gasLimit == -1) {
             if (process.env.GAS_PRICE == undefined) throw new Error("Define gas price in environment")
-            txn.gasPrice = parseInt(process.env.GAS_PRICE);
+            txn.gasPrice = parseUnits(process.env.GAS_PRICE, "gwei");
             log(`Gas price: ${txn.gasPrice}`)
         } else {
             txn.gasLimit = gasLimit;
