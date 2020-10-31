@@ -190,24 +190,6 @@ describe("Cash Market", () => {
                 futureCash.addLiquidity(maturities[0], WeiPerEther.mul(10), WeiPerEther.mul(10), 0, 100_000_000, BLOCK_TIME_LIMIT)
             ).to.be.revertedWith(ErrorDecoder.encodeError(ErrorCodes.MARKET_INACTIVE));
         });
-
-        it("should allow liquidity to roll", async () => {
-            await escrow.deposit(dai.address, WeiPerEther.mul(40));
-            await futureCash.addLiquidity(maturities[0], WeiPerEther.mul(10), WeiPerEther.mul(10), 0, 100_000_000, BLOCK_TIME_LIMIT);
-            await futureCash.addLiquidity(maturities[1], WeiPerEther.mul(10), WeiPerEther.mul(10), 0, 100_000_000, BLOCK_TIME_LIMIT);
-            await futureCash.addLiquidity(maturities[2], WeiPerEther.mul(10), WeiPerEther.mul(10), 0, 100_000_000, BLOCK_TIME_LIMIT);
-            await futureCash.addLiquidity(maturities[3], WeiPerEther.mul(10), WeiPerEther.mul(10), 0, 100_000_000, BLOCK_TIME_LIMIT);
-
-            // Take futureCash to change the liquidity amounts
-            await escrow.connect(wallet).deposit(dai.address, WeiPerEther.mul(10));
-            await futureCash.connect(wallet).takefCash(maturities[1], WeiPerEther, BLOCK_TIME_LIMIT, 0);
-            await futureCash.connect(wallet).takefCash(maturities[2], WeiPerEther, BLOCK_TIME_LIMIT, 0);
-            await futureCash.connect(wallet).takefCash(maturities[3], WeiPerEther, BLOCK_TIME_LIMIT, 0);
-
-            await fastForwardToMaturity(provider, maturities[1]);
-            maturities = await futureCash.getActiveMaturities();
-            await futureCash.addLiquidity(maturities[3], WeiPerEther.mul(10), WeiPerEther.mul(10), 0, 100_000_000, BLOCK_TIME_LIMIT);
-        }).timeout(50000);
     });
 
     describe("market liquidity limits", async () => {

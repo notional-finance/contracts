@@ -4,6 +4,7 @@ pragma experimental ABIEncoderV2;
 
 import "./utils/Common.sol";
 import "./utils/ERC1155Base.sol";
+import "./lib/SafeUInt128.sol";
 
 import "./interface/IERC1155TokenReceiver.sol";
 
@@ -13,6 +14,7 @@ import "./CashMarket.sol";
  * @notice Implements the ERC1155 token standard for trading OTC and batch operations over Notional markets.
  */
 contract ERC1155Trade is ERC1155Base {
+    using SafeUInt128 for uint128;
     address public BRIDGE_PROXY;
 
     struct TradeRecord {
@@ -66,11 +68,12 @@ contract ERC1155Trade is ERC1155Base {
         uint32 blockTime = uint32(block.timestamp);
         require(blockTime <= maxTime, $$(ErrorCode(TRADE_FAILED_MAX_TIME)));
         require(msg.sender == account || isApprovedForAll(account, msg.sender), $$(ErrorCode(UNAUTHORIZED_CALLER)));
+        Portfolios().settleMaturedAssets(account);
 
         if (deposits.length > 0 || msg.value != 0) Escrow().depositsOnBehalf{value: msg.value}(account, deposits);
         if (trades.length > 0) _batchTrade(account, trades);
 
-        int256 fc = Portfolios().freeCollateralAggregateOnly(account);
+        (int256 fc, /* int256[] memory */, /* int256[] memory */) = Portfolios().freeCollateralView(account);
         require(fc >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL)));
 
         emit BatchOperation(account, msg.sender);
@@ -108,19 +111,20 @@ contract ERC1155Trade is ERC1155Base {
         uint32 blockTime = uint32(block.timestamp);
         require(blockTime <= maxTime, $$(ErrorCode(TRADE_FAILED_MAX_TIME)));
         require(msg.sender == account || isApprovedForAll(account, msg.sender), $$(ErrorCode(UNAUTHORIZED_CALLER)));
+        Portfolios().settleMaturedAssets(account);
 
         TradeRecord[] memory tradeRecord;
         if (deposits.length > 0 || msg.value != 0) Escrow().depositsOnBehalf{value: msg.value}(account, deposits);
         if (trades.length > 0) tradeRecord = _batchTrade(account, trades);
         if (withdraws.length > 0) {
-            if (tradeRecord.length > 0 && (deposits.length > 0 || msg.value != 0)) {
+            if (tradeRecord.length > 0) {
                 _updateWithdrawsWithTradeRecord(tradeRecord, deposits, withdraws);
             }
 
             Escrow().withdrawsOnBehalf(account, withdraws);
         }
 
-        int256 fc = Portfolios().freeCollateralAggregateOnly(account);
+        (int256 fc, /* int256[] memory */, /* int256[] memory */) = Portfolios().freeCollateralView(account);
         require(fc >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL)));
 
         emit BatchOperation(account, msg.sender);
@@ -274,7 +278,6 @@ contract ERC1155Trade is ERC1155Base {
         Common.Deposit[] memory deposits
     ) internal pure returns (uint128) {
         uint128 depositResidual;
-        uint128 withdrawAmount;
 
         for (uint256 i; i < deposits.length; i++) {
             if (deposits[i].currencyId == currencyId) {
@@ -289,8 +292,8 @@ contract ERC1155Trade is ERC1155Base {
 
             if (tradeRecord[i].tradeType == Common.TradeType.TakeCurrentCash
                 || tradeRecord[i].tradeType == Common.TradeType.RemoveLiquidity) {
-                // This is the amount of collateral that was taken from the market
-                withdrawAmount = withdrawAmount + tradeRecord[i].cash;
+                // This is the amount of cash that was taken from the market
+                depositResidual = depositResidual.add(tradeRecord[i].cash);
             } else if (tradeRecord[i].tradeType == Common.TradeType.TakefCash
                 || tradeRecord[i].tradeType == Common.TradeType.AddLiquidity) {
                 // This is the residual from the deposit that was not put into the market. We floor this value at
@@ -299,6 +302,6 @@ contract ERC1155Trade is ERC1155Base {
             }
         }
 
-        return withdrawAmount + depositResidual;
+        return depositResidual;
     }
 }

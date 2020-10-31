@@ -310,9 +310,6 @@ contract CashMarket is Governed {
         _isValidBlock(maturity, maxTime);
         uint32 timeToMaturity = maturity - uint32(block.timestamp);
         Market memory market = markets[maturity];
-        // We call settle here instead of at the end of the function because if we have matured liquidity
-        // tokens this will put cash back into our portfolio so that we can add it back into the markets.
-        Portfolios().settleMaturedAssets(account);
 
         uint128 fCash;
         uint128 liquidityTokenAmount;
