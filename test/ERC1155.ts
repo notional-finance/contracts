@@ -1175,6 +1175,21 @@ describe("ERC1155 Token", () => {
             expect(await escrow.cashBalances(1, wallet2.address)).to.equal(0)
         })
 
+        it("allows deposit for batchOperation when undercollateralized", async () => {
+            await t.setupLiquidity(owner);
+            await t.borrowAndWithdraw(wallet2, parseEther("100"), 1.05)
+            // Now under collateralized
+            await t.chainlink.setAnswer(parseEther("1"))
+            await erc1155trade.connect(wallet2).batchOperation(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [{ currencyId: 1, amount: parseEther("1") }],
+                []
+            )
+
+            expect(await escrow.cashBalances(1, wallet2.address)).to.equal(parseEther("1"))
+        });
+
         /*
         it("allows trade (move lend) for batchOperationWithdraw [takeCurrentCash, takefCash]", async () => {
             // Not possible unless cash positions can go temporarily negative

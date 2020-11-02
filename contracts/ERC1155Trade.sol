@@ -73,8 +73,12 @@ contract ERC1155Trade is ERC1155Base {
         if (deposits.length > 0 || msg.value != 0) Escrow().depositsOnBehalf{value: msg.value}(account, deposits);
         if (trades.length > 0) _batchTrade(account, trades);
 
-        (int256 fc, /* int256[] memory */, /* int256[] memory */) = Portfolios().freeCollateralView(account);
-        require(fc >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL)));
+        // If there are only deposits then free collateral will only increase and we do not want to run a check against
+        // it in case an account deposits collateral but is still undercollateralized
+        if (trades.length > 0) {
+            (int256 fc, /* int256[] memory */, /* int256[] memory */) = Portfolios().freeCollateralView(account);
+            require(fc >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL)));
+        }
 
         emit BatchOperation(account, msg.sender);
     }
