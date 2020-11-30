@@ -867,6 +867,334 @@ describe("ERC1155 Token", () => {
             expect(await escrow.cashBalances(CURRENCY.DAI, wallet2.address)).to.equal(parseEther("10"));
         });
 
+        it("allows roll for batchOperation [addLiquidity]", async () => {
+            await t.setupLiquidity(wallet, 0.5, parseEther("100"));
+            await fastForwardToMaturity(provider, maturities[0])
+            const slippage = defaultAbiCoder.encode(['uint32', 'uint32', 'uint128'], [0, 100_000_000, parseEther("100")]);
+
+            await erc1155trade.connect(wallet).batchOperation(
+                wallet.address,
+                BLOCK_TIME_LIMIT,
+                [],
+                [{ 
+                    tradeType: TradeType.AddLiquidity, 
+                    cashGroup: 1,
+                    maturity: maturities[1],
+                    amount: parseEther("100"),
+                    slippageData: slippage
+                }]
+            );
+
+            expect(await t.hasLiquidityToken(wallet, maturities[1], parseEther("100"))).to.be.true;
+            expect(await t.hasLiquidityToken(wallet, maturities[0], parseEther("100"))).to.be.false;
+        })
+
+        it("allows roll for batchOperation [takefCash]", async () => {
+            await t.setupLiquidity(owner, 0.5, parseEther("10000"), [0, 1]);
+
+            await erc1155trade.connect(wallet2).batchOperationWithdraw(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [{ currencyId: 1, amount: parseEther("100") }],
+                [{ 
+                    tradeType: TradeType.TakeFutureCash, 
+                    cashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: "0x"
+                }],
+                [{
+                    to: wallet2.address,
+                    currencyId: 1,
+                    amount: 0
+                }],
+            );
+
+            await fastForwardToMaturity(provider, maturities[0])
+            await erc1155trade.connect(wallet2).batchOperationWithdraw(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [],
+                [{ 
+                    tradeType: TradeType.TakeFutureCash, 
+                    cashGroup: 1,
+                    maturity: maturities[1],
+                    amount: parseEther("100"),
+                    slippageData: "0x"
+                }],
+                [{
+                    to: wallet2.address,
+                    currencyId: 1,
+                    amount: 0
+                }],
+            );
+            expect(await t.hasCashReceiver(wallet2, maturities[1], parseEther("100"))).to.be.true;
+        })
+
+        it("withdraws exact amount for batchOperationWithdraw w/ ETH cash [takeCurrentCash]", async () => {
+            await t.setupLiquidity(owner, 0.5, parseEther("10000"), [0, 1]);
+            await escrow.connect(wallet2).depositEth({ value: parseEther("10")})
+            const daiBalance = await dai.balanceOf(wallet2.address)
+            await erc1155trade.connect(wallet2).batchOperationWithdraw(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [],
+                [{ 
+                    tradeType: TradeType.TakeCollateral, 
+                    cashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: "0x"
+                }],
+                [{
+                    to: wallet2.address,
+                    currencyId: 1,
+                    amount: 0
+                }],
+            );
+            expect(await escrow.cashBalances(CURRENCY.DAI, wallet2.address)).to.equal(0);
+            expect(await dai.balanceOf(wallet2.address)).to.be.above(daiBalance)
+        });
+
+        it("withdraws exact amount for batchOperationWithdraw w/ Dai cash [takeCurrentCash]", async () => {
+            await t.setupLiquidity(owner, 0.5, parseEther("10000"), [0, 1]);
+            await escrow.connect(wallet2).deposit(dai.address, parseEther("100"))
+            const daiBalance = await dai.balanceOf(wallet2.address)
+            await erc1155trade.connect(wallet2).batchOperationWithdraw(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [],
+                [{ 
+                    tradeType: TradeType.TakeCollateral, 
+                    cashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: "0x"
+                }],
+                [{
+                    to: wallet2.address,
+                    currencyId: 1,
+                    amount: 0
+                }],
+            );
+
+            expect(await escrow.cashBalances(CURRENCY.DAI, wallet2.address)).to.equal(parseEther("100"));
+            expect(await dai.balanceOf(wallet2.address)).to.be.above(daiBalance)
+        });
+
+        it("allows trade (move liquidity) for batchOperationWithdraw [removeLiquidity, addLiquidity]", async () => {
+            await t.setupLiquidity(owner, 0.5, parseEther("10000"), [0, 1]);
+            // This will move the market so there is some residual cash
+            await erc1155trade.connect(wallet2).batchOperationWithdraw(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [{ currencyId: 1, amount: parseEther("100") }],
+                [{ 
+                    tradeType: TradeType.TakeFutureCash, 
+                    cashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: "0x"
+                }],
+                [{
+                    to: wallet2.address,
+                    currencyId: 1,
+                    amount: 0
+                }],
+            );
+
+            const slippage = defaultAbiCoder.encode(['uint32', 'uint32', 'uint128'], [0, 100_000_000, parseEther("1000")]);
+            await erc1155trade.connect(owner).batchOperationWithdraw(
+                owner.address,
+                BLOCK_TIME_LIMIT,
+                [],
+                [{ 
+                    tradeType: TradeType.RemoveLiquidity, 
+                    cashGroup: 1,
+                    maturity: maturities[1],
+                    amount: parseEther("1000"),
+                    slippageData: "0x"
+                }, {
+                    tradeType: TradeType.AddLiquidity, 
+                    cashGroup: 1,
+                    maturity: maturities[2],
+                    amount: parseEther("1000"), // It would be nice if this specified the amount above...
+                    slippageData: slippage
+                }],
+                [{
+                    to: wallet2.address,
+                    currencyId: 1,
+                    amount: 0
+                }],
+            );
+
+            expect(await t.hasLiquidityToken(owner, maturities[1], parseEther("9000"))).to.be.true;
+            expect(await t.hasLiquidityToken(owner, maturities[2], parseEther("1000"))).to.be.true;
+        });
+
+        it("allows trade (move lend) for batchOperationWithdraw [takeCurrentCash, takefCash]", async () => {
+            await t.setupLiquidity(owner, 0.5, parseEther("10000"), [0, 1]);
+
+            await erc1155trade.connect(wallet2).batchOperationWithdraw(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [{ currencyId: 1, amount: parseEther("100") }],
+                [{ 
+                    tradeType: TradeType.TakeFutureCash, 
+                    cashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: "0x"
+                }],
+                [{
+                    to: wallet2.address,
+                    currencyId: 1,
+                    amount: 0
+                }],
+            );
+
+            await erc1155trade.connect(wallet2).batchOperationWithdraw(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [],
+                [{ 
+                    tradeType: TradeType.TakeCollateral, 
+                    cashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: "0x"
+                }, {
+                    tradeType: TradeType.TakeFutureCash, 
+                    cashGroup: 1,
+                    maturity: maturities[1],
+                    amount: parseEther("100"),
+                    slippageData: "0x"
+                }],
+                [{
+                    to: wallet2.address,
+                    currencyId: 1,
+                    amount: 0
+                }],
+            );
+
+            expect(await t.hasCashReceiver(wallet2, maturities[1], parseEther("100"))).to.be.true;
+            expect(await t.hasCashPayer(wallet2, maturities[0])).to.be.false
+            expect(await t.hasCashReceiver(wallet2, maturities[0])).to.be.false
+        })
+
+        it("allows trade (repay borrow) for batchOperationWithdraw [takefCash]", async () => {
+            await t.setupLiquidity(owner, 0.5, parseEther("10000"), [0, 1]);
+
+            await erc1155trade.connect(wallet2).batchOperationWithdraw(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [{ currencyId: 0, amount: parseEther("10") }],
+                [{ 
+                    tradeType: TradeType.TakeCollateral, 
+                    cashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: "0x"
+                }],
+                [{
+                    to: wallet2.address,
+                    currencyId: 1,
+                    amount: 0
+                }],
+            );
+
+            await erc1155trade.connect(wallet2).batchOperationWithdraw(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [{ currencyId: 1, amount: parseEther("100") }],
+                [{ 
+                    tradeType: TradeType.TakeFutureCash, 
+                    cashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: "0x"
+                }],
+                [{
+                    to: wallet2.address,
+                    currencyId: 1,
+                    amount: 0
+                }, {
+                    to: wallet2.address,
+                    currencyId: 0,
+                    amount: parseEther("10")
+                }],
+            );
+
+            expect(await t.hasCashPayer(wallet2, maturities[0])).to.be.false
+            expect(await t.hasCashReceiver(wallet2, maturities[0])).to.be.false
+            expect(await escrow.cashBalances(0, wallet2.address)).to.equal(0)
+            expect(await escrow.cashBalances(1, wallet2.address)).to.equal(0)
+        })
+
+        it("allows trade (withdraw loan) for batchOperationWithdraw [takefCash]", async () => {
+            await t.setupLiquidity(owner, 0.5, parseEther("10000"), [0]);
+
+            await erc1155trade.connect(wallet2).batchOperationWithdraw(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [{ currencyId: 1, amount: parseEther("100") }],
+                [{ 
+                    tradeType: TradeType.TakeFutureCash, 
+                    cashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: "0x"
+                }],
+                [{
+                    to: wallet2.address,
+                    currencyId: 1,
+                    amount: 0
+                }],
+            );
+
+            await erc1155trade.connect(wallet2).batchOperationWithdraw(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [],
+                [{ 
+                    tradeType: TradeType.TakeCollateral, 
+                    cashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: "0x"
+                }],
+                [{
+                    to: wallet2.address,
+                    currencyId: 1,
+                    amount: 0
+                }],
+            );
+
+            expect(await t.hasCashPayer(wallet2, maturities[0])).to.be.false
+            expect(await t.hasCashReceiver(wallet2, maturities[0])).to.be.false
+            expect(await escrow.cashBalances(1, wallet2.address)).to.equal(0)
+        })
+
+        it("allows deposit for batchOperation when undercollateralized", async () => {
+            await t.setupLiquidity(owner);
+            await t.borrowAndWithdraw(wallet2, parseEther("100"), 1.05)
+            // Now under collateralized
+            await t.chainlink.setAnswer(parseEther("1"))
+            await erc1155trade.connect(wallet2).batchOperation(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [{ currencyId: 1, amount: parseEther("1") }],
+                []
+            )
+
+            expect(await escrow.cashBalances(1, wallet2.address)).to.equal(parseEther("1"))
+        });
+
+        /*
+        it("allows trade (move lend) for batchOperationWithdraw [takeCurrentCash, takefCash]", async () => {
+            // Not possible unless cash positions can go temporarily negative
+        })
+        */
     });
 
     describe("block trades", async () => {
