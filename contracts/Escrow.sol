@@ -443,7 +443,8 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
      * @param amount total value to withdraw
      */
     function withdraw(address token, uint128 amount) external {
-       _withdraw(msg.sender, msg.sender, token, amount, true);
+       bool didWithdraw = _withdraw(msg.sender, msg.sender, token, amount, true);
+       require(didWithdraw, $$(ErrorCode(INSUFFICIENT_BALANCE)));
     }
 
     function _withdraw(
@@ -452,8 +453,9 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         address token,
         uint128 amount,
         bool checkFC
-    ) internal {
+    ) internal returns (bool) {
         uint16 currencyId = addressToCurrencyId[token];
+        bool didWithdraw = false;
         require(token != address(0), $$(ErrorCode(INVALID_CURRENCY)));
 
         // We settle matured assets before withdraw in case there are matured cash receiver or liquidity
@@ -461,18 +463,27 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         if (checkFC) Portfolios().settleMaturedAssets(from);
 
         int256 balance = cashBalances[currencyId][from];
-        cashBalances[currencyId][from] = balance.subNoNeg(amount);
+        if (balance > 0) {
+            if (balance < amount) {
+                amount = uint128(balance);
+            }
+            cashBalances[currencyId][from] = balance.subNoNeg(amount);
+            didWithdraw = true;
+        }
 
         // We're checking this after the withdraw has been done on currency balances. We skip this check
         // for batch withdraws when we check once after everything is completed.
         if (checkFC) {
-            (int256 fc, /* int256[] memory */, /* int256[] memory */) = Portfolios().freeCollateralView(from);
+            int256 fc = Portfolios().freeCollateralViewAggregateOnly(from);
             require(fc >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL)));
         }
 
-        _tokenWithdraw(token, to, amount);
+        if (didWithdraw) {
+            _tokenWithdraw(token, to, amount);
+            emit Withdraw(currencyId, to, amount);
+        }
 
-        emit Withdraw(currencyId, to, amount);
+        return didWithdraw;
     }
 
     function _tokenWithdraw(

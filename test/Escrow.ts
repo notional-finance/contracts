@@ -190,11 +190,15 @@ describe("Deposits and Withdraws", () => {
     });
 
     it("prevents users from withdrawing more dai than they own", async () => {
-        await dai.approve(futureCash.address, WeiPerEther);
         await escrow.deposit(dai.address, WeiPerEther);
-        await expect(escrow.withdraw(dai.address, WeiPerEther.mul(2))).to.be.revertedWith(
-            ErrorDecoder.encodeError(ErrorCodes.INSUFFICIENT_BALANCE)
-        );
+
+        const daiBalanceBefore = await dai.balanceOf(owner.address);
+        // Escrow cuts off the withdraw at 0, so this will only withdraw 1 DAI
+        await escrow.withdraw(dai.address, WeiPerEther.mul(2))
+        const daiBalanceAfter = await dai.balanceOf(owner.address);
+
+        expect(await escrow.cashBalances(CURRENCY.DAI, owner.address)).to.equal(0)
+        expect(daiBalanceAfter.sub(daiBalanceBefore)).to.equal(WeiPerEther)
     });
 
     it("prevents users from withdrawing eth if they do not have enough collateral", async () => {
@@ -205,6 +209,17 @@ describe("Deposits and Withdraws", () => {
             ErrorDecoder.encodeError(ErrorCodes.INSUFFICIENT_FREE_COLLATERAL)
         );
     });
+
+    it("reverts if a withdraw occurs on a negative cash balance", async () => {
+        await t.setupLiquidity();
+        await t.borrowAndWithdraw(wallet, WeiPerEther.mul(200));
+        await fastForwardToMaturity(provider, maturities[0])
+
+        await portfolios.settleMaturedAssets(wallet.address)
+        await expect(escrow.connect(wallet).withdraw(dai.address, WeiPerEther.mul(2))).to.be.revertedWith(
+            ErrorDecoder.encodeError(ErrorCodes.INSUFFICIENT_BALANCE)
+        );
+    })
 
     it("allows users to withdraw excess eth from their collateral", async () => {
         await t.setupLiquidity();

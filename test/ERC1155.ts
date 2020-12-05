@@ -1190,11 +1190,160 @@ describe("ERC1155 Token", () => {
             expect(await escrow.cashBalances(1, wallet2.address)).to.equal(parseEther("1"))
         });
 
-        /*
-        it("allows trade (move lend) for batchOperationWithdraw [takeCurrentCash, takefCash]", async () => {
-            // Not possible unless cash positions can go temporarily negative
+        it("allows trade (roll borrow) for batchOperationWithdraw [takeCurrentCash, takefCash]", async () => {
+            await t.setupLiquidity(owner, 0.5, parseEther("10000"), [0, 1]);
+
+            // First borrow to establish an existing debt in maturity 0
+            await erc1155trade.connect(wallet2).batchOperationWithdraw(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [{ currencyId: 0, amount: parseEther("10") }],
+                [{
+                    tradeType: TradeType.TakeCollateral,
+                    cashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: "0x"
+                }],
+                [{
+                    to: wallet2.address,
+                    currencyId: 1,
+                    amount: 0
+                }],
+            );
+            expect(await t.hasCashPayer(wallet2, maturities[0], parseEther("100"))).to.be.true;
+
+            // Now we first borrow in maturity[1] to get some cash and then we lend in maturity[0]
+            // to close out the fCash position
+            await erc1155trade.connect(wallet2).batchOperationWithdraw(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [],
+                [{
+                    tradeType: TradeType.TakeCollateral,
+                    cashGroup: 1,
+                    maturity: maturities[1],
+                    amount: parseEther("110"), // We have to borrow a bit more to ensure that we have enough cash
+                    slippageData: "0x"
+                }, {
+                    tradeType: TradeType.TakeFutureCash,
+                    cashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: "0x"
+                }],
+                [{
+                    to: wallet2.address,
+                    currencyId: 1,
+                    amount: 0
+                }],
+            );
+
+            expect(await t.hasCashPayer(wallet2, maturities[0])).to.be.false;
+            expect(await t.hasCashPayer(wallet2, maturities[1], parseEther("110"))).to.be.true;
+            expect(await escrow.cashBalances(CURRENCY.DAI, wallet2.address)).to.equal(0)
         })
-        */
+
+        it("allows repay borrow for batchOperationWithdraw using [takeCurrentCash] when cash balances are negative", async () => {
+            await t.setupLiquidity(owner, 0.5, parseEther("10000"), [0, 1]);
+
+            // First borrow to establish an existing debt in maturity 0
+            await erc1155trade.connect(wallet2).batchOperationWithdraw(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [{ currencyId: 0, amount: parseEther("10") }],
+                [{
+                    tradeType: TradeType.TakeCollateral,
+                    cashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: "0x"
+                }],
+                [{
+                    to: wallet2.address,
+                    currencyId: 1,
+                    amount: 0
+                }],
+            );
+
+            await fastForwardToMaturity(provider, maturities[0])
+            await portfolios.settleMaturedAssets(wallet2.address)
+            expect(await escrow.cashBalances(CURRENCY.DAI, wallet2.address)).to.equal(parseEther('-100'))
+
+            // Borrowing 50 will repay the cash balance and withdraw nothing
+            await erc1155trade.connect(wallet2).batchOperationWithdraw(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [],
+                [{
+                    tradeType: TradeType.TakeCollateral,
+                    cashGroup: 1,
+                    maturity: maturities[1],
+                    amount: parseEther("50"),
+                    slippageData: "0x"
+                }],
+                [{
+                    to: wallet2.address,
+                    currencyId: 1,
+                    amount: 0
+                }],
+            );
+
+            expect(await t.hasCashPayer(wallet2, maturities[1], parseEther("50"))).to.be.true;
+            expect(await escrow.cashBalances(CURRENCY.DAI, wallet2.address)).to.below(parseEther('-50'))
+        })
+
+        it("allows repay to positive balance for batchOperationWithdraw using [takeCurrentCash] when cash balances are negative", async () => {
+            await t.setupLiquidity(owner, 0.5, parseEther("10000"), [0, 1]);
+
+            // First borrow to establish an existing debt in maturity 0
+            await erc1155trade.connect(wallet2).batchOperationWithdraw(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [{ currencyId: 0, amount: parseEther("10") }],
+                [{
+                    tradeType: TradeType.TakeCollateral,
+                    cashGroup: 1,
+                    maturity: maturities[0],
+                    amount: parseEther("100"),
+                    slippageData: "0x"
+                }],
+                [{
+                    to: wallet2.address,
+                    currencyId: 1,
+                    amount: 0
+                }],
+            );
+
+            await fastForwardToMaturity(provider, maturities[0])
+            await portfolios.settleMaturedAssets(wallet2.address)
+            expect(await escrow.cashBalances(CURRENCY.DAI, wallet2.address)).to.equal(parseEther('-100'))
+
+            const daiBalanceBefore = await dai.balanceOf(wallet2.address)
+            await erc1155trade.connect(wallet2).batchOperationWithdraw(
+                wallet2.address,
+                BLOCK_TIME_LIMIT,
+                [],
+                [{
+                    tradeType: TradeType.TakeCollateral,
+                    cashGroup: 1,
+                    maturity: maturities[1],
+                    amount: parseEther("200"),
+                    slippageData: "0x"
+                }],
+                [{
+                    to: wallet2.address,
+                    currencyId: 1,
+                    amount: 0
+                }],
+            );
+            const daiBalanceAfter = await dai.balanceOf(wallet2.address)
+
+            expect(await t.hasCashPayer(wallet2, maturities[1], parseEther("200"))).to.be.true;
+            expect(await escrow.cashBalances(CURRENCY.DAI, wallet2.address)).to.equal(0)
+            expect(daiBalanceAfter.sub(daiBalanceBefore)).to.above(parseEther('50'))
+            expect(daiBalanceAfter.sub(daiBalanceBefore)).to.below(parseEther('100'))
+        })
     });
 
     describe("block trades", async () => {
