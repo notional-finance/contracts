@@ -6,7 +6,6 @@ import path from 'path';
 import { RetryProvider } from './RetryProvider';
 import { AddressZero } from 'ethers/constants';
 import * as child_process from 'child_process';
-import { verify } from './verify';
 
 const log = Debug("notional:upgrade");
 
@@ -93,6 +92,16 @@ async function main() {
         const network = await notional.owner.provider.getNetwork()
         await verify(deployedAddresses, network.name)
     }
+}
+
+export async function verify(addresses: (string | undefined)[], network: string) {
+  for (const address of addresses) {
+    if (address) {
+      log(`verifying ${address} on ${network}`)
+      const status = child_process.execSync(`npx buidler --network ${network} verify ${address}`)
+      log(status.toString())
+    }
+  }
 }
 
 

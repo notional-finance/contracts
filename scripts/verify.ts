@@ -1,23 +1,11 @@
 import {config} from "dotenv";
 import Debug from "debug";
-import * as child_process from 'child_process';
 import { NotionalDeployer } from './NotionalDeployer';
 import { Wallet } from 'ethers';
 import { RetryProvider } from './RetryProvider';
+import { verify } from './upgrade';
 
 const log = Debug("notional:verify");
-
-// Verify all contracts in deployment
-export async function verify(addresses: (string | undefined)[], network: string) {
-  log(addresses)
-  for (const address of addresses) {
-    if (address) {
-      log(`verifying ${address} on ${network}`)
-      const status = child_process.execSync(`npx buidler --network ${network} verify ${address}`)
-      log(status.toString())
-    }
-  }
-}
 
 async function main() {
   // Verify deployed contracts and their logic implementations
