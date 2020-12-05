@@ -1013,6 +1013,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         address account,
         uint16 localCurrency
     ) external {
+        Portfolios().settleMaturedAssets(account);
         require(!_hasCollateral(account), $$(ErrorCode(ACCOUNT_HAS_COLLATERAL)));
         require(_hasNoAssets(account), $$(ErrorCode(ACCOUNT_HAS_COLLATERAL)));
         int256 accountLocalBalance = cashBalances[localCurrency][account];
@@ -1072,7 +1073,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
                 // currency. The liquidator must have a sufficient balance inside the system. When transferring collateral
                 // internally within the system we must always check free collateral.
                 cashBalances[currency][msg.sender] = cashBalances[currency][msg.sender].subNoNeg(netAmount);
-                require(_freeCollateral(msg.sender) >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL)));
+                require(_freeCollateral(msg.sender) >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL_LIQUIDATOR)));
             } else {
                 _tokenDeposit(token, msg.sender, uint128(netAmount), options);
             }
