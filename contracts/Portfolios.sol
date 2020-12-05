@@ -303,6 +303,12 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
         return fc;
     }
 
+    function freeCollateralViewAggregateOnly(address account) public override view returns (int256) {
+        (int256 fc, /* int256[] memory */, /* int256[] memory */) = freeCollateralView(account);
+
+        return fc;
+    }
+
     /**
      * @notice Stateful version of free collateral called during settlement and liquidation.
      * @dev skip
@@ -337,7 +343,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
      * @param account account in question
      * @return (net free collateral position, an array of the net currency available)
      */
-    function freeCollateralView(address account) public override view returns (int256, int256[] memory, int256[] memory) {
+    function freeCollateralView(address account) public view returns (int256, int256[] memory, int256[] memory) {
         int256[] memory balances = Escrow().getBalances(account);
         return _freeCollateral(account, balances);
     }
