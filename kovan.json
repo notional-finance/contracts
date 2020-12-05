@@ -12,18 +12,18 @@
   "startBlock": 21065054,
   "defaultConfirmations": 3,
   "libraries": {
-    "Liquidation": "0x96d117e285E2b6357284C127Af51670E2190d52b",
+    "Liquidation": "0xeD176679A42c5F0b3602c3Df705577b92646345a",
     "RiskFramework": "0xc20846f8d295C354f9EcB48a695d41D785C35e07"
   },
   "deployedCodeHash": {
-    "Liquidation": "0xf36bdfe65106d4addfa27de6d5200f61c16950bc7e286204184b2a132fe55331",
+    "Liquidation": "0x34a70f707018f2e9cd95db6b999c8f81ffb5b1746f65d01d9b67192516e1323b",
     "RiskFramework": "0xf9453b18228638bee1e481aab7db30cd30df8ae5bfad3cbb6893cdd3c21281bb",
     "CashMarket": "0x2b87e487335d31b68acc63fceb962b66c901ab56c19b481021d260b29ca7ed46",
     "Directory": "0xdb138f0d75fdc52b8516c5be3716c51c5770d86b68cc9b22213e61905863b413",
-    "Escrow": "0x182071f45a19edf0fa4d2d65a0d490e5bcb1f609c2ad64c840c0244b885e42ef",
-    "Portfolios": "0xeb21ab15cf0bfbd7fea1f211ba493fa431a7fe63695d9138241f120457488f3c",
+    "Escrow": "0xbd3a897d2b12d34ea11f0f616ec9ed2d084532f9da9d7fab74f23d565b100404",
+    "Portfolios": "0x31dd2d5898eedba29889a8c28860397c37c8fbfc8d14fad21c38fc525b752db5",
     "ERC1155Token": "0x26fbb2940acc7ee6c8574c38f6a0150f3c58094c006b7ccf00d851cfb387c701",
-    "ERC1155Trade": "0x694355c2884a2e2c98d10eb0170fafb2dd92a1220d9a5acd8525035109ad5cf4"
+    "ERC1155Trade": "0xfda9841c5891de378c520ef3db6d9a90a283b7e34349f85407f832bac3fdc4f4"
   },
-  "gitHash": "3c826bcacadc61bfc434d64de4a18a8aeac14de0"
+  "gitHash": "305b8f0c8ca59f363ed6ec0b38c31f8b5d4ba946"
 }

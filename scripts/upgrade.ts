@@ -94,7 +94,7 @@ async function main() {
     }
 }
 
-export async function verify(addresses: (string | undefined)[], network: string) {
+async function verify(addresses: (string | undefined)[], network: string) {
   for (const address of addresses) {
     if (address) {
       log(`verifying ${address} on ${network}`)

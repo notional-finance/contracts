@@ -3,9 +3,19 @@ import Debug from "debug";
 import { NotionalDeployer } from './NotionalDeployer';
 import { Wallet } from 'ethers';
 import { RetryProvider } from './RetryProvider';
-import { verify } from './upgrade';
+import * as child_process from 'child_process';
 
 const log = Debug("notional:verify");
+
+async function verify(addresses: (string | undefined)[], network: string) {
+  for (const address of addresses) {
+    if (address) {
+      log(`verifying ${address} on ${network}`)
+      const status = child_process.execSync(`npx buidler --network ${network} verify ${address}`)
+      log(status.toString())
+    }
+  }
+}
 
 async function main() {
   // Verify deployed contracts and their logic implementations
@@ -21,7 +31,7 @@ async function main() {
   );
 
   const notional = await NotionalDeployer.restoreFromFile(process.env.CONTRACTS_FILE as string, owner);
-  const verifyAddresses = []
+  const verifyAddresses: string[] = []
   verifyAddresses.push(notional.portfolios.address)
   verifyAddresses.push(notional.escrow.address)
   verifyAddresses.push(notional.erc1155.address)

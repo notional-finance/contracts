@@ -19,7 +19,7 @@
         "upgrade:mainnet": "DEBUG=* DOTENV_CONFIG_PATH=.env.mainnet ts-node scripts/upgrade.ts",
         "patch": "git format-patch master --relative --stdout > patch.diff",
         "sloc": "rename 's/\\.sol/\\.c/' contracts/*.sol && scc contracts/* --wide --by-file && rename 's/\\.c/\\.sol/' contracts/*.c",
-        "verify:kovan:all": "DEBUG=notional:verify DOTENV_CONFIG_PATH=.env.kovan ts-node scripts/verify.ts"
+        "verify:kovan:all": "DEBUG=* DOTENV_CONFIG_PATH=.env.kovan ts-node scripts/verify.ts"
     },
     "repository": {
         "type": "git",
