@@ -1721,7 +1721,7 @@ describe("ERC1155 Token", () => {
 
             await chainlink.setAnswer(parseEther("0.012"));
             expect(await t.isCollateralized(wallet2)).to.be.false;
-            await escrow.liquidate(wallet2.address, 1, 0);
+            await escrow.liquidate(wallet2.address, 0, 1, 0);
             expect(await t.isCollateralized(wallet2)).to.be.true;
         });
 
@@ -1738,7 +1738,7 @@ describe("ERC1155 Token", () => {
 
             await chainlink.setAnswer(parseEther("0.012"));
             expect(await t.isCollateralized(wallet2)).to.be.false;
-            await escrow.liquidate(wallet2.address, 1, 0);
+            await escrow.liquidate(wallet2.address, 0, 1, 0);
             expect(await t.isCollateralized(wallet2)).to.be.true;
         });
 

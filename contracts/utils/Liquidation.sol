@@ -187,7 +187,8 @@ library Liquidation {
         int256 payerCollateralBalance,
         Common.FreeCollateralFactors memory fc,
         RateParameters memory rateParam,
-        address Portfolios
+        address Portfolios,
+        uint128 maxLiquidateAmount
     ) public returns (TransferAmounts memory) {
         uint128 localCurrencyRequired = _fcAggregateToLocal(fc.aggregate, rateParam);
 
@@ -221,7 +222,8 @@ library Liquidation {
                 transfer,
                 fc,
                 rateParam,
-                Portfolios
+                Portfolios,
+                maxLiquidateAmount
             );
         }
 
@@ -284,6 +286,9 @@ library Liquidation {
                     fc.localNetAvailable < 0
                 );
 
+                // This net fc calculation is not completely accurate because the haircut amount can move the FC from
+                // negative to positive but that is irrelevant here. We just want to determine that the account has positive
+                // free collateral, the exact amount is not required.
                 fc.aggregate = fc.aggregate.add(netFC);
             }
         }
@@ -355,7 +360,8 @@ library Liquidation {
         TransferAmounts memory transfer,
         Common.FreeCollateralFactors memory fc,
         RateParameters memory rateParam,
-        address Portfolios
+        address Portfolios,
+        uint128 maxLiquidateAmount
     ) internal {
         uint128 discountFactor = EscrowStorageSlot._liquidationDiscount();
         localCurrencyRequired = _calculateLocalCurrencyToTrade(
@@ -364,6 +370,10 @@ library Liquidation {
             rateParam.localToETH.buffer,
             uint128(fc.localNetAvailable.neg())
         );
+
+        if (maxLiquidateAmount > 0 && localCurrencyRequired > maxLiquidateAmount) {
+            localCurrencyRequired = maxLiquidateAmount;
+        }
 
         _tradeCollateralCurrency(
             payer,

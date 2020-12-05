@@ -336,7 +336,7 @@ describe("Deposits and Withdraws", () => {
     });
 
     it("should not allow someone to liquidate themselves", async () => {
-        await expect(escrow.liquidate(owner.address, CURRENCY.DAI, CURRENCY.ETH)).to.be.revertedWith(
+        await expect(escrow.liquidate(owner.address, 0, CURRENCY.DAI, CURRENCY.ETH)).to.be.revertedWith(
             ErrorDecoder.encodeError(ErrorCodes.CANNOT_LIQUIDATE_SELF)
         );
         await expect(escrow.liquidateBatch([owner.address], CURRENCY.DAI, CURRENCY.ETH)).to.be.revertedWith(
@@ -345,7 +345,7 @@ describe("Deposits and Withdraws", () => {
     });
 
     it("does not allow liquidating with an invalid currency", async () => {
-        await expect(escrow.liquidate(wallet.address, CURRENCY.DAI, 3)).to.be.revertedWith(
+        await expect(escrow.liquidate(wallet.address, 0, CURRENCY.DAI, 3)).to.be.revertedWith(
             ErrorDecoder.encodeError(ErrorCodes.INVALID_CURRENCY)
         );
         await expect(escrow.liquidateBatch([wallet.address], CURRENCY.DAI, 3)).to.be.revertedWith(

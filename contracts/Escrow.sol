@@ -807,11 +807,12 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
     }
 
     /**
-     * @notice Liquidates a batch of accounts in a specific currency.
+     * @notice Liquidates a batch of accounts in a specific currency. Final token balances will be withdrawn and deposited to
+     * the liquidator's account.
      * @dev - CANNOT_LIQUIDATE_SUFFICIENT_COLLATERAL: account has positive free collateral and cannot be liquidated
      *  - CANNOT_LIQUIDATE_SELF: liquidator cannot equal the liquidated account
      *  - INSUFFICIENT_FREE_COLLATERAL_LIQUIDATOR: liquidator does not have sufficient free collateral after liquidating
-     * accounts
+     * accounts. This will only occur in situations where the liquidator must deposit a token that has a transaction fee.
      * @param accounts the account to liquidate
      * @param localCurrency the currency that is undercollateralized
      * @param collateralCurrency the collateral currency to exchange for `currency`
@@ -830,7 +831,7 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         for (uint256 i; i < accounts.length; i++) {
             int256 local;
             uint128 collateral;
-            (amountRecollateralized[i], local, collateral) = _liquidate(accounts[i], rateParam);
+            (amountRecollateralized[i], local, collateral) = _liquidate(accounts[i], rateParam, 0);
             totalLocal = totalLocal.add(local);
             totalCollateral = totalCollateral.add(collateral);
         }
@@ -841,24 +842,26 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
     }
 
     /**
-     * @notice Liquidates a single account if it is undercollateralized
+     * @notice Liquidates a single account if it is undercollateralized. Optionally allows liquidation up until a certain
+     * maximum amount. Tokens will be deposited and withdrawn from the liquidator's wallet balances.
      * @dev - CANNOT_LIQUIDATE_SUFFICIENT_COLLATERAL: account has positive free collateral and cannot be liquidated
      *  - CANNOT_LIQUIDATE_SELF: liquidator cannot equal the liquidated account
      *  - INSUFFICIENT_FREE_COLLATERAL_LIQUIDATOR: liquidator does not have sufficient free collateral after liquidating
-     * accounts
-     *  - CANNOT_LIQUIDATE_TO_WORSE_FREE_COLLATERAL: we cannot liquidate an account and have it end up in a worse free
-     *  collateral position than when it started. This is possible if collateralCurrency has a larger haircut than currency.
+     * accounts. This will only occur in situations where the liquidator must deposit a token that has a transaction fee.
      * @param account the account to liquidate
+     * @param maxLiquidateAmount the maximum amount (in local currency terms) that should be liquidated, if set to zero will
+     * liquidate up to the maximum allowed by the free collateral calculation
      * @param localCurrency the currency that is undercollateralized
      * @param collateralCurrency the collateral currency to exchange for `currency`
      */
     function liquidate(
         address account,
+        uint128 maxLiquidateAmount,
         uint16 localCurrency,
         uint16 collateralCurrency
     ) external {
         Liquidation.RateParameters memory rateParam = _validateCurrencies(localCurrency, collateralCurrency);
-        (uint128 amountRecollateralized, int256 totalLocal, uint128 totalCollateral) = _liquidate(account, rateParam);
+        (uint128 amountRecollateralized, int256 totalLocal, uint128 totalCollateral) = _liquidate(account, rateParam, maxLiquidateAmount);
 
         _finishLiquidateSettle(localCurrency, totalLocal);
         _finishLiquidateSettle(collateralCurrency, int256(totalCollateral).neg());
@@ -868,7 +871,8 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
     /** @notice Internal function for liquidating an account */
     function _liquidate(
         address payer,
-        Liquidation.RateParameters memory rateParam
+        Liquidation.RateParameters memory rateParam,
+        uint128 maxLiquidateAmount
     ) internal returns (uint128, int256, uint128) {
         require(payer != msg.sender, $$(ErrorCode(CANNOT_LIQUIDATE_SELF)));
 
@@ -886,7 +890,8 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
             balance,
             fc,
             rateParam,
-            address(Portfolios())
+            address(Portfolios()),
+            maxLiquidateAmount
         );
 
         if (balance != transfer.payerCollateralBalance) {

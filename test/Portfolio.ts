@@ -151,7 +151,7 @@ describe("Portfolio", () => {
         await portfolios.setMaxAssets(2);
         await t.chainlink.setAnswer(parseEther("0.05"));
 
-        await escrow.liquidate(wallet.address, CURRENCY.DAI, CURRENCY.ETH);
+        await escrow.liquidate(wallet.address, 0, CURRENCY.DAI, CURRENCY.ETH);
         const portfolio = await portfolios.getAssets(wallet.address);
         expect(portfolio).to.have.lengthOf(3);
     });
