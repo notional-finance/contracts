@@ -5,6 +5,8 @@ import { Wallet } from "ethers";
 import path from 'path';
 import { RetryProvider } from './RetryProvider';
 import { AddressZero } from 'ethers/constants';
+import * as child_process from 'child_process';
+import { verify } from './verify';
 
 const log = Debug("notional:upgrade");
 
@@ -20,7 +22,7 @@ async function main() {
         new RetryProvider(3, process.env.TESTNET_PROVIDER) // Retry provider for alchemy API
     );
 
-    const status = require('child_process')
+    const status = child_process
         .execSync('git status -s')
         .toString().trim()
 
@@ -40,34 +42,38 @@ async function main() {
     }
 
     const notional = await NotionalDeployer.restoreFromFile(process.env.CONTRACTS_FILE as string, owner);
+    const deployedAddresses = []
 
     // NOTE: because bytecode contains metadata hashes even whitespace change can result in bytecode changes.
     // see: https://solidity.readthedocs.io/en/v0.6.4/metadata.html
-    if (contracts.includes("Escrow") || contracts.includes("Portfolios")) {
-        const changedLibraries = await notional.checkDeployedLibraries();
-        for (let l of changedLibraries) {
-            await notional.deployLibrary(l, dryRun);
-        }
+    if (contracts.includes("Liquidation")) {
+        log(`Attempting to upgrade Liquidation Library on chain: ${chainId}`);
+        deployedAddresses.push(await notional.deployLibrary("Liquidation", dryRun));
+    }
+
+    if (contracts.includes("RiskFramework")) {
+        log(`Attempting to upgrade Risk Framework on chain: ${chainId}`);
+        deployedAddresses.push(await notional.deployLibrary("RiskFramework", dryRun));
     }
 
     if (contracts.includes("Escrow")) {
         log(`Attempting to upgrade Escrow contract on chain: ${chainId}`);
-        await notional.upgradeContract(CoreContracts.Escrow, dryRun);
+        deployedAddresses.push(await notional.upgradeContract(CoreContracts.Escrow, dryRun));
     }
 
     if (contracts.includes("ERC1155Token")) {
         log(`Attempting to upgrade ERC1155 Token contract on chain: ${chainId}`);
-        if (contracts.includes("ERC1155Token")) await notional.upgradeContract(CoreContracts.ERC1155Token, dryRun);
+        deployedAddresses.push(await notional.upgradeContract(CoreContracts.ERC1155Token, dryRun));
     }
 
     if (contracts.includes("ERC1155Trade")) {
         log(`Attempting to upgrade ERC1155 Trade contract on chain: ${chainId}`);
-        await notional.upgradeContract(CoreContracts.ERC1155Trade, dryRun);
+        deployedAddresses.push(await notional.upgradeContract(CoreContracts.ERC1155Trade, dryRun));
     }
 
     if (contracts.includes("Portfolios")) {
         log(`Attempting to upgrade Portfolios contract on chain: ${chainId}`);
-        await notional.upgradeContract(CoreContracts.Portfolios, dryRun);
+        deployedAddresses.push(await notional.upgradeContract(CoreContracts.Portfolios, dryRun));
     }
 
     if (contracts.includes("CashMarket")) {
@@ -76,7 +82,7 @@ async function main() {
             const group = await notional.portfolios.getCashGroup(i);
             if (group.cashMarket == AddressZero) continue;
             log(`Attempting to upgrade cash group ${i} at address ${group.cashMarket}`)
-            await notional.upgradeCashMarket(group.cashMarket, dryRun);
+            deployedAddresses.push(await notional.upgradeCashMarket(group.cashMarket, dryRun));
         }
     }
 
@@ -84,8 +90,11 @@ async function main() {
     if (!dryRun) {
         const outputFile = path.join(__dirname, "../" + process.env.CONTRACTS_FILE as string);
         await notional.saveAddresses(outputFile);
+        const network = await notional.owner.provider.getNetwork()
+        await verify(deployedAddresses, network.name)
     }
 }
+
 
 main()
     .then(() => process.exit(0))

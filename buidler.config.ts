@@ -70,11 +70,14 @@ module.exports = {
         },
         mainnet: {
             url: process.env.TESTNET_PROVIDER || ''
+        },
+        kovan: {
+            url: process.env.TESTNET_PROVIDER || ''
         }
     },
     etherscan: {
         // The url for the Etherscan API you want to use.
-        url: "https://api.etherscan.io/api",
+        url: process.env.ETHERSCAN_URL,
         // Your API key for Etherscan
         // Obtain one at https://etherscan.io/
         apiKey: process.env.ETHERSCAN_API_KEY
