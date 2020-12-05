@@ -28,7 +28,7 @@
     "devDependencies": {
         "@nomiclabs/buidler": "^1.4.0",
         "@nomiclabs/buidler-ethers": "^1.1.2",
-        "@nomiclabs/buidler-etherscan": "^1.0.1",
+        "@nomiclabs/buidler-etherscan": "^2.1.0",
         "@nomiclabs/buidler-ganache": "^1.1.2",
         "@nomiclabs/buidler-solhint": "^1.0.2",
         "@nomiclabs/buidler-solpp": "^1.1.1",
