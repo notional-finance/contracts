@@ -190,11 +190,15 @@ describe("Deposits and Withdraws", () => {
     });
 
     it("prevents users from withdrawing more dai than they own", async () => {
-        await dai.approve(futureCash.address, WeiPerEther);
         await escrow.deposit(dai.address, WeiPerEther);
-        await expect(escrow.withdraw(dai.address, WeiPerEther.mul(2))).to.be.revertedWith(
-            ErrorDecoder.encodeError(ErrorCodes.INSUFFICIENT_BALANCE)
-        );
+
+        const daiBalanceBefore = await dai.balanceOf(owner.address);
+        // Escrow cuts off the withdraw at 0, so this will only withdraw 1 DAI
+        await escrow.withdraw(dai.address, WeiPerEther.mul(2))
+        const daiBalanceAfter = await dai.balanceOf(owner.address);
+
+        expect(await escrow.cashBalances(CURRENCY.DAI, owner.address)).to.equal(0)
+        expect(daiBalanceAfter.sub(daiBalanceBefore)).to.equal(WeiPerEther)
     });
 
     it("prevents users from withdrawing eth if they do not have enough collateral", async () => {
@@ -205,6 +209,17 @@ describe("Deposits and Withdraws", () => {
             ErrorDecoder.encodeError(ErrorCodes.INSUFFICIENT_FREE_COLLATERAL)
         );
     });
+
+    it("reverts if a withdraw occurs on a negative cash balance", async () => {
+        await t.setupLiquidity();
+        await t.borrowAndWithdraw(wallet, WeiPerEther.mul(200));
+        await fastForwardToMaturity(provider, maturities[0])
+
+        await portfolios.settleMaturedAssets(wallet.address)
+        await expect(escrow.connect(wallet).withdraw(dai.address, WeiPerEther.mul(2))).to.be.revertedWith(
+            ErrorDecoder.encodeError(ErrorCodes.INSUFFICIENT_BALANCE)
+        );
+    })
 
     it("allows users to withdraw excess eth from their collateral", async () => {
         await t.setupLiquidity();
@@ -321,7 +336,7 @@ describe("Deposits and Withdraws", () => {
     });
 
     it("should not allow someone to liquidate themselves", async () => {
-        await expect(escrow.liquidate(owner.address, CURRENCY.DAI, CURRENCY.ETH)).to.be.revertedWith(
+        await expect(escrow.liquidate(owner.address, 0, CURRENCY.DAI, CURRENCY.ETH)).to.be.revertedWith(
             ErrorDecoder.encodeError(ErrorCodes.CANNOT_LIQUIDATE_SELF)
         );
         await expect(escrow.liquidateBatch([owner.address], CURRENCY.DAI, CURRENCY.ETH)).to.be.revertedWith(
@@ -330,7 +345,7 @@ describe("Deposits and Withdraws", () => {
     });
 
     it("does not allow liquidating with an invalid currency", async () => {
-        await expect(escrow.liquidate(wallet.address, CURRENCY.DAI, 3)).to.be.revertedWith(
+        await expect(escrow.liquidate(wallet.address, 0, CURRENCY.DAI, 3)).to.be.revertedWith(
             ErrorDecoder.encodeError(ErrorCodes.INVALID_CURRENCY)
         );
         await expect(escrow.liquidateBatch([wallet.address], CURRENCY.DAI, 3)).to.be.revertedWith(

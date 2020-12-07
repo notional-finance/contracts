@@ -23,7 +23,7 @@ interface IPortfoliosCallable {
 
     function freeCollateral(address account) external returns (int256, int256[] memory, int256[] memory);
 
-    function freeCollateralView(address account) external view returns (int256, int256[] memory, int256[] memory);
+    function freeCollateralViewAggregateOnly(address account) external view returns (int256);
 
     function freeCollateralAggregateOnly(address account) external returns (int256);
 

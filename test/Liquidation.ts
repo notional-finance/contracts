@@ -279,23 +279,6 @@ describe("Liquidation", () => {
             ).be.revertedWith(ErrorDecoder.decodeError(ErrorCodes.PORTFOLIO_HAS_LIQUIDITY_TOKENS));
         });
 
-        it("should settle fCash in local currency, only trading", async () => {
-            const settleAmount = await t.setupSellFutureCash(wallet, parseEther("95"), parseEther("100"));
-            await fastForwardToTime(provider, maturities[0]);
-            const futureCashPrice = await futureCash.getfCashToCurrentCashAtTime(
-                maturities[1],
-                parseEther("100"),
-                maturities[0]
-            );
-
-            await escrow.settlefCash(wallet.address, CURRENCY.DAI, CURRENCY.DAI, settleAmount);
-
-            expect(await portfolios.getAssets(wallet.address)).to.have.lengthOf(0);
-            expect(await escrow.cashBalances(CURRENCY.DAI, wallet.address)).to.equal(
-                settleAmount.mul(-1).add(futureCashPrice)
-            );
-        });
-
         it("should settle fCash in local currency, only liquidator payments", async () => {
             const settleAmount = await t.setupSellFutureCash(wallet, parseEther("95"), undefined, parseEther("100"));
 
@@ -308,29 +291,6 @@ describe("Liquidation", () => {
             );
 
             await escrow.settlefCash(wallet.address, CURRENCY.DAI, CURRENCY.DAI, settleAmount);
-            expect(await t.hasCashReceiver(wallet, maturities[2], remaining)).to.be.true;
-            expect(await escrow.cashBalances(CURRENCY.DAI, wallet.address)).to.equal(0)
-        });
-
-        it("should settle fCash in local currency, both", async () => {
-            const settleAmount = await t.setupSellFutureCash(wallet, parseEther("96"), parseEther("50"), parseEther("55"));
-            await fastForwardToTime(provider, maturities[0]);
-
-            const futureCashPrice = await futureCash.getfCashToCurrentCashAtTime(
-                maturities[1],
-                parseEther("50"),
-                maturities[0]
-            );
-
-            const [, remaining] = await t.getfCashValue(
-                parseEther("55"),
-                settleAmount.sub(futureCashPrice),
-                maturities[2],
-                maturities[0]
-            );
-
-            await escrow.settlefCash(wallet.address, CURRENCY.DAI, CURRENCY.DAI, settleAmount);
-            expect(await portfolios.getAssets(wallet.address)).to.have.lengthOf(1);
             expect(await t.hasCashReceiver(wallet, maturities[2], remaining)).to.be.true;
             expect(await escrow.cashBalances(CURRENCY.DAI, wallet.address)).to.equal(0)
         });
@@ -421,7 +381,7 @@ describe("Liquidation", () => {
                 .takeCurrentCash(maturities[0], WeiPerEther.mul(100), BLOCK_TIME_LIMIT, 60_000_000);
 
             expect((await portfolios.freeCollateralView(wallet.address))[0]).to.be.above(0);
-            await expect(escrow.liquidate(wallet.address, CURRENCY.DAI, CURRENCY.ETH)).to.be.revertedWith(
+            await expect(escrow.liquidate(wallet.address, 0, CURRENCY.DAI, CURRENCY.ETH)).to.be.revertedWith(
                 ErrorDecoder.encodeError(ErrorCodes.CANNOT_LIQUIDATE_SUFFICIENT_COLLATERAL)
             );
         });
@@ -435,7 +395,7 @@ describe("Liquidation", () => {
             await chainlink.setAnswer(newRate);
             expect(await t.isCollateralized(wallet)).to.be.false;
 
-            await escrow.liquidate(wallet.address, CURRENCY.DAI, CURRENCY.ETH);
+            await escrow.liquidate(wallet.address, 0, CURRENCY.DAI, CURRENCY.ETH);
 
             expect(await t.hasLiquidityToken(wallet, maturities[1])).to.be.false;
             expect(await escrow.cashBalances(CURRENCY.ETH, wallet.address)).to.be.below(ethBalanceBefore);
@@ -450,7 +410,7 @@ describe("Liquidation", () => {
             expect(await t.isCollateralized(wallet)).to.be.false;
 
             const fcBefore = await portfolios.freeCollateralView(wallet.address);
-            await escrow.liquidate(wallet.address, CURRENCY.DAI, CURRENCY.ETH);
+            await escrow.liquidate(wallet.address, 0, CURRENCY.DAI, CURRENCY.ETH);
             const ethBalanceAfter = await escrow.cashBalances(CURRENCY.ETH, wallet.address);
 
             const fcAfter = await portfolios.freeCollateralView(wallet.address);
@@ -458,14 +418,14 @@ describe("Liquidation", () => {
 
             const liquidationBonus = await escrow.G_LIQUIDATION_DISCOUNT();
             const exchangeRate = await escrow.getExchangeRate(CURRENCY.DAI, CURRENCY.ETH);
-            const daiPurchased = fcBefore[0]
+            const daiFCChange = fcBefore[0]
                 .mul(-1)
                 .mul(parseEther("1.01")) // Buffer
                 .mul(WeiPerEther)
                 .div(newRate)
                 .div(exchangeRate.buffer.sub(liquidationBonus));
             
-            const ethPurchased = daiPurchased
+            const ethPurchased = daiFCChange
                 .mul(newRate)
                 .mul(liquidationBonus)
                 .div(WeiPerEther)
@@ -473,7 +433,7 @@ describe("Liquidation", () => {
 
             // We ignore the last two units of precision here.
             expect(ethBalanceBefore.sub(ethBalanceAfter).div(100)).to.equal(ethPurchased.div(100));
-            expect(fcBefore[1][1].abs().sub(fcAfter[1][1].abs()).div(100)).to.equal(daiPurchased.div(100));
+            expect(fcBefore[1][1].abs().sub(fcAfter[1][1].abs()).div(100)).to.equal(daiFCChange.div(100));
         });
 
         it("[3] should account for dai when partially liquidating an account", async () => {
@@ -490,7 +450,7 @@ describe("Liquidation", () => {
             expect(await t.isCollateralized(wallet)).to.be.false;
 
             const fcBefore = await portfolios.freeCollateralView(wallet.address);
-            await escrow.liquidate(wallet.address, CURRENCY.DAI, CURRENCY.ETH);
+            await escrow.liquidate(wallet.address, 0, CURRENCY.DAI, CURRENCY.ETH);
             expect(await t.isCollateralized(wallet)).to.be.true;
 
             let ethBalanceAfter = await escrow.cashBalances(CURRENCY.ETH, wallet.address);
@@ -518,6 +478,40 @@ describe("Liquidation", () => {
             expect((liquidatorDaiBalanceBefore.sub(daiPurchased)).div(1e5)).to.equal(
                 liquidatorDaiBalanceAfter.div(1e5)
             );
+        });
+
+        it("[4] should liquidate an account up to a certain amount of DAI", async () => {
+            const [ethBalanceBefore, ] = await t.borrowAndWithdraw(wallet, parseEther("100"));
+            const liquidatorEthBalanceBefore = await weth.balanceOf(owner.address);
+            const liquidatorDaiBalanceBefore = await dai.balanceOf(owner.address);
+
+            // Change this via chainlink
+            const newRate = parseEther("0.011");
+            await chainlink.setAnswer(newRate);
+            expect(await t.isCollateralized(wallet)).to.be.false;
+
+            const fcBefore = await portfolios.freeCollateralView(wallet.address);
+            const liquidationBonus = await escrow.G_LIQUIDATION_DISCOUNT();
+            const maxDaiLiquidate = parseEther('2.5')
+
+            await escrow.liquidate(wallet.address, maxDaiLiquidate, CURRENCY.DAI, CURRENCY.ETH);
+            const ethBalanceAfter = await escrow.cashBalances(CURRENCY.ETH, wallet.address);
+
+            const fcAfter = await portfolios.freeCollateralView(wallet.address);
+
+            const ethPurchased = maxDaiLiquidate
+                .mul(newRate)
+                .mul(liquidationBonus)
+                .div(WeiPerEther)
+                .div(WeiPerEther);
+
+            const liquidatorEthBalanceAfter = await weth.balanceOf(owner.address);
+            const liquidatorDaiBalanceAfter = await dai.balanceOf(owner.address);
+            // We ignore the last two units of precision here.
+            expect((liquidatorEthBalanceAfter.sub(liquidatorEthBalanceBefore)).div(100)).to.equal(ethPurchased.div(100));
+            expect(liquidatorDaiBalanceBefore.sub(liquidatorDaiBalanceAfter)).to.equal(maxDaiLiquidate);
+            expect(fcBefore[1][1].abs().sub(fcAfter[1][1].abs()), "FC does not match").to.equal(maxDaiLiquidate);
+            expect(ethBalanceBefore.sub(ethBalanceAfter).div(100), "ETH balances do not match").to.equal(ethPurchased.div(100));
         });
     });
 }).timeout(50000);

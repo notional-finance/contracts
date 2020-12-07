@@ -8,14 +8,11 @@ usePlugin("@nomiclabs/buidler-solpp");
 usePlugin("@nomiclabs/buidler-waffle");
 usePlugin("@nomiclabs/buidler-ganache");
 usePlugin("@nomiclabs/buidler-solhint");
+usePlugin("@nomiclabs/buidler-etherscan");
 usePlugin('buidler-abi-exporter');
 usePlugin("buidler-gas-reporter");
 usePlugin("buidler-typechain");
 usePlugin("solidity-coverage");
-
-const INFURA_API_KEY = "";
-const RINKEBY_PRIVATE_KEY = "";
-const ETHERSCAN_API_KEY = "";
 
 const CONTRACTS = [
     "CashMarket",
@@ -64,24 +61,26 @@ module.exports = {
                 privateKey: acc.secretKey
             }))
         },
-        rinkeby: {
-            url: `https://rinkeby.infura.io/v3/${INFURA_API_KEY}`,
-            accounts: [RINKEBY_PRIVATE_KEY]
-        },
         localGanache: {
             url: "http://localhost:8545",
             accounts: ["0x4f3edf983ac636a65a842ce7c78d9aa706d3b113bce9c46f30d7d21715b23b1d"]
         },
         coverage: {
             url: "http://127.0.0.1:8555" // Coverage launches its own ganache-cli client
+        },
+        mainnet: {
+            url: process.env.TESTNET_PROVIDER || ''
+        },
+        kovan: {
+            url: process.env.TESTNET_PROVIDER || ''
         }
     },
     etherscan: {
         // The url for the Etherscan API you want to use.
-        url: "https://api-rinkeby.etherscan.io/api",
+        url: process.env.ETHERSCAN_URL,
         // Your API key for Etherscan
         // Obtain one at https://etherscan.io/
-        apiKey: ETHERSCAN_API_KEY
+        apiKey: process.env.ETHERSCAN_API_KEY
     },
     typechain: {
         outDir: "typechain",

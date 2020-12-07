@@ -303,6 +303,12 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
         return fc;
     }
 
+    function freeCollateralViewAggregateOnly(address account) public override view returns (int256) {
+        (int256 fc, /* int256[] memory */, /* int256[] memory */) = freeCollateralView(account);
+
+        return fc;
+    }
+
     /**
      * @notice Stateful version of free collateral called during settlement and liquidation.
      * @dev skip
@@ -337,7 +343,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
      * @param account account in question
      * @return (net free collateral position, an array of the net currency available)
      */
-    function freeCollateralView(address account) public override view returns (int256, int256[] memory, int256[] memory) {
+    function freeCollateralView(address account) public view returns (int256, int256[] memory, int256[] memory) {
         int256[] memory balances = Escrow().getBalances(account);
         return _freeCollateral(account, balances);
     }
@@ -704,6 +710,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
         uint16 currency,
         uint128 amount
     ) external override returns (uint128, uint128) {
+        require(calledByEscrow(), $$(ErrorCode(UNAUTHORIZED_CALLER)));
         // Sorting the portfolio ensures that as we iterate through it we see each cash group
         // in batches. However, this means that we won't be able to track the indexes to remove correctly.
         Common.Asset[] memory portfolio = Common._sortPortfolio(_accountAssets[account]);
@@ -720,23 +727,16 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
             if (Common.isCashReceiver(portfolio[i].assetType)) fCashReceivers++;
         }
 
-        require(fCashReceivers > 0, $$(ErrorCode(PORTFOLIO_HAS_NO_RECEIVERS)));
-        TradePortfolioState memory state = _tradePortfolio(account, currency, amount, Common.getCashReceiver(), portfolio);
+        require(fCashReceivers > 0 && amount > 0, $$(ErrorCode(PORTFOLIO_HAS_NO_RECEIVERS)));
 
-        uint128 liquidatorPayment;
-        if (fCashReceivers > state.indexCount && state.amountRemaining > 0) {
-            // This means that there are fCashRecievers in the portfolio that were unable to be traded on the market. In this case
-            // we will allow the caller to purchase a portion of the fCashReceiver at a heavily discounted amount.
+        (uint128 amountRemaining, uint128 liquidatorPayment) = _tradefCashLiquidator(
+            _accountAssets[account],
+            _accountAssets[liquidator],
+            amount,
+            currency
+        );
 
-            (state.amountRemaining, liquidatorPayment) = _tradefCashLiquidator(
-                _accountAssets[account],
-                _accountAssets[liquidator],
-                state.amountRemaining,
-                currency
-            );
-        }
-
-        return (state.amountRemaining, liquidatorPayment);
+        return (amountRemaining, liquidatorPayment);
     }
 
     /**
@@ -762,7 +762,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
             if (Common.isCashReceiver(asset.assetType)) {
                 cg = cashGroups[asset.cashGroupId];
                 if (cg.currency != currency) continue;
-                 
+
                 (liquidatorPayment, notionalToTransfer, amountRemaining) = _calculateNotionalToTransfer(
                     fCashHaircut,
                     fCashMaxHaircut,
@@ -814,7 +814,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
         // Asset values will always be positive.
         require(tmp >= 0);
         assetValue = uint128(tmp);
-   
+
         if (assetValue >= amountRemaining) {
             notionalToTransfer = SafeCast.toUint128(
                 uint256(asset.notional)
@@ -828,7 +828,7 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
             amountRemaining = amountRemaining - assetValue;
             liquidatorPayment = liquidatorPayment.add(assetValue);
         }
- 
+
         return (liquidatorPayment, notionalToTransfer, amountRemaining);
     }
 
@@ -883,12 +883,10 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
             if (cg.currency != currency) continue;
             if (portfolio[i].assetType != tradeType) continue;
 
-            if (Common.isCashPayer(portfolio[i].assetType)) {
-                revert($$(ErrorCode(INVALID_SWAP)));
-            } else if (Common.isLiquidityToken(portfolio[i].assetType)) {
+            if (Common.isLiquidityToken(portfolio[i].assetType)) {
                 _tradeLiquidityToken(portfolio[i], cg.cashMarket, state);
-            } else if (Common.isCashReceiver(portfolio[i].assetType)) {
-                _tradeCashReceiver(account, portfolio[i], cg.cashMarket, state);
+            } else {
+                revert($$(ErrorCode(INVALID_SWAP)));
             }
 
             // No more cash left so we break out of the loop
@@ -951,47 +949,6 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
             Common.makeCounterparty(Common.getLiquidityToken()),
             asset.rate,
             tokens
-        );
-        state.indexCount++;
-    }
-
-    /**
-     * @notice Sells fCash in order to raise cash
-     * @param account the account that holds the fCash
-     * @param asset the fCash token to extract cash from
-     * @param cashMarket the address of the fCash market
-     * @param state state of the portfolio trade operation
-     */
-    function _tradeCashReceiver(
-        address account,
-        Common.Asset memory asset,
-        address cashMarket,
-        TradePortfolioState memory state
-    ) internal {
-        // This will sell off the entire amount of fCash and return cash
-        uint128 cash = CashMarket(cashMarket).tradeCashReceiver(
-            account,
-            state.amountRemaining,
-            asset.notional,
-            asset.maturity
-        );
-
-        // Trade failed, do not update any state variables
-        if (cash == 0) return;
-
-        // This amount of cash has been removed from the market
-        state.unlockedCurrentCash = state.unlockedCurrentCash.add(cash);
-        state.amountRemaining = state.amountRemaining.sub(cash);
-
-        // This is a CASH_PAYER that will offset the fCash in the portfolio, it will
-        // always be the entire fCash amount.
-        state.portfolioChanges[state.indexCount] = Common.Asset(
-            asset.cashGroupId,
-            asset.instrumentId,
-            asset.maturity,
-            Common.getCashPayer(),
-            asset.rate,
-            asset.notional
         );
         state.indexCount++;
     }

@@ -332,7 +332,7 @@ export class TestUtils {
             await this.chainlink.setAnswer(answer.mul(100));
             log(`Setup sell future cash, liquidating wallet ${wallet.address}. Free collateral position:`);
             log(await this.portfolios.freeCollateralView(wallet.address));
-            await this.escrow.liquidate(wallet.address, currency, CURRENCY.ETH);
+            await this.escrow.liquidate(wallet.address, 0, currency, CURRENCY.ETH);
             await this.chainlink.setAnswer(answer);
 
             const cb = await this.escrow.cashBalances(currency, wallet.address);

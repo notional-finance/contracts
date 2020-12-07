@@ -18,7 +18,8 @@
         "upgrade:rinkeby": "DEBUG=* DOTENV_CONFIG_PATH=.env.rinkeby ts-node scripts/upgrade.ts",
         "upgrade:mainnet": "DEBUG=* DOTENV_CONFIG_PATH=.env.mainnet ts-node scripts/upgrade.ts",
         "patch": "git format-patch master --relative --stdout > patch.diff",
-        "sloc": "rename 's/\\.sol/\\.c/' contracts/*.sol && scc contracts/* --wide --by-file && rename 's/\\.c/\\.sol/' contracts/*.c"
+        "sloc": "rename 's/\\.sol/\\.c/' contracts/*.sol && scc contracts/* --wide --by-file && rename 's/\\.c/\\.sol/' contracts/*.c",
+        "verify:kovan:all": "DEBUG=* DOTENV_CONFIG_PATH=.env.kovan ts-node scripts/verify.ts"
     },
     "repository": {
         "type": "git",
@@ -28,7 +29,7 @@
     "devDependencies": {
         "@nomiclabs/buidler": "^1.4.0",
         "@nomiclabs/buidler-ethers": "^1.1.2",
-        "@nomiclabs/buidler-etherscan": "^1.0.1",
+        "@nomiclabs/buidler-etherscan": "^2.1.0",
         "@nomiclabs/buidler-ganache": "^1.1.2",
         "@nomiclabs/buidler-solhint": "^1.0.2",
         "@nomiclabs/buidler-solpp": "^1.1.1",

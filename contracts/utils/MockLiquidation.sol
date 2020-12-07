@@ -39,7 +39,7 @@ contract MockLiquidation is EscrowStorage {
         Liquidation.RateParameters memory rateParam,
         address Portfolios
     ) public {
-        Liquidation._liquidateCollateralCurrency(payer, localCurrencyRequired, liquidityHaircut, transfer, fc, rateParam, Portfolios);
+        Liquidation._liquidateCollateralCurrency(payer, localCurrencyRequired, liquidityHaircut, transfer, fc, rateParam, Portfolios, 0);
 
         emit TradeCollateralCurrency(
             transfer.netLocalCurrencyPayer,

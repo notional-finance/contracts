@@ -528,9 +528,12 @@ export class NotionalDeployer {
             this.deployedCodeHash.set(name, bytecodeHash);
 
             log(`Library ${name} deployed to ${this.libraries.get(name)?.address}`);
+            return this.libraries.get(name)?.address
         } else {
             log(`*** Skipping library deployment of ${name}, dry run ***`);
         }
+
+        return undefined
     }
 
     public upgradeCashMarket = async (address: string, dryRun: boolean) => {
@@ -551,6 +554,8 @@ export class NotionalDeployer {
             log(`Cash Market at proxy ${address} must upgrade logic to ${this.cashMarketLogicAddress}`);
             await this.upgradeProxy("CashMarket", address, this.cashMarketLogicAddress, dryRun);
         }
+
+        return shouldDeployLogic ? this.cashMarketLogicAddress : undefined;
     }
 
     public upgradeContract = async (name: CoreContracts, dryRun: boolean) => {
@@ -563,8 +568,10 @@ export class NotionalDeployer {
         if (!dryRun) {
             const upgrade = await this.upgradeDeployLogic(contractName);
             await this.upgradeProxy(contractName, contract.address, upgrade.address, dryRun);
+            return upgrade.address
         } else {
             log(`*** Would have deployed ${contractName} in dry run ***`);
+            return undefined
         }
     };
 
