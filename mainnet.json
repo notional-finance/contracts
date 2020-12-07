@@ -1,6 +1,6 @@
 {
   "chainId": 1,
-  "networkName": "homestead",
+  "networkName": "mainnet",
   "escrow": "0x9abd0b8868546105F6F48298eaDC1D9c82f7f683",
   "portfolios": "0x0A4721117040ABF319b954aBF13F654505C34920",
   "proxyAdmin": "0x09DbA4Fa1826f7d0E284513333FE71867b324261",
@@ -12,18 +12,18 @@
   "startBlock": 11003692,
   "defaultConfirmations": 3,
   "libraries": {
-    "Liquidation": "0xfc2F1fE9837E22B1D072140bd0784a7515D2BFA8",
+    "Liquidation": "0xB0EC9Ba4ce826d925acF5474d365A80A9FBA078e",
     "RiskFramework": "0xd5d8661733106b0a7C982E44a81b7229a9e2dde2"
   },
   "deployedCodeHash": {
-    "Liquidation": "0xf36bdfe65106d4addfa27de6d5200f61c16950bc7e286204184b2a132fe55331",
+    "Liquidation": "0x34a70f707018f2e9cd95db6b999c8f81ffb5b1746f65d01d9b67192516e1323b",
     "RiskFramework": "0xf9453b18228638bee1e481aab7db30cd30df8ae5bfad3cbb6893cdd3c21281bb",
     "CashMarket": "0x2b87e487335d31b68acc63fceb962b66c901ab56c19b481021d260b29ca7ed46",
     "Directory": "0x081ac9368fe5dd38ab9d62078763c174b7eb93d4e19a73678d92b0b8ea6aec9b",
-    "Escrow": "0x2d3fa1f90c9b8cfd37e208312711caf65eb708f5aac9045936c046f55998c299",
-    "Portfolios": "0x4f53d9e5206319952c243f108fd387204d92e08b8b8ff72c106a7becddc55a18",
+    "Escrow": "0xeeac07a522f42b0cb0ffba5225c0f037550084700fac6f8fb2ce0969917d3641",
+    "Portfolios": "0xf220a9b35d439dc7fce67005f6879cce3125a3b7a97819f51b77622283602a0c",
     "ERC1155Token": "0x26fbb2940acc7ee6c8574c38f6a0150f3c58094c006b7ccf00d851cfb387c701",
-    "ERC1155Trade": "0x694355c2884a2e2c98d10eb0170fafb2dd92a1220d9a5acd8525035109ad5cf4"
+    "ERC1155Trade": "0xfda9841c5891de378c520ef3db6d9a90a283b7e34349f85407f832bac3fdc4f4"
   },
-  "gitHash": "f29dd93052668f8c7a8c95706a38e13b6d4cbc30"
+  "gitHash": "28619fb60b3d95230e89146fa7c9f5e092ed35ea"
 }
