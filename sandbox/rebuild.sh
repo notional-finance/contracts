@@ -17,7 +17,7 @@ fi
 rm -Rf ./chaindb
 mkdir ./chaindb
 
-node ../../../node_modules/ganache-cli/cli.js \
+node ../node_modules/ganache-cli/cli.js \
     --gasLimit "0x7A1200" \
     --db ./chaindb \
     --networkId 1337 \
