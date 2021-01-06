@@ -1002,12 +1002,13 @@ contract CashMarket is Governed {
     /*********** Internal Methods ********************/
 
     function _calculateTransactionFee(uint128 cash, uint32 timeToMaturity) internal view returns (uint128) {
+        // Transaction fees roll down to zero as time to maturity decreases
         return SafeCast.toUint128(
             uint256(cash)
                 .mul(G_TRANSACTION_FEE)
                 .mul(timeToMaturity)
                 .div(G_MATURITY_LENGTH)
-                .div(Common.DECIMALS)
+                .div(INSTRUMENT_PRECISION)
         );
     }
 
