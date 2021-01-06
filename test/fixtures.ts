@@ -46,6 +46,9 @@ export async function fixture(provider: providers.Provider, [owner]: Wallet[]) {
         1
     );
 
+    // Testing ownership renouncement
+    await notional.directory.renounceOwnership()
+
     // List DAI currency
     log("Listing dai fixture");
     const currencyId = await notional.listCurrency(
