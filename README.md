@@ -4,7 +4,7 @@ Notional is a fixed rate, fixed term lending and borrowing protocol on Ethereum.
 
 ## Security
 
-Our contracts have been audited by Open Zeppelin, read the report here: https://blog.openzeppelin.com/notional-audit/
+Our contracts have been audited by Open Zeppelin at this [commit hash](https://github.com/notional-finance/contracts/tree/b6fc6be4622422d0e34c90e77f2ec9da18596b8c). You can find their report at https://blog.openzeppelin.com/notional-audit/.
 
 ### Bug Bounty
 
