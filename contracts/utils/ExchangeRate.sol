@@ -46,7 +46,7 @@ library ExchangeRate {
     ) internal view returns (int256) {
         // Fetches the latest answer from the chainlink oracle and buffer it by the apporpriate amount.
         uint256 rate = _fetchExchangeRate(er, false);
-        uint128 absBalance = uint128(balance.abs());
+        uint256 absBalance = uint256(balance.abs());
 
         // We are converting to ETH here so we know that it has Common.DECIMAL precision. The calculation here is:
         // baseDecimals * rateDecimals * Common.DECIMAL /  (rateDecimals * baseDecimals)
@@ -77,7 +77,7 @@ library ExchangeRate {
         int256 balance
     ) internal view returns (int256) {
         uint256 rate = _fetchExchangeRate(er, true);
-        uint128 absBalance = uint128(balance.abs());
+        uint256 absBalance = uint256(balance.abs());
 
         // We are converting from ETH here so we know that it has Common.DECIMAL precision. The calculation here is:
         // ethDecimals * rateDecimals * baseDecimals / (ethDecimals * rateDecimals)

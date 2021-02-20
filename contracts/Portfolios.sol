@@ -811,8 +811,8 @@ contract Portfolios is PortfoliosStorage, IPortfoliosCallable, Governed {
             fCashHaircut,
             fCashMaxHaircut
         );
-        // Asset values will always be positive.
-        require(tmp >= 0);
+        // Asset values will always be positive and never more than the notional value
+        require(tmp >= 0 && tmp <= asset.notional);
         assetValue = uint128(tmp);
 
         if (assetValue >= amountRemaining) {
