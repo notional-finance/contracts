@@ -611,13 +611,13 @@ describe("Cash Market", () => {
             await escrow.connect(wallet).deposit(dai.address, WeiPerEther.mul(100));
 
             await futureCash.connect(wallet).takefCash(maturities[0], WeiPerEther.mul(100), BLOCK_TIME_LIMIT, 0);
-            const collateralAmount = WeiPerEther.mul(100).sub(
+            const cashAmount = WeiPerEther.mul(100).sub(
                 await escrow.cashBalances(CURRENCY.DAI, wallet.address)
             );
-            expect(await escrow.cashBalances(CURRENCY.DAI, wallet2.address)).to.be.above(0);
-            expect(await escrow.cashBalances(CURRENCY.DAI, wallet2.address)).to.be.below(
-                collateralAmount.mul(10_000).div(WeiPerEther)
-            );
+
+            const fee = await escrow.cashBalances(CURRENCY.DAI, wallet2.address)
+            expect(fee).to.be.above(0);
+            expect(fee).to.be.below(cashAmount.mul(10_000).div(1e9));
         });
 
         it("should allow transaction fees to be set and accrue to reserves for cash payer", async () => {
@@ -625,12 +625,12 @@ describe("Cash Market", () => {
             await futureCash.setFee(10_000, 10_000);
 
             await t.setupLiquidity();
-            const [, collateral] = await t.borrowAndWithdraw(wallet, WeiPerEther.mul(100), 1.5, 0, 70_000_000);
+            const [, cashAmount] = await t.borrowAndWithdraw(wallet, WeiPerEther.mul(100), 1.5, 0, 70_000_000);
 
-            expect(await escrow.cashBalances(CURRENCY.DAI, wallet2.address)).to.be.above(0);
-            expect(await escrow.cashBalances(CURRENCY.DAI, wallet2.address)).to.be.below(
-                collateral.mul(10_000).div(WeiPerEther)
-            );
+            const fee = await escrow.cashBalances(CURRENCY.DAI, wallet2.address);
+            const cashPlusFee = cashAmount.add(fee)
+            expect(fee).to.be.above(0);
+            expect(fee).to.be.below(cashPlusFee.mul(10_000).div(1e9));
         });
     });
 }).timeout(50000);

@@ -141,13 +141,15 @@ contract CashMarket is Governed {
     /**
      * @notice Sets fee parameters for the market. Liquidity Fees are set as basis points and shift the traded
      * exchange rate. A basis point is the equivalent of 1e5 if INSTRUMENT_PRECISION is set to 1e9.
-     * Transaction fees are set as a percentage shifted by 1e18. For example a 1% transaction fee will be set
-     * as 1.01e18.
+     * Transaction fees are set in basis points as well.
      * @dev governance
      * @param liquidityFee a change in the traded exchange rate paid to liquidity providers
      * @param transactionFee percentage of a transaction that accrues to the reserve account
      */
     function setFee(uint32 liquidityFee, uint128 transactionFee) external onlyOwner {
+        require(liquidityFee < 1e9, $$(ErrorCode(INVALID_FEE)));
+        require(transactionFee < 1e9, $$(ErrorCode(INVALID_FEE)));
+
         G_LIQUIDITY_FEE = liquidityFee;
         G_TRANSACTION_FEE = transactionFee;
 
@@ -1000,12 +1002,13 @@ contract CashMarket is Governed {
     /*********** Internal Methods ********************/
 
     function _calculateTransactionFee(uint128 cash, uint32 timeToMaturity) internal view returns (uint128) {
+        // Transaction fees roll down to zero as time to maturity decreases
         return SafeCast.toUint128(
             uint256(cash)
                 .mul(G_TRANSACTION_FEE)
                 .mul(timeToMaturity)
                 .div(G_MATURITY_LENGTH)
-                .div(Common.DECIMALS)
+                .div(INSTRUMENT_PRECISION)
         );
     }
 
