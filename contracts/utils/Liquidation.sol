@@ -30,17 +30,6 @@ library Liquidation {
         int256 payerCollateralBalance;
     }
 
-    struct CollateralCurrencyParameters {
-        uint128 localCurrencyRequired;
-        int256 localCurrencyAvailable;
-        uint16 collateralCurrency;
-        int256 collateralCurrencyCashClaim;
-        int256 collateralCurrencyAvailable;
-        uint128 discountFactor;
-        uint128 liquidityHaircut;
-        IPortfoliosCallable Portfolios;
-    }
-
     struct RateParameters {
         uint256 rate;
         uint16 localCurrency;
