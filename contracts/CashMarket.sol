@@ -31,7 +31,7 @@ contract CashMarket is Governed {
     /**
      * @dev skip
      */
-    function initializeDependencies() external {
+    function initializeDependencies() external onlyOwner {
         // Setting dependencies can only be done once here. With proxy contracts the addresses shouldn't
         // change as we upgrade the logic.
         Governed.CoreContracts[] memory dependencies = new Governed.CoreContracts[](3);
