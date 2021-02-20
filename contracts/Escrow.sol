@@ -929,9 +929,9 @@ contract Escrow is EscrowStorage, Governed, IERC777Recipient, IEscrowCallable {
         uint16 collateralCurrency,
         uint128 valueToSettle
     ) external {
+        if (valueToSettle == 0) return;
         Common.FreeCollateralFactors memory fc = _freeCollateralFactors(payer, localCurrency, collateralCurrency);
         require(fc.aggregate >= 0, $$(ErrorCode(INSUFFICIENT_FREE_COLLATERAL)));
-        if (valueToSettle == 0) return;
 
         int256 payerLocalBalance = cashBalances[localCurrency][payer];
 
